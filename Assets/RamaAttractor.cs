@@ -1,39 +1,15 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 public class RamaAttractor : MonoBehaviour
 {
-    public enum Axes
-    {
-        Custom, Up, Right, Forward
-    }
+    public float Acceleration = 9.8f;
 
-    public float Acceleration = 9.80665f;
-
-    public Func<Vector3> Axis;
-
-    public Axes AxisDirection;
-
-    readonly List<RamaBody> capturedBodies = new List<RamaBody>();
+    readonly HashSet<RamaBody> capturedBodies = new HashSet<RamaBody>();
 
     Ray axisRay;
-
-    void Awake()
-    {
-        switch (AxisDirection)
-        {
-            case Axes.Up:
-                Axis = () => transform.up;
-                break;
-            case Axes.Right:
-                Axis = () => transform.right;
-                break;
-            case Axes.Forward:
-                Axis = () => transform.forward;
-                break;
-        }
-    }
 
     public void Capture(RamaBody body)
     {
@@ -45,11 +21,17 @@ public class RamaAttractor : MonoBehaviour
         capturedBodies.Remove(body);
     }
 
+    void Start()
+    {
+        axis = transform.forward;
+        axisRay = new Ray();
+    }
+
     void FixedUpdate()
     {
-        axis = Axis();
-        axisRay = new Ray(transform.position, axis);
-        foreach (var body in capturedBodies)
+        axisRay.origin = transform.position;
+        axisRay.direction = axis;
+        foreach(var body in capturedBodies)
         {
             Attract(body);
         }
@@ -74,8 +56,8 @@ public class RamaAttractor : MonoBehaviour
         attractPoint = axisRay.GetPoint(adj);
         body.Down = (body.Body.position - attractPoint).normalized;
         body.Body.AddForce(body.Down * Acceleration, ForceMode.Acceleration);
-        Debug.DrawLine(body.Body.position, attractPoint, Color.blue);
-        Debug.DrawLine(transform.position, attractPoint, Color.red);
-        Debug.DrawRay(body.Body.position, hyp, Color.yellow);
+        //Debug.DrawLine(body.Body.position, attractPoint, Color.blue);
+        //Debug.DrawLine(transform.position, attractPoint, Color.red);
+        //Debug.DrawRay(body.Body.position, hyp, Color.yellow);
     }
 }

@@ -46,7 +46,7 @@ public class RamaRigidbodyController : MonoBehaviour
             if (input.y > 0)
             {
                 //forwards
-                //handled last as if strafing and moving forward at the same time forwards speed should take precedence
+                //handled last as if strafing and moving forward at the same time forwards Speed should take precedence
                 CurrentTargetSpeed = ForwardSpeed;
             }
 #if !MOBILE_INPUT
