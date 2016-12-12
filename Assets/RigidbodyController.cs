@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using UnityStandardAssets.CrossPlatformInput;
 
 [RequireComponent(typeof(Rigidbody))]
 [RequireComponent(typeof(CapsuleCollider))]
@@ -23,6 +24,7 @@ public class RigidbodyController : MonoBehaviour
 
     TimeSpan jumpDelay;
     DateTime lastJump = DateTime.MinValue;
+    float angle;
 
     void Awake()
     {
@@ -33,7 +35,11 @@ public class RigidbodyController : MonoBehaviour
 
     void FixedUpdate()
     {
-        transform.up = rBody.Up;
+        var input = CrossPlatformInputManager.GetAxis("Mouse X") * 2f;
+        angle += input;
+        var rot = Quaternion.AngleAxis(angle, Vector3.up);
+        transform.rotation = Quaternion.LookRotation(Vector3.forward, rBody.Up);
+        transform.localRotation *= rot;
         if (grounded)
         {
             var right = Input.GetAxis("Horizontal");

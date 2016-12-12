@@ -2,54 +2,49 @@
 using UnityEngine;
 using UnityStandardAssets.CrossPlatformInput;
 
-[Serializable]
-public class RamaMouseLook
+public class RamaMouseLook : MonoBehaviour
 {
     public float XSensitivity = 2f;
     public float YSensitivity = 2f;
-    public bool clampVerticalRotation = false;
-    public float MinimumX = -90F;
-    public float MaximumX = 90F;
-    public bool smooth;
-    public float smoothTime = 15f;
+    public bool ClampVerticalRotation = false;
+    public float Minimum = -90F;
+    public float Maximum = 90F;
+    public bool Smooth;
+    public float SmoothTime = 15f;
+    public bool XAxis;
+    public bool YAxis;
 
-
-    Quaternion m_CharacterTargetRot;
-    Quaternion m_CameraTargetRot;
-
-
-    public void Init(Transform character, Transform camera)
+    void FixedUpdate()
     {
-        m_CharacterTargetRot = character.localRotation;
-        m_CameraTargetRot = camera.localRotation;
+        if (XAxis)
+        {
+            Mouselook("Mouse X", Vector3.up, XSensitivity);
+        }
+        if (YAxis)
+        {
+            Mouselook("Mouse Y", Vector3.right, YSensitivity);
+        }
     }
 
-    public void LookRotation(Transform character, Transform camera, Vector3 up)
+    void Mouselook(string inputAxis, Vector3 axis, float sensitivity)
     {
-        float yRot = CrossPlatformInputManager.GetAxis("Mouse X") * XSensitivity;
-        float xRot = CrossPlatformInputManager.GetAxis("Mouse Y") * YSensitivity;
+        var input = CrossPlatformInputManager.GetAxis(inputAxis) * sensitivity;
 
-        var right = Vector3.Cross(up, character.forward);
-        var upQ = Quaternion.AngleAxis(-MaximumX, right);
-        var downQ = Quaternion.AngleAxis(-MinimumX, right);
-        Debug.DrawRay(character.position, right, Color.magenta);
+        var up = Quaternion.AngleAxis(-Maximum, axis);
+        var down = Quaternion.AngleAxis(-Minimum, axis);
 
-        m_CameraTargetRot = xRot > 0 ?
-            Quaternion.RotateTowards(camera.localRotation, upQ, xRot * Time.deltaTime * 100) :
-            Quaternion.RotateTowards(camera.localRotation, downQ, -xRot * Time.deltaTime * 100);
+        var targetRotation = input > 0 ?
+                    Quaternion.RotateTowards(transform.localRotation, up, input * Time.fixedDeltaTime * 100f) :
+                    Quaternion.RotateTowards(transform.localRotation, down, -input * Time.fixedDeltaTime * 100f);
 
-        if (clampVerticalRotation)
+        if (Smooth)
         {
-        }
-
-        if (smooth)
-        {
-            camera.localRotation = Quaternion.Slerp(camera.localRotation, m_CameraTargetRot,
-                smoothTime * Time.deltaTime);
+            transform.localRotation = Quaternion.Slerp(transform.localRotation, targetRotation,
+                SmoothTime * Time.fixedDeltaTime);
         }
         else
         {
-            camera.localRotation = m_CameraTargetRot;
+            transform.localRotation = targetRotation;
         }
     }
 }
