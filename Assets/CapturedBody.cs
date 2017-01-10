@@ -8,16 +8,7 @@ public class CapturedBody : MonoBehaviour
 
     public Rigidbody Body { get; private set; }
 
-    public Vector3 Down
-    {
-        get { return down; }
-        set { down = value; up = value * -1; }
-    }
-
-    public Vector3 Up
-    {
-        get { return up; }
-    }
+    public Vector3 Gravity { get; set; }
 
     public void AddForce(Vector3 force)
     {
@@ -34,9 +25,6 @@ public class CapturedBody : MonoBehaviour
     {
         get { return Body.velocity; }
     }
-
-    Vector3 up;
-    Vector3 down;
 
     void Awake()
     {

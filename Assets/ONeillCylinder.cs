@@ -29,7 +29,11 @@ public class ONeillCylinder : MonoBehaviour
     void Start()
     {
         axis = transform.forward;
-        axisRay = new Ray();
+        axisRay = new Ray
+        {
+            origin = transform.position,
+            direction = axis
+        };
         var mesh = GetComponent<MeshFilter>().mesh;
         // Assuming the mesh is perfect cylinder on the outside,
         // the bounds would read (radius, radius, length)
@@ -39,8 +43,6 @@ public class ONeillCylinder : MonoBehaviour
     void FixedUpdate()
     {
         transform.Rotate(Rotation, Space.Self);
-        axisRay.origin = transform.position;
-        axisRay.direction = axis;
         foreach(var body in capturedBodies)
         {
             Attract(body);
@@ -66,13 +68,13 @@ public class ONeillCylinder : MonoBehaviour
         // Radial distance from axis to body
         var r = body.Body.position - axisRay.GetPoint(adj);
         gravity = r.normalized;
-        body.Down = gravity;
+        body.Gravity = gravity;
         // Approximate 10% deadzone in center
         if (r.magnitude < radius * 0.10f)
         {
-            return;
+            //return;
         }
         var a = Acceleration;// / r.sqrMagnitude;
-        body.Body.AddForce(body.Down * a, ForceMode.Acceleration);
+        body.Body.AddForce(body.Gravity * a, ForceMode.Acceleration);
     }
 }
