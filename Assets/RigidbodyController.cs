@@ -6,6 +6,7 @@ using UnityStandardAssets.CrossPlatformInput;
 
 [RequireComponent(typeof(Rigidbody))]
 [RequireComponent(typeof(CapsuleCollider))]
+[RequireComponent(typeof(CapturedBody))]
 public class RigidbodyController : MonoBehaviour
 {
     public float Speed = 10.0f;
@@ -16,54 +17,56 @@ public class RigidbodyController : MonoBehaviour
     
     public float JumpForce = 2.0f;
 
-    public float JumpDelay = 2.0f;
+    public float JumpDelay = 1.0f;
 
     bool grounded;
 
-    RamaBody rBody;
+    CapturedBody body;
 
     TimeSpan jumpDelay;
     DateTime lastJump = DateTime.MinValue;
     float angle;
+    float right;
+    float forward;
+    bool jumping;
 
-    void Awake()
+    void Start()
     {
-        rBody = gameObject.GetComponent<RamaBody>();
-        rBody.Body.freezeRotation = true;
+        body = gameObject.GetComponent<CapturedBody>();
+        body.FreezeRotation = true;
         jumpDelay = TimeSpan.FromSeconds(JumpDelay);
+    }
+
+    void Update()
+    {
+        right = Input.GetAxis("Horizontal");
+        forward = Input.GetAxis("Vertical");
+        jumping = Input.GetButton("Jump") && DateTime.Now - lastJump > jumpDelay;
     }
 
     void FixedUpdate()
     {
-        var input = CrossPlatformInputManager.GetAxis("Mouse X") * 2f;
-        angle += input;
-        var rot = Quaternion.AngleAxis(angle, Vector3.up);
-        transform.rotation = Quaternion.LookRotation(Vector3.forward, rBody.Up);
-        transform.localRotation *= rot;
         if (grounded)
         {
-            var right = Input.GetAxis("Horizontal");
-            var forward = Input.GetAxis("Vertical");
-            var jumping = Input.GetButton("Jump") && DateTime.Now - lastJump > jumpDelay;
-
-            var moveForce = (transform.forward * forward + transform.right * right) * Speed;
-            moveForce = Vector3.ClampMagnitude(moveForce, Speed);
+            var s = Speed / body.Velocity.magnitude;
+            var moveForce = transform.forward * (forward * s) + transform.right * (right * s);
+            moveForce = Vector3.ClampMagnitude(moveForce, s);
             if (jumping)
             {
-                moveForce += rBody.Up * JumpForce;
+                moveForce += body.Up * JumpForce;
                 lastJump = DateTime.Now;
             }
-            rBody.Body.AddForce(moveForce, ForceMode.Force);
+            body.AddForce(moveForce);
 
             if (Oomph)
             {
-                var oomphForce = 1f / Mathf.Pow(rBody.Body.velocity.magnitude, 2f);
-                oomphForce = Mathf.Clamp(oomphForce, 0, Speed);
-                Debug.Log(oomphForce);
-                rBody.Body.AddForce(moveForce.normalized * oomphForce, ForceMode.Force);
+                var oomphForce = 1f / body.Velocity.magnitude;
+                //oomphForce = Mathf.Clamp(oomphForce, 0, Speed);
+                body.AddForce(moveForce.normalized * oomphForce);
             }
         }
         grounded = false;
+        Debug.Log(body.Body.velocity.magnitude);
     }
 
     void OnCollisionStay()
