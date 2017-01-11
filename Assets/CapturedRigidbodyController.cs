@@ -30,11 +30,6 @@ public class CapturedRigidbodyController : MonoBehaviour
         body.FreezeRotation = true;
     }
 
-    void FixedUpdate()
-    {
-        transform.up = -body.Gravity;
-    }
-
     public void Move(float forward, float right, bool jumping)
     {
         if (grounded)
