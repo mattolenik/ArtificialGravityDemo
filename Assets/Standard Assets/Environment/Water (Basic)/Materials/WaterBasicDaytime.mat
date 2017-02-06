@@ -78,7 +78,7 @@ Material:
       second: 1
     - first:
         name: _WaveScale
-      second: 0.0477
+      second: 0.01
     - first:
         name: _bScale
       second: 0.07
