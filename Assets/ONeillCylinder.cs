@@ -13,11 +13,19 @@ public class ONeillCylinder : MonoBehaviour
 {
     public float Acceleration = 9.8f;
 
+    [Tooltip("Rotation vector that the station should spin about.")]
     public Vector3 Rotation = new Vector3(0f, 0f, 0.05f);
+
+    [Tooltip("Create a deadzone in the center with no gravity, with a radius this multipler times of the radius of the cylinder.")]
+    public float DeadzonePercent = 0.05f;
+
+    [Tooltip("Gravity decreases by this power as bodies move closer to the center. Should be 2 or 3.")]
+    public int GravityFalloffPower = 3;
 
     float radius;
 
     readonly HashSet<CapturedBody> bodySet = new HashSet<CapturedBody>();
+
     CapturedBody[] bodyArray;
 
     public void Capture(params CapturedBody[] bodies)
@@ -60,13 +68,14 @@ public class ONeillCylinder : MonoBehaviour
     void Attract(CapturedBody body)
     {
         var r = Vector3.Project(body.Position - transform.position, Rotation.normalized);
-        var distance = (r - body.Position).magnitude;
+        var bodyToCenter = (body.Position - r);
+        var distance = bodyToCenter.magnitude;
         var f = distance/radius;
-        body.Gravity = (body.Position - r).normalized * (f*f);
-        Debug.Log(f);
-        Debug.DrawLine(body.Position, r, Color.red);
-        // Approximate 10% deadzone in center
-        if (r.magnitude < radius * 0.10f)
+        body.Gravity = bodyToCenter.normalized * Mathf.Pow(f, GravityFalloffPower);
+        //Debug.Log(f);
+        //Debug.DrawLine(body.Position, r, Color.red);
+        // Approximate 5% deadzone in center
+        if (distance < radius * DeadzonePercent)
         {
             //return;
         }
