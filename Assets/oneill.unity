@@ -542,8 +542,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2aa543dc5c8aa2f4eab5408f1056b31d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  Acceleration: 8
+  Acceleration: 4
   Rotation: {x: 0, y: 0, z: -0.05}
+  DeadzonePercent: 0.05
+  GravityFalloffPower: 3
 --- !u!64 &1480340522
 MeshCollider:
   m_ObjectHideFlags: 0
