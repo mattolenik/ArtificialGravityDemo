@@ -1,7 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
+/// <summary>
+/// Simulates artificial gravity by applying a force downward from the axis of rotation
+/// towards the rigidbody.
+/// </summary>
 [AddComponentMenu("Physics/ONeill Cylinder")]
 [RequireComponent(typeof(MeshFilter))]
 public class ONeillCylinder : MonoBehaviour
@@ -12,28 +17,31 @@ public class ONeillCylinder : MonoBehaviour
 
     float radius;
 
-    readonly HashSet<CapturedBody> capturedBodies = new HashSet<CapturedBody>();
+    readonly HashSet<CapturedBody> bodySet = new HashSet<CapturedBody>();
+    CapturedBody[] bodyArray;
 
-    Ray axisRay;
-
-    public void Capture(CapturedBody body)
+    public void Capture(params CapturedBody[] bodies)
     {
-        capturedBodies.Add(body);
+        for(var i = 0; i < bodies.Length; i++)
+        {
+            bodySet.Add(bodies[i]);
+        }
+        // This only happens any time new rigidbodies are added to the scene.
+        // The faster iteration over the array is worth the cost.
+        bodyArray = bodySet.ToArray();
     }
 
-    public void Release(CapturedBody body)
+    public void Release(params CapturedBody[] bodies)
     {
-        capturedBodies.Remove(body);
+        for (var i = 0; i < bodies.Length; i++)
+        {
+            bodySet.Remove(bodies[i]);
+        }
+        bodyArray = bodySet.ToArray();
     }
 
     void Start()
     {
-        axis = transform.forward;
-        axisRay = new Ray
-        {
-            origin = transform.position,
-            direction = axis
-        };
         var mesh = GetComponent<MeshFilter>().mesh;
         // Assuming the mesh is perfect cylinder on the outside,
         // the bounds would read (radius, radius, length)
@@ -43,38 +51,24 @@ public class ONeillCylinder : MonoBehaviour
     void FixedUpdate()
     {
         transform.Rotate(Rotation, Space.Self);
-        foreach(var body in capturedBodies)
+        for (var i = 0; i < bodyArray.Length; i++)
         {
-            Attract(body);
+            Attract(bodyArray[i]);
         }
     }
 
-    // Axis of the attractor, perpendicular to the direction of gravity
-    Vector3 axis;
-    // Hypotenous between body and attractor
-    Vector3 hyp;
-    // Dot product of axis and hyp
-    float dot;
-    // Length of edge adjacent to hypotenous, parallel to axis
-    float adj;
-    // Direction of "gravity"
-    Vector3 gravity;
-
     void Attract(CapturedBody body)
     {
-        hyp = transform.position - body.Body.position;
-        dot = Vector3.Dot(axis, hyp.normalized);
-        adj = hyp.magnitude * dot * -1;
-        // Radial distance from axis to body
-        var r = body.Body.position - axisRay.GetPoint(adj);
-        gravity = r.normalized;
-        body.Gravity = gravity;
-        // Approximate 20% deadzone in center
-        Debug.Log(r.magnitude + " - " + radius);
-        if (r.magnitude < 50)//radius * 0.20f)
+        var r = Vector3.Project(body.Position - transform.position, Rotation.normalized);
+        var distance = (r - body.Position).magnitude;
+        var f = distance/radius;
+        body.Gravity = (body.Position - r).normalized * (f*f);
+        Debug.Log(f);
+        Debug.DrawLine(body.Position, r, Color.red);
+        // Approximate 10% deadzone in center
+        if (r.magnitude < radius * 0.10f)
         {
-            Debug.Log("center");
-            return;
+            //return;
         }
         var a = Acceleration;// / r.sqrMagnitude;
         body.Body.AddForce(body.Gravity * a, ForceMode.Acceleration);

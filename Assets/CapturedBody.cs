@@ -37,7 +37,7 @@ public class CapturedBody : MonoBehaviour
 
     void Awake()
     {
-        attractor = GetComponentInParent<ONeillCylinder>();
+        attractor = FindObjectOfType<ONeillCylinder>();
         Body = GetComponent<Rigidbody>();
         attractor.Capture(this);
     }

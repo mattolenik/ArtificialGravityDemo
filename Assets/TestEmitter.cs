@@ -6,9 +6,11 @@ public class TestEmitter : MonoBehaviour
 {
     public GameObject objectPrefab;
 
-    // Start is called before the first frame update
-    void Start()
+    ONeillCylinder attractor;
+
+    void Awake()
     {
+        attractor = FindObjectOfType<ONeillCylinder>();
     }
 
     // Update is called once per frame
@@ -18,7 +20,7 @@ public class TestEmitter : MonoBehaviour
         if (isFire)
         {
             var obj = Instantiate(objectPrefab, Vector3.zero, Quaternion.identity);
-            obj.transform.parent = transform.parent;
+            obj.transform.parent = attractor.transform;
             var body = obj.GetComponent<Rigidbody>();
             var x = Random.Range(1, 5);
             var y = Random.Range(1, 5);
@@ -28,7 +30,7 @@ public class TestEmitter : MonoBehaviour
             if (Random.Range(0f, 1f) > 0.5) {
                 y*=-1;
             }
-            body.AddRelativeForce(new Vector3(x, y, 0), ForceMode.VelocityChange);
+            body.AddRelativeForce(new Vector3(x, y, 0).normalized*0.2f, ForceMode.VelocityChange);
         }
     }
 }
