@@ -4,4 +4,8 @@
 EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
-  m_Scenes: []
+  m_Scenes:
+  - enabled: 1
+    path: Assets/oneill.unity
+    guid: 489a137af937e8b479eb426a5a1ba987
+  m_configObjects: {}

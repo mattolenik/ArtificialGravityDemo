@@ -27,7 +27,13 @@ public class CapturedRigidbodyController : MonoBehaviour
     void Start()
     {
         body = gameObject.GetComponent<CapturedBody>();
-        body.FreezeRotation = true;
+        //body.FreezeRotation = true;
+    }
+
+    void Update()
+    {
+        //transform.up = -body.Gravity;
+        Debug.DrawLine(transform.position, transform.position - body.Gravity*3);
     }
 
     public void Move(float forward, float right, bool jumping)
@@ -46,7 +52,7 @@ public class CapturedRigidbodyController : MonoBehaviour
                 lastJump = Time.time;
             }
             body.AddForce(moveForce);
-            Debug.Log("f: " + moveForce.magnitude.ToString("n2") + " | v: " + body.Velocity.magnitude.ToString("n2") + " | z: " + z.ToString("n2"));
+            //Debug.Log("f: " + moveForce.magnitude.ToString("n2") + " | v: " + body.Velocity.magnitude.ToString("n2") + " | z: " + z.ToString("n2"));
         }
         grounded = false;
     }
