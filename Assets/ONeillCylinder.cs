@@ -17,10 +17,7 @@ public class ONeillCylinder : MonoBehaviour
     public Vector3 Rotation = new Vector3(0f, 0f, 0.05f);
 
     [Tooltip("Create a deadzone in the center with no gravity, with a radius this multipler times of the radius of the cylinder.")]
-    public float DeadzonePercent = 0.05f;
-
-    [Tooltip("Gravity decreases by this power as bodies move closer to the center. Should be 2 or 3.")]
-    public int GravityFalloffPower = 3;
+    public float DeadzonePercent = 0.10f;
 
     float radius;
 
@@ -30,7 +27,7 @@ public class ONeillCylinder : MonoBehaviour
 
     public void Capture(params CapturedBody[] bodies)
     {
-        for(var i = 0; i < bodies.Length; i++)
+        for (var i = 0; i < bodies.Length; i++)
         {
             bodySet.Add(bodies[i]);
         }
@@ -70,16 +67,26 @@ public class ONeillCylinder : MonoBehaviour
         var r = Vector3.Project(body.Position - transform.position, Rotation.normalized);
         var bodyToCenter = (body.Position - r);
         var distance = bodyToCenter.magnitude;
-        var f = distance/radius;
-        body.Gravity = bodyToCenter.normalized * Mathf.Pow(f, GravityFalloffPower);
-        //Debug.Log(f);
-        //Debug.DrawLine(body.Position, r, Color.red);
-        // Approximate 5% deadzone in center
+        var f = distance / radius;
+        
+        body.Gravity = bodyToCenter.normalized;
+        // Approximate deadzone in center
         if (distance < radius * DeadzonePercent)
         {
-            //return;
+            return;
         }
-        var a = Acceleration;// / r.sqrMagnitude;
-        body.Body.AddForce(body.Gravity * a, ForceMode.Acceleration);
+        // Using a power of three seems to get the appropriate acceleration due to atmosphere
+        // within the cylinder. The "gravitational" force here must take into account not just
+        // the distance to the center, as with normal coriolis effect, but also account for the
+        // atmosphere getting exponentially thicker towards the shell. This may be because,
+        // *mathematical handwaive* a cubic term is needed to somehow "balance out" the
+        // linear × quadratic terms that are perhaps multiplied together somewhere in the real math.
+        var force = body.Gravity * Acceleration * Mathf.Pow(f, 3);
+        if (float.IsInfinity(force.magnitude) || float.IsNaN(force.magnitude))
+        {
+            Debug.Log("nan or inf");
+            return;
+        }
+        body.Body.AddForce(force, ForceMode.Acceleration);
     }
 }

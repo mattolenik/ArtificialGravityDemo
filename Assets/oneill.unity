@@ -367,7 +367,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 865858569}
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: -45, z: -6.97}
+  m_LocalPosition: {x: 0, y: -45, z: -90.4}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_Children:
   - {fileID: 750532296}
@@ -392,7 +392,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 1032d41f900276c40a9dd24f55b7d420, type: 2}
+  - {fileID: 2100000, guid: 8c19a618a0bd9844583b91dca0875a34, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -455,9 +455,9 @@ Rigidbody:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 865858569}
   serializedVersion: 2
-  m_Mass: 70
-  m_Drag: 0
-  m_AngularDrag: 0.05
+  m_Mass: 200
+  m_Drag: 0.18
+  m_AngularDrag: 0.67
   m_UseGravity: 0
   m_IsKinematic: 0
   m_Interpolate: 1
@@ -542,10 +542,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2aa543dc5c8aa2f4eab5408f1056b31d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  Acceleration: 4
+  Acceleration: 8
   Rotation: {x: 0, y: 0, z: -0.05}
   DeadzonePercent: 0.05
-  GravityFalloffPower: 3
 --- !u!64 &1480340522
 MeshCollider:
   m_ObjectHideFlags: 0
@@ -553,7 +552,7 @@ MeshCollider:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1480340519}
-  m_Material: {fileID: 0}
+  m_Material: {fileID: 13400000, guid: 2ec5f2c7daeca014dbbdf772378d6a9c, type: 2}
   m_IsTrigger: 0
   m_Enabled: 1
   serializedVersion: 3
