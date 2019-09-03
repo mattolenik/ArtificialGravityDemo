@@ -8,7 +8,9 @@ using UnityEngine;
 /// towards the rigidbody.
 /// </summary>
 [AddComponentMenu("Physics/ONeill Cylinder")]
+[RequireComponent(typeof(MeshCollider))]
 [RequireComponent(typeof(MeshFilter))]
+[RequireComponent(typeof(Rigidbody))]
 public class ONeillCylinder : MonoBehaviour
 {
     public float Acceleration = 9.8f;

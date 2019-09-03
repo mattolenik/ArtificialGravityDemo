@@ -1,0 +1,10 @@
+
+=== Mon Sep  2 12:52:47 2019
+
+Packages were changed.
+Update Mode: updateDependencies
+
+The following packages were updated:
+  com.unity.test-framework from version 1.0.13 to 1.0.17
+The following packages were removed:
+  com.unity.package-manager-ui@2.2.0

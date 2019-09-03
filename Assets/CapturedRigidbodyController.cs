@@ -1,6 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
 using UnityStandardAssets.CrossPlatformInput;
 
@@ -24,9 +22,13 @@ public class CapturedRigidbodyController : MonoBehaviour
     float lastJump = -1f;
     CapturedBody body;
 
+    new Rigidbody rigidbody;
+
     void Start()
     {
+        Physics.defaultMaxAngularSpeed = 200;
         body = gameObject.GetComponent<CapturedBody>();
+        rigidbody = gameObject.GetComponent<Rigidbody>();
         //body.FreezeRotation = true;
     }
 
@@ -35,6 +37,37 @@ public class CapturedRigidbodyController : MonoBehaviour
         //transform.up = -body.Gravity;
         Debug.DrawLine(transform.position, transform.position - body.Gravity*3);
     }
+
+    // First off, make sure that you are freezing the rotation
+    // of the rigidbody since we are doing that manually now.
+    // This determines how fast the rigidbody rotates towards the correct value
+    public float dampingRate;
+    // This determines how far it can detect the ground from
+    public float rayLength;
+    // Set this up with the correct 'ground' layers
+    public LayerMask mask;
+    Vector3 currentUp;
+
+    float uprightSpeed = 10f;
+
+    void FixedUpdate()
+    {
+        currentUp = -body.Gravity;
+        var q = Quaternion.FromToRotation(transform.up, currentUp) * transform.rotation;
+        transform.rotation = Quaternion.Slerp(transform.rotation, q, Time.deltaTime * uprightSpeed);
+    }
+    //    RaycastHit hit;
+    //    if (Physics.Raycast(transform.position, -currentUp, out hit, rayLength, mask))
+    //    {
+    //        //currentUp = hit.normal;
+    //    }
+    //    Quaternion targetRotation = transform.rotation;
+    //    if (rigidbody.velocity.magnitude > 0)
+    //    {
+    //        targetRotation = Quaternion.LookRotation(rigidbody.velocity, currentUp);
+    //    }
+    //    rigidbody.rotation = Quaternion.Slerp(rigidbody.rotation, targetRotation, Time.deltaTime * dampingRate);
+    //}
 
     public void Move(float forward, float right, bool jumping)
     {
