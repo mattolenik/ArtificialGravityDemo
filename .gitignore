@@ -26,3 +26,8 @@ sysinfo.txt
 # Blender autosave
 *.blend1
 *.blend1.meta
+
+# Per-machine Unity files (Editor.log contains auth tokens)
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+*.slnx

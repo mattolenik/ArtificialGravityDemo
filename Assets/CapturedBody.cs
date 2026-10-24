@@ -32,12 +32,12 @@ public class CapturedBody : MonoBehaviour
 
     public Vector3 Velocity
     {
-        get { return Body.velocity; }
+        get { return Body.linearVelocity; }
     }
 
     void Awake()
     {
-        attractor = FindObjectOfType<ONeillCylinder>();
+        attractor = FindAnyObjectByType<ONeillCylinder>();
         Body = GetComponent<Rigidbody>();
         attractor.Capture(this);
     }

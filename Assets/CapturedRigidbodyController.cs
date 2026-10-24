@@ -22,7 +22,7 @@ public class CapturedRigidbodyController : MonoBehaviour
     float lastJump = -1f;
     CapturedBody body;
 
-    new Rigidbody rigidbody;
+    Rigidbody rigidbody;
 
     void Start()
     {

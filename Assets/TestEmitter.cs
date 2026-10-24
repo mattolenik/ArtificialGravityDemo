@@ -10,7 +10,7 @@ public class TestEmitter : MonoBehaviour
 
     void Awake()
     {
-        attractor = FindObjectOfType<ONeillCylinder>();
+        attractor = FindAnyObjectByType<ONeillCylinder>();
     }
 
     // Update is called once per frame
