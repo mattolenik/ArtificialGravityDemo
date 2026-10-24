@@ -44,4 +44,12 @@ public class CapturedBody : MonoBehaviour
         Body = GetComponent<Rigidbody>();
         attractor.Capture(this);
     }
+
+    void OnDestroy()
+    {
+        if (attractor)
+        {
+            attractor.Release(this);
+        }
+    }
 }

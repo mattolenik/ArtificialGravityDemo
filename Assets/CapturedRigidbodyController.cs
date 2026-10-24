@@ -29,7 +29,8 @@ public class CapturedRigidbodyController : MonoBehaviour
         Physics.defaultMaxAngularSpeed = 200;
         body = gameObject.GetComponent<CapturedBody>();
         rigidbody = gameObject.GetComponent<Rigidbody>();
-        //body.FreezeRotation = true;
+        // Contacts must not tip the character over; FixedUpdate sets its orientation instead.
+        body.FreezeRotation = true;
     }
 
     void Update()
@@ -48,13 +49,18 @@ public class CapturedRigidbodyController : MonoBehaviour
     public LayerMask mask;
     Vector3 currentUp;
 
-    float uprightSpeed = 10f;
-
     void FixedUpdate()
     {
         currentUp = -body.Gravity;
-        var q = Quaternion.FromToRotation(transform.up, currentUp) * transform.rotation;
-        transform.rotation = Quaternion.Slerp(transform.rotation, q, Time.deltaTime * uprightSpeed);
+        if (currentUp == Vector3.zero)
+        {
+            // On the spin axis there is no "up" to align to.
+            return;
+        }
+        // Stand exactly upright with respect to the cylinder, keeping the current heading.
+        // MoveRotation (not transform.rotation) keeps the rigidbody and its interpolation in sync.
+        var up = rigidbody.rotation * Vector3.up;
+        rigidbody.MoveRotation(Quaternion.FromToRotation(up, currentUp) * rigidbody.rotation);
     }
     //    RaycastHit hit;
     //    if (Physics.Raycast(transform.position, -currentUp, out hit, rayLength, mask))
