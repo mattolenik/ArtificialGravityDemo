@@ -31,3 +31,4 @@ sysinfo.txt
 /[Ll]ogs/
 /[Uu]ser[Ss]ettings/
 *.slnx
+.claude/worktrees/
