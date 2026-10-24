@@ -4,8 +4,9 @@ using System.Linq;
 using UnityEngine;
 
 /// <summary>
-/// Simulates artificial gravity by applying a force downward from the axis of rotation
-/// towards the rigidbody.
+/// Simulates artificial gravity in a spinning cylinder. The cylinder itself stays still and
+/// the scene is simulated in its rotating frame, where Newton's laws gain two fictitious
+/// forces: centrifugal (ω²r, outward) and Coriolis (−2Ω×v). Both are exact, not approximations.
 /// </summary>
 [AddComponentMenu("Physics/ONeill Cylinder")]
 [RequireComponent(typeof(MeshCollider))]
@@ -13,15 +14,21 @@ using UnityEngine;
 [RequireComponent(typeof(Rigidbody))]
 public class ONeillCylinder : MonoBehaviour
 {
+    [Tooltip("Apparent gravity at the floor, in m/s². Sets the spin rate: ω = √(a / radius).")]
     public float Acceleration = 9.8f;
 
-    [Tooltip("Rotation vector that the station should spin about.")]
-    public Vector3 Rotation = new Vector3(0f, 0f, 0.05f);
+    [Tooltip("Local axis the station spins about (right-handed).")]
+    public Vector3 Axis = Vector3.forward;
 
-    [Tooltip("Create a deadzone in the center with no gravity, with a radius this multipler times of the radius of the cylinder.")]
-    public float DeadzonePercent = 0.10f;
+    [Tooltip("Air density at the floor, in kg/m³.")]
+    public float AirDensity = 1.225f;
+
+    [Tooltip("Air pressure at the floor, in Pa.")]
+    public float AirPressure = 101325f;
 
     float radius;
+
+    Vector3 omega;
 
     readonly HashSet<CapturedBody> bodySet = new HashSet<CapturedBody>();
 
@@ -57,7 +64,7 @@ public class ONeillCylinder : MonoBehaviour
 
     void FixedUpdate()
     {
-        transform.Rotate(Rotation, Space.Self);
+        omega = transform.TransformDirection(Axis.normalized) * Mathf.Sqrt(Acceleration / radius);
         for (var i = 0; i < bodyArray.Length; i++)
         {
             Attract(bodyArray[i]);
@@ -66,29 +73,37 @@ public class ONeillCylinder : MonoBehaviour
 
     void Attract(CapturedBody body)
     {
-        var r = Vector3.Project(body.Position - transform.position, Rotation.normalized);
-        var bodyToCenter = (body.Position - r);
-        var distance = bodyToCenter.magnitude;
-        var f = distance / radius;
-        
-        body.Gravity = bodyToCenter.normalized;
-        // Approximate deadzone in center
-        if (distance < radius * DeadzonePercent)
+        var offset = body.Position - transform.position;
+        // Outward from the axis, i.e. "down" for anyone standing on the floor.
+        var radial = Vector3.ProjectOnPlane(offset, omega);
+        body.Gravity = radial.normalized;
+        body.Body.AddForce(FictitiousAcceleration(offset, body.Velocity, omega), ForceMode.Acceleration);
+        if (body.DragArea > 0f)
         {
-            return;
+            // The air co-rotates with the station, so it is at rest in this frame.
+            var v = body.Velocity;
+            var density = AirDensityAt(radial.magnitude, radius, omega.magnitude, AirDensity, AirPressure);
+            body.Body.AddForce(-0.5f * density * body.DragArea * v.magnitude * v);
         }
-        // Using a power of three seems to get the appropriate acceleration due to atmosphere
-        // within the cylinder. The "gravitational" force here must take into account not just
-        // the distance to the center, as with normal coriolis effect, but also account for the
-        // atmosphere getting exponentially thicker towards the shell. This may be because,
-        // *mathematical handwaive* a cubic term is needed to somehow "balance out" the
-        // linear × quadratic terms that are perhaps multiplied together somewhere in the real math.
-        var force = body.Gravity * Acceleration * Mathf.Pow(f, 3);
-        if (float.IsInfinity(force.magnitude) || float.IsNaN(force.magnitude))
-        {
-            Debug.Log("nan or inf");
-            return;
-        }
-        body.Body.AddForce(force, ForceMode.Acceleration);
+    }
+
+    /// <summary>
+    /// Isothermal air density at distance <paramref name="r"/> from the axis: hydrostatic balance
+    /// against the centrifugal potential. Only ~3% thinner at the axis of a 500 m, 1 g station.
+    /// </summary>
+    public static float AirDensityAt(float r, float radius, float omega, float floorDensity, float floorPressure)
+    {
+        return floorDensity * Mathf.Exp(-0.5f * omega * omega * (radius * radius - r * r) * floorDensity / floorPressure);
+    }
+
+    /// <summary>
+    /// Acceleration of a free body in a frame spinning at <paramref name="omega"/> (rad/s),
+    /// given its offset from a point on the axis and its velocity relative to the frame.
+    /// </summary>
+    public static Vector3 FictitiousAcceleration(Vector3 offset, Vector3 velocity, Vector3 omega)
+    {
+        var centrifugal = -Vector3.Cross(omega, Vector3.Cross(omega, offset));
+        var coriolis = -2f * Vector3.Cross(omega, velocity);
+        return centrifugal + coriolis;
     }
 }

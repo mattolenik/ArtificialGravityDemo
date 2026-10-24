@@ -9,6 +9,9 @@ public class CapturedBody : MonoBehaviour
 {
     ONeillCylinder attractor;
 
+    [Tooltip("Drag coefficient × frontal area (m²). About 0.26 for a 0.5 m cube, 0.8 for a standing person. 0 disables air drag.")]
+    public float DragArea;
+
     public Vector3 Position
     {
         get { return Body.position; }
