@@ -32,3 +32,4 @@ sysinfo.txt
 /[Uu]ser[Ss]ettings/
 *.slnx
 .claude/worktrees/
+godot/.godot/
