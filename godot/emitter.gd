@@ -94,6 +94,9 @@ func spawn() -> void:
 		var box: Box = box_scene.instantiate()
 		box.station = station
 		box.setup(box_size, density, drag_coefficient)
+		var trail: Trail = box.get_node("Trail")
+		trail.width = trail_width
+		trail.lifetime = trail_time
 		station.add_child(box)
 		box.global_position = station.to_global(_local_spawn_point() + offset)
 		box.global_rotation = station.global_rotation
