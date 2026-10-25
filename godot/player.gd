@@ -13,8 +13,33 @@ extends CharacterBody3D
 @export var jump_speed := 3.0
 ## Shortest time between jumps, in s.
 @export var jump_delay := 1.0
+## Radians of turn per pixel of mouse movement.
+@export var mouse_sensitivity := 0.003
 
 var _jump_cooldown := 0.0
+
+@onready var _pivot: SpringArm3D = $CameraPivot
+
+
+func _ready() -> void:
+	# The camera arm must not collide with the player's own capsule.
+	_pivot.add_excluded_object(get_rid())
+
+
+## Click the world to capture the mouse for looking around; Esc releases it.
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	elif event.is_action_pressed("ui_cancel"):
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		look(event.relative)
+
+
+## Turns about the player's own up (toward the axis) and tilts the camera, from mouse movement in pixels.
+func look(motion: Vector2) -> void:
+	global_basis = Basis(global_basis.y, -motion.x * mouse_sensitivity) * global_basis
+	_pivot.rotation.x = clampf(_pivot.rotation.x - motion.y * mouse_sensitivity, -1.4, 1.4)
 
 
 func _physics_process(delta: float) -> void:

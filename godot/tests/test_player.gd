@@ -26,6 +26,12 @@ func _initialize() -> void:
 		check(player.is_on_floor(), "on floor at %d°" % deg)
 		check(player.global_basis.y.dot(-down) > 0.999, "upright at %d°" % deg)
 		check(player.velocity.slide(down).length() < 0.05, "no drift at %d°" % deg)
+		# Mouse look turns about the player's own up, not world Y, and the tilt is clamped.
+		var heading := -player.global_basis.z
+		player.look(Vector2(100, -100000))
+		check(absf(heading.angle_to(-player.global_basis.z) - 0.3) < 0.001, "yaw at %d°" % deg)
+		check(player.global_basis.y.dot(-down) > 0.999, "upright after look at %d°" % deg)
+		check(is_equal_approx(player.get_node("CameraPivot").rotation.x, 1.4), "pitch clamp at %d°" % deg)
 		station.free()
 	if failed:
 		quit(1)
