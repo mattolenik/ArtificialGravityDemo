@@ -1,0 +1,56 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="PackedScene" path="res://station.tscn" id="1"]
+[ext_resource type="Script" path="res://emitter.gd" id="2"]
+[ext_resource type="PackedScene" path="res://box.tscn" id="3"]
+
+[node name="Main" type="Node3D"]
+
+[node name="Station" parent="." instance=ExtResource("1")]
+
+[node name="Emitter" type="Node3D" parent="Station" node_paths=PackedStringArray("station", "info_label", "spawn_camera")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -65.4)
+script = ExtResource("2")
+station = NodePath("..")
+box_scene = ExtResource("3")
+info_label = NodePath("../../Panel/Box/Info")
+spawn_camera = NodePath("../../SpawnCamera")
+
+[node name="SpawnCamera" type="Camera3D" parent="."]
+far = 35000.0
+
+[node name="MainCamera" type="Camera3D" parent="."]
+current = true
+far = 35000.0
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.7071, 0.7071, 0, -0.7071, 0.7071, 0, 0, 0)
+
+[node name="Panel" type="CanvasLayer" parent="."]
+
+[node name="Box" type="VBoxContainer" parent="Panel"]
+offset_left = 8.0
+offset_top = 8.0
+offset_right = 420.0
+offset_bottom = 120.0
+
+[node name="Buttons" type="HBoxContainer" parent="Panel/Box"]
+
+[node name="Spawn" type="Button" parent="Panel/Box/Buttons"]
+layout_mode = 2
+text = "Spawn"
+
+[node name="Clear" type="Button" parent="Panel/Box/Buttons"]
+layout_mode = 2
+text = "Clear spawned"
+
+[node name="View" type="Button" parent="Panel/Box/Buttons"]
+layout_mode = 2
+text = "Spawn view"
+
+[node name="Info" type="Label" parent="Panel/Box"]
+layout_mode = 2
+
+[connection signal="pressed" from="Panel/Box/Buttons/Spawn" to="Station/Emitter" method="spawn"]
+[connection signal="pressed" from="Panel/Box/Buttons/Clear" to="Station/Emitter" method="clear_spawned"]
+[connection signal="pressed" from="Panel/Box/Buttons/View" to="Station/Emitter" method="toggle_spawn_view"]
