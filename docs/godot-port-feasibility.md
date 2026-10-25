@@ -46,7 +46,14 @@ differently.
   [experimental][csweb] ([proposal discussion][csweb2]); GDScript avoids that if a web
   build is ever wanted.
 - **Unverified Jolt behaviour,** which a prototype would settle:
-  - how a resting box behaves when forces keep being applied each step (whether bodies sleep)
+  - how a resting box behaves when forces keep being applied each step (whether bodies sleep).
+    **Measured:** a box at rest on the floor is still awake after 5 s, because the force
+    applied every tick keeps it awake.
+  - **Measured:** the 10 m drop at 3.2 km, using a real Jolt `RigidBody3D` on the trimesh
+    hull, lands after 1.433 s (exact 1.432 s), 0.520 m antispinward (exact 0.529 m).
+    It needs `continuous_cd`, the equivalent of Unity's continuous speculative mode.
+    Without it, the 0.1 m box moves 0.23 m per tick at landing speed and tunnels through the
+    zero-thickness hull.
   - how smoothly things slide across the cylinder's 79 m flat sides
   - precision at the 16 km ends: the same roughly 2 mm limit as Unity unless Godot is built
     in double precision
