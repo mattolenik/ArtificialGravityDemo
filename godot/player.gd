@@ -26,12 +26,12 @@ func _physics_process(delta: float) -> void:
 		return
 	# Stand upright, keeping the heading, as Unity's FromToRotation did.
 	up_direction = -down
-	basis = (Basis(Quaternion(basis.y, -down)) * basis).orthonormalized()
+	global_basis = (Basis(Quaternion(global_basis.y, -down)) * global_basis).orthonormalized()
 	velocity += station.acceleration_at(global_position, velocity) * delta
 	if is_on_floor():
 		var radial := velocity.project(down)
-		var wish := -basis.z * _axis(KEY_W, KEY_UP, KEY_S, KEY_DOWN) \
-				+ basis.x * _axis(KEY_D, KEY_RIGHT, KEY_A, KEY_LEFT)
+		var wish := -global_basis.z * _axis(KEY_W, KEY_UP, KEY_S, KEY_DOWN) \
+				+ global_basis.x * _axis(KEY_D, KEY_RIGHT, KEY_A, KEY_LEFT)
 		var along := (velocity - radial).move_toward(wish.limit_length() * run_speed, ground_accel * delta)
 		velocity = radial + along
 		if Input.is_physical_key_pressed(KEY_SPACE) and _jump_cooldown <= 0.0:

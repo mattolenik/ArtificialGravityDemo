@@ -51,8 +51,8 @@ differently.
     applied every tick keeps it awake.
   - **Measured:** the 10 m drop at 3.2 km, using a real Jolt `RigidBody3D` on the trimesh
     hull, lands after 1.433 s (exact 1.432 s), 0.520 m antispinward (exact 0.529 m).
-    It needs `continuous_cd`, the equivalent of Unity's continuous speculative mode.
-    Without it, the 0.1 m box moves 0.23 m per tick at landing speed and tunnels through the
+    It needs `continuous_cd` (Jolt's linear-cast sweep): the always-on speculative margin is 0.02 m
+    but the box moves 0.23 m per tick at landing speed. Without it, the 0.1 m box tunnels through the
     zero-thickness hull.
   - how smoothly things slide across the cylinder's 79 m flat sides
   - precision at the 16 km ends: the same roughly 2 mm limit as Unity unless Godot is built

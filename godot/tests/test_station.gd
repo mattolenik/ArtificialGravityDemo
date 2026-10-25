@@ -18,6 +18,12 @@ func _initialize() -> void:
 	check(station.down_at(Vector3(0, 0, 5)) == Vector3.ZERO, "down on axis")
 	check(station.acceleration_at(Vector3(0, 0, 5), Vector3.ZERO) == Vector3.ZERO, "accel on axis")
 	check(station.down_at(Vector3(0, -100, 0)).is_equal_approx(Vector3(0, -1, 0)), "down at bottom")
+	# No spin: down and drag must not error on a zero normal
+	station.acceleration = 0.0
+	check(station.down_at(Vector3(0, -100, 0)).is_equal_approx(Vector3(0, -1, 0)), "down at zero spin")
+	check(station.acceleration_at(Vector3(0, -100, 0), Vector3(1, 0, 0)) == Vector3.ZERO, "accel at zero spin")
+	check(station.drag_force(Vector3(0, -100, 0), Vector3.ZERO, 1.0) == Vector3.ZERO, "drag at zero spin")
+	station.acceleration = 9.8
 
 	# The real drop: a Jolt body falls 10 m and lands antispinward of the point below it.
 	# The floor is faceted, so the floor below the spawn point is a little inside radius.

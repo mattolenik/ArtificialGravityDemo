@@ -17,7 +17,7 @@ func _initialize() -> void:
 	# Spin is about +Z, so spinward at the bottom of the cylinder is +X.
 	var omega := Vector3(0, 0, w)
 	var p := Vector3(0, -a, 0); var v := Vector3.ZERO; var t := 0.0
-	while p.length() < R:
+	while p.length() < R and t < 10.0:
 		v += Station.fictitious_acceleration(p, v, omega) * dt
 		p += v * dt
 		t += dt

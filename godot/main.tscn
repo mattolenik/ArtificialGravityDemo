@@ -39,14 +39,17 @@ offset_bottom = 120.0
 
 [node name="Spawn" type="Button" parent="Panel/Box/Buttons"]
 layout_mode = 2
+focus_mode = 0
 text = "Spawn"
 
 [node name="Clear" type="Button" parent="Panel/Box/Buttons"]
 layout_mode = 2
+focus_mode = 0
 text = "Clear spawned"
 
 [node name="View" type="Button" parent="Panel/Box/Buttons"]
 layout_mode = 2
+focus_mode = 0
 text = "Spawn view"
 
 [node name="Info" type="Label" parent="Panel/Box"]

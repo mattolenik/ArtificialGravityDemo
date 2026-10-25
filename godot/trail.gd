@@ -14,6 +14,7 @@ var _mesh := ImmediateMesh.new()
 
 func _ready() -> void:
 	top_level = true
+	global_transform = Transform3D.IDENTITY
 	mesh = _mesh
 	var m := StandardMaterial3D.new()
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED

@@ -52,9 +52,14 @@ func omega() -> Vector3:
 	return global_basis * axis.normalized() * sqrt(acceleration / radius)
 
 
+## Spin axis direction in global space; unlike omega(), defined at zero spin.
+func _axis_dir() -> Vector3:
+	return (global_basis * axis).normalized()
+
+
 ## Outward from the axis, i.e. "down" for anyone standing on the floor. Zero on the axis.
 func down_at(pos: Vector3) -> Vector3:
-	return (pos - global_position).slide(omega().normalized()).normalized()
+	return (pos - global_position).slide(_axis_dir()).normalized()
 
 
 ## Fictitious acceleration of a body at global pos moving at vel relative to the station.
@@ -65,6 +70,6 @@ func acceleration_at(pos: Vector3, vel: Vector3) -> Vector3:
 ## Air drag in N. The air co-rotates with the station, so it is at rest in this frame.
 func drag_force(pos: Vector3, vel: Vector3, drag_area: float) -> Vector3:
 	var w := omega()
-	var r := (pos - global_position).slide(w.normalized()).length()
+	var r := (pos - global_position).slide(_axis_dir()).length()
 	var density := air_density_at(r, radius, w.length(), air_density, air_pressure)
 	return -0.5 * density * drag_area * vel.length() * vel

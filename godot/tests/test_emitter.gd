@@ -46,6 +46,12 @@ func _initialize() -> void:
 	# Handedness: spinward shows on the right of the spawn view, as in Unity
 	emitter.toggle_spawn_view()
 	check(emitter.spawn_camera.global_basis.x.dot(emitter.spinward()) > 0.99, "spinward on the right")
+	# Trail vertices are global, so the ribbon must not inherit the station's offset
+	station.position.x = 1000
+	emitter.count = 1; emitter.spawn()
+	await process_frame
+	var trail: Trail = station.get_children().filter(func(n): return n is Box)[0].find_children("*", "Trail")[0]
+	check(trail.global_transform == Transform3D.IDENTITY, "trail not at origin: %s" % trail.global_transform)
 	if failed:
 		quit(1)
 	else:
