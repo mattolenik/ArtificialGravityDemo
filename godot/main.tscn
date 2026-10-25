@@ -1,8 +1,9 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="PackedScene" path="res://station.tscn" id="1"]
 [ext_resource type="Script" path="res://emitter.gd" id="2"]
 [ext_resource type="PackedScene" path="res://box.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://player.tscn" id="4"]
 
 [node name="Main" type="Node3D"]
 
@@ -19,9 +20,9 @@ spawn_camera = NodePath("../../SpawnCamera")
 [node name="SpawnCamera" type="Camera3D" parent="."]
 far = 35000.0
 
-[node name="MainCamera" type="Camera3D" parent="."]
-current = true
-far = 35000.0
+[node name="Player" parent="." node_paths=PackedStringArray("station") instance=ExtResource("4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -3195, -90.4)
+station = NodePath("../Station")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 0.7071, 0.7071, 0, -0.7071, 0.7071, 0, 0, 0)
