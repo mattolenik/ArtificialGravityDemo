@@ -7,6 +7,8 @@ shader_type spatial;
 uniform sampler2D material_tex : filter_nearest;
 // Albedo by material id, from materials.tres.
 uniform vec4 material_color[3] : source_color;
+// Cells around the circumference, to wrap the speckle's cell index at theta = 0.
+uniform int n_theta;
 
 varying vec2 cell;
 // The normal's component toward the axis: 1 on flat ground.
@@ -40,6 +42,7 @@ void fragment() {
 	int id = clamp(int(round(texelFetch(material_tex, window_texel(k), 0).r * 255.0)), 0, 2);
 	// A little speckle per 1 m cell, keyed to the global cell so it matches across tiles.
 	ivec2 g = ivec2(int(round(tile_theta / dtheta)), int(round(tile_z))) - 64 + k;
+	g.x = (g.x + n_theta) % n_theta;
 	ALBEDO = material_color[id].rgb * mix(0.55, 1.0, smoothstep(0.5, 1.0, up)) * mix(1.0, 0.7, wet) * (0.96 + 0.08 * hash(g));
 	ROUGHNESS = 0.95;
 }

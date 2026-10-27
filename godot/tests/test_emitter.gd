@@ -55,6 +55,13 @@ func _initialize() -> void:
 	var sp := station.to_local(emitter.spawn_point())
 	check(sp.distance_to(Vector3(100 * sin(PI / 4), -100 * cos(PI / 4), 777)) < 1e-3, "spawn at viewer angle %s" % sp)
 	check(emitter.spinward().is_equal_approx(station.global_basis * Vector3(cos(PI / 4), sin(PI / 4), 0)), "spinward rotates with the viewer")
+	# With a viewer and distance 0, boxes spawn 10 m above the viewer, toward the axis.
+	emitter.distance_from_axis = 0
+	var r := 2000 * sqrt(2.0) - 10
+	sp = station.to_local(emitter.spawn_point())
+	check(sp.distance_to(Vector3(r * sin(PI / 4), -r * cos(PI / 4), 777)) < 1e-3, "default spawn 10 m above the viewer %s" % sp)
+	check(emitter.info_text().contains("%.2f m/s²" % (9.8 * r / station.radius)), "gravity at the effective spawn distance")
+	emitter.distance_from_axis = 100
 	emitter.viewer = null
 	check(station.to_local(emitter.spawn_point()).is_equal_approx(Vector3(0, -100, emitter.position.z)), "no viewer restores the fixed point")
 	# Trail vertices are global, so the ribbon must not inherit the station's offset

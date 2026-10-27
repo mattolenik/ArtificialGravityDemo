@@ -37,11 +37,15 @@ func _ready() -> void:
 	mesh.size = Vector2.ONE * TerrainWindow.TILE
 	mesh.subdivide_width = TerrainWindow.TILE - 1
 	mesh.subdivide_depth = TerrainWindow.TILE - 1
-	# The shaders move every vertex; this box holds any tile in its node's frame.
-	mesh.custom_aabb = AABB(Vector3(-70, -10, -70), Vector3(140, 2100, 140))
+	# The shaders move every vertex; this box holds any tile in its node's frame. Across, a vertex sits up
+	# to (R - h) sin(64.5 dtheta) from the centre (about 79 m at the hull on the default world, where a
+	# cell is 1.23 m wide); along, 64.5 m; up, under h_sea + h_mtn plus 1 m of curvature.
+	var half := params.radius * sin((TerrainWindow.TILE / 2.0 + 1.0) * params.dtheta()) + 1.0
+	mesh.custom_aabb = AABB(Vector3(-half, -10, -half), Vector3(2.0 * half, 2100, 2.0 * half))
 	var ground := _material(preload("res://terrain/shaders/tile.gdshader"))
 	ground.set_shader_parameter("material_tex", window.texture_rd("material"))
 	ground.set_shader_parameter("material_color", preload("res://terrain/materials.tres").color)
+	ground.set_shader_parameter("n_theta", params.n_theta())
 	var water := _material(preload("res://terrain/shaders/water.gdshader"))
 	for i in window.slots * window.slots:
 		var tile := MeshInstance3D.new()
@@ -132,4 +136,5 @@ func spawn_position() -> Vector3:
 ## The 1 m cell (theta index, z index) under the viewer.
 func viewer_cell() -> Vector2i:
 	var p := station.to_local(viewer.global_position)
-	return Vector2i(floori(fposmod(Cyl.theta_of(p), TAU) / params.dtheta()), floori(p.z + params.length / 2.0))
+	# posmod: an angle a hair under TAU can still divide out to n_theta.
+	return Vector2i(posmod(floori(Cyl.theta_of(p) / params.dtheta()), params.n_theta()), floori(p.z + params.length / 2.0))

@@ -15,6 +15,7 @@ enum LaunchDirection { RANDOM, SPINWARD, ANTISPINWARD, TOWARD_AXIS, TOWARD_FLOOR
 
 @export_group("Spawn point")
 ## Distance from the spin axis in m: 0 is on the axis, the cylinder's radius is the floor.
+## With a viewer set, 0 means 10 m above the viewer instead (its own distance from the axis - 10 m).
 @export_range(0, 3200, 0.1, "or_greater") var distance_from_axis := 0.0
 ## Angle around the axis in degrees: 0 is straight below the axis (local -Y), positive is spinward.
 @export var angle_around_axis := 0.0
@@ -59,9 +60,17 @@ func _outward() -> Vector3:
 	return Vector3(sin(a), -cos(a), 0)
 
 
+## distance_from_axis, or with a viewer and distance_from_axis 0, 10 m above the viewer.
+func _spawn_distance() -> float:
+	if viewer and distance_from_axis == 0.0:
+		var p := station.to_local(viewer.global_position)
+		return maxf(Vector2(p.x, p.y).length() - 10.0, 0.0)
+	return distance_from_axis
+
+
 func _local_spawn_point() -> Vector3:
 	var source := viewer if viewer else self
-	return _outward() * distance_from_axis + Vector3(0, 0, station.to_local(source.global_position).z)
+	return _outward() * _spawn_distance() + Vector3(0, 0, station.to_local(source.global_position).z)
 
 
 func _local_spinward() -> Vector3:
@@ -124,9 +133,10 @@ func spawned_count() -> int:
 
 
 func info_text() -> String:
-	var gravity := station.acceleration * distance_from_axis / station.radius
+	var distance := _spawn_distance()
+	var gravity := station.acceleration * distance / station.radius
 	var outside := ""
-	if distance_from_axis + box_size / 2.0 > station.radius:
+	if distance + box_size / 2.0 > station.radius:
 		outside = "\nThe spawn point is outside the floor."
 	return "Floor is %.0f m from the axis. Apparent gravity at the spawn point: %.2f m/s².%s\n%d boxes spawned." \
 			% [station.radius, gravity, outside, spawned_count()]
