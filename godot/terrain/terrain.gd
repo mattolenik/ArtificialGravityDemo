@@ -10,6 +10,8 @@ extends Node3D
 
 ## Emitted once the ground collider at the spawn site exists and the viewer stands on it.
 signal collider_live
+## Emitted after each floating-origin shift, with the station's z shift in m.
+signal origin_shifted(shift: float)
 
 @export var station: Station
 ## The window follows this node.
@@ -161,6 +163,7 @@ func _physics_process(_delta: float) -> void:
 	var shift := origin_shift_for(viewer.global_position.z)
 	if shift != 0.0:
 		station.position.z += shift
+		origin_shifted.emit(shift)
 
 
 func _process(_delta: float) -> void:

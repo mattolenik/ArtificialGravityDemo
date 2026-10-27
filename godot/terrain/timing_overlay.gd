@@ -4,9 +4,14 @@
 ## "n/a" there, and the CPU time Performance.TIME_PROCESS reports (the slowest frame of the last second).
 extends Label
 
+## One compute list's GPU time in ms, for each begin/end pair that has a time. Each captured frame is
+## read once, so a pair is announced once.
+signal timed(pass_name: String, ms: float)
+
 ## Last nonzero GPU time per pass in ms.
 var _gpu := {"detail": 0.0, "bake": 0.0}
 var _frames := 0
+var _stamp_frame := -1
 
 
 func _ready() -> void:
@@ -16,19 +21,9 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	# Every frame, so a pass is seen in the one frame it ran; the text changes every 30.
 	var rd := RenderingServer.get_rendering_device()
-	var begin := {}
-	var sum := {}
-	for i in rd.get_captured_timestamps_count():
-		var stamp := rd.get_captured_timestamp_name(i)
-		var t := rd.get_captured_timestamp_gpu_time(i)
-		if stamp.ends_with("_begin"):
-			begin[stamp.trim_suffix("_begin")] = t
-		elif stamp.ends_with("_end") and begin.has(stamp.trim_suffix("_end")):
-			var pass_name := stamp.trim_suffix("_end")
-			sum[pass_name] = sum.get(pass_name, 0) + t - begin[pass_name]
-	for pass_name: String in _gpu:
-		if sum.get(pass_name, 0) > 0:
-			_gpu[pass_name] = sum[pass_name] / 1.0e6  # ns
+	if rd.get_captured_timestamps_frame() != _stamp_frame:
+		_stamp_frame = rd.get_captured_timestamps_frame()
+		_read_stamps(rd)
 	_frames += 1
 	if _frames % 30 != 0:
 		return
@@ -40,3 +35,21 @@ func _process(_delta: float) -> void:
 	if times["frame"] <= 0.0:
 		s += "   CPU %.2f ms" % (Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
 	text = s
+
+
+func _read_stamps(rd: RenderingDevice) -> void:
+	var begin := {}
+	var sum := {}
+	for i in rd.get_captured_timestamps_count():
+		var stamp := rd.get_captured_timestamp_name(i)
+		var t := rd.get_captured_timestamp_gpu_time(i)
+		if stamp.ends_with("_begin"):
+			begin[stamp.trim_suffix("_begin")] = t
+		elif stamp.ends_with("_end") and begin.has(stamp.trim_suffix("_end")):
+			var pass_name := stamp.trim_suffix("_end")
+			sum[pass_name] = sum.get(pass_name, 0) + t - begin[pass_name]
+			if t > begin[pass_name]:
+				timed.emit(pass_name, (t - begin[pass_name]) / 1.0e6)  # ns
+	for pass_name: String in _gpu:
+		if sum.get(pass_name, 0) > 0:
+			_gpu[pass_name] = sum[pass_name] / 1.0e6

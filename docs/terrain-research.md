@@ -363,6 +363,17 @@ Per-frame cost of the Su-equivalent stack alone, scaled by memory bandwidth sinc
 
 Parcels, wetting, collapse, the displaced-grid rendering and Godot's own frame come on top, and Godot has no asynchronous compute queue, so simulation time adds linearly to frame time. Collapse arriving a few frames after the cut is acceptable.
 
+**Slice 1 measurements, 2026-10-27, Apple M1 Max, 2560×1440, 512 window, 120 Hz V-Sync.** `godot --path . [--rendering-driver vulkan] res://terrain/smoke.tscn`: 2 s hold, 60 s spinward, 60 s axial, a 5 km flight, 7 origin shifts, 0 error lines on both drivers.
+
+| measurement | budget | Vulkan (MoltenVK) | Metal |
+|---|---|---|---|
+| GPU frame, mean / p99 | 6 / 16 ms | 4.20 / 6.69 ms | n/a (zero timestamps) |
+| frame interval, mean / p99 | 16 ms | 8.33 / 8.33 ms | 8.35 / 8.33 ms |
+| detail, 4-tile list max (per tile) | 2 ms per tile | 0.71 (0.18) ms | n/a |
+| bake max (median) | 1 ms | 0.69 (0.42) ms | n/a |
+
+Frames sit on the 8.33 ms refresh, so the GPU time is the figure that means anything. No budget was missed in this run, but the bake is marginal: its max was 0.69 to 1.12 ms over four 1440p runs and 1.05 and 1.76 ms at the 1152×648 default window.
+
 **Rendering without CPU meshing**
 
 - **Tiles as static grid meshes.** Each tile is a fixed vertex grid. Its vertex shader samples the solid, loose and water textures through `Texture2DRD`, which wraps the compute texture without a copy, displaces radially and maps onto the cylinder in the tile's local frame. Normals come from texture differences. Coarser grids for far tiles give LOD. Every displaced tile needs a `custom_aabb` covering its full displacement range or it gets culled. Integer textures are read with `texelFetch` through `usampler2D`; confirm that an `R32_UINT` texture binds correctly in a material before relying on it, and fall back to 16-bit pairs rather than float bit-casting.
