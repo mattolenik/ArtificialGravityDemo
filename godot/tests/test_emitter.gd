@@ -46,6 +46,17 @@ func _initialize() -> void:
 	# Handedness: spinward shows on the right of the spawn view, as in Unity
 	emitter.toggle_spawn_view()
 	check(emitter.spawn_camera.global_basis.x.dot(emitter.spinward()) > 0.99, "spinward on the right")
+	# With a viewer set, boxes spawn at the viewer's angle and z, spinward still tangent there.
+	station.position.x = 0
+	var viewer := Node3D.new(); station.add_child(viewer)
+	viewer.position = Vector3(2000, -2000, 777)  # 45 degrees spinward of the bottom
+	emitter.viewer = viewer
+	emitter.distance_from_axis = 100
+	var sp := station.to_local(emitter.spawn_point())
+	check(sp.distance_to(Vector3(100 * sin(PI / 4), -100 * cos(PI / 4), 777)) < 1e-3, "spawn at viewer angle %s" % sp)
+	check(emitter.spinward().is_equal_approx(station.global_basis * Vector3(cos(PI / 4), sin(PI / 4), 0)), "spinward rotates with the viewer")
+	emitter.viewer = null
+	check(station.to_local(emitter.spawn_point()).is_equal_approx(Vector3(0, -100, emitter.position.z)), "no viewer restores the fixed point")
 	# Trail vertices are global, so the ribbon must not inherit the station's offset
 	station.position.x = 1000
 	emitter.count = 1; emitter.spawn()

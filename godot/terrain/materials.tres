@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="MaterialSet" load_steps=2 format=3]
+
+[ext_resource type="Script" uid="uid://dimwf7roa7bw5" path="res://terrain/material_set.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+names = PackedStringArray("dirt", "clay", "rock")
+color = PackedColorArray(0.45, 0.33, 0.2, 1, 0.6, 0.55, 0.45, 1, 0.5, 0.5, 0.52, 1)
+porosity = PackedFloat32Array(0.4, 0.5, 0)
+wetting_distance = PackedFloat32Array(3, 0.1, 0)
+swell_factor = PackedFloat32Array(1.25, 1.35, 1.6)
+repose_dry = PackedFloat32Array(35, 40, 40)
+repose_damp = PackedFloat32Array(40, 45, 40)
+repose_saturated = PackedFloat32Array(20, 0, 40)
+roof_span_dry = PackedFloat32Array(4, 6, 20)
+roof_span_saturated = PackedFloat32Array(1.5, 2, 20)
+stable_slope_dry = PackedFloat32Array(60, 70, 90)
+stable_slope_saturated = PackedFloat32Array(35, 30, 90)
+compression_index = PackedFloat32Array(0.05, 0.5, 0.005)

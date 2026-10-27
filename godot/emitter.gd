@@ -1,5 +1,6 @@
 ## Spawns test boxes inside the station to see how falling objects behave.
-## Place it as a child of the station; only its local Z (position along the axis) is used.
+## Place it as a child of the station; only its local Z (position along the axis) is used,
+## unless a viewer is set, whose angle and Z then replace the spawn point's.
 class_name Emitter
 extends Node3D
 
@@ -9,6 +10,8 @@ enum LaunchDirection { RANDOM, SPINWARD, ANTISPINWARD, TOWARD_AXIS, TOWARD_FLOOR
 @export var box_scene: PackedScene
 @export var info_label: Label
 @export var spawn_camera: Camera3D
+## When set, boxes spawn at this node's angle around the axis and its Z instead of the fixed point.
+@export var viewer: Node3D
 
 @export_group("Spawn point")
 ## Distance from the spin axis in m: 0 is on the axis, the cylinder's radius is the floor.
@@ -51,11 +54,14 @@ func _process(_delta: float) -> void:
 ## Outward at the spawn point, in station space.
 func _outward() -> Vector3:
 	var a := deg_to_rad(angle_around_axis)
+	if viewer:
+		a = Cyl.theta_of(station.to_local(viewer.global_position))
 	return Vector3(sin(a), -cos(a), 0)
 
 
 func _local_spawn_point() -> Vector3:
-	return _outward() * distance_from_axis + Vector3(0, 0, station.to_local(global_position).z)
+	var source := viewer if viewer else self
+	return _outward() * distance_from_axis + Vector3(0, 0, station.to_local(source.global_position).z)
 
 
 func _local_spinward() -> Vector3:
