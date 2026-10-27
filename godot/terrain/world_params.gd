@@ -1,0 +1,71 @@
+## Every knob of a generated world, plus the grid sizes derived from the geometry. Saved with the
+## world, so a world file reproduces itself regardless of later changes to the defaults.
+class_name WorldParams
+extends Resource
+
+@export var seed: int = 1
+## Hull radius in m, and axial length in m.
+@export var radius: float = 3200
+@export var length: float = 32000
+## Gravity at the hull in m/s^2.
+@export var g_hull: float = 9.8
+## Datum: height of sea level above the hull, in m.
+@export var h_sea: float = 400
+## Terrain relief is defined as h_ref metres on a world with gravity g_ref (scaled by g_sea).
+@export var h_ref: float = 1000
+@export var g_ref: float = 9.8
+## Macro grid cell size in m.
+@export var macro_cell: float = 32
+@export var sea_z: float = 0
+@export var sea_width: float = 3000
+@export var sea_edge_noise: float = 600
+@export var sea_depth_max: float = 400
+@export var island_count: int = 6
+@export var region_scale: float = 4000
+@export var river_sources_per_km2: float = 0.08
+@export var river_q_min: float = 2.0
+@export var lake_rate: float = 0.33
+@export var cliff_min: float = 10
+@export var cliff_max: float = 60
+@export var cliff_fraction: float = 0.15
+@export var bank_distance: float = 10
+@export var bank_slope_deg: float = 35
+## Bedrock depth below the surface in m, [min, max] per region.
+@export var bedrock_depth: Dictionary = {"flat": [150, 300], "hill": [60, 150], "mountain": [0, 40]}
+@export var clay_thickness: Vector2 = Vector2(2, 10)
+@export var clay_fraction: float = 0.2
+@export var spawn_max_slope_deg: float = 5
+@export var spawn_river_distance: float = 100
+
+
+## Samples around the sea-level circumference at about 1 m, as a power of two so tiles divide it.
+func n_theta() -> int:
+	return 2 ** roundi(log(TAU * (radius - h_sea)) / log(2.0))
+
+
+## Samples along the axis at 1 m, rounded down to a multiple of 128.
+func n_z() -> int:
+	return floori(roundi(length) / 128.0) * 128
+
+
+func macro_w() -> int:
+	return floori(n_theta() / 32.0)
+
+
+func macro_h() -> int:
+	return floori(n_z() / 32.0)
+
+
+## Gravity at sea level in m/s^2.
+func g_sea() -> float:
+	return g_hull * (radius - h_sea) / radius
+
+
+## Mountain height in m: h_ref on a g_ref world, scaled to the gravity at sea level.
+func h_mtn() -> float:
+	return h_ref * g_ref / g_sea()
+
+
+## Angle between neighbouring samples around the sea-level circumference.
+func dtheta() -> float:
+	return TAU / n_theta()
