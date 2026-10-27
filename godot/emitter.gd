@@ -112,6 +112,7 @@ func spawn() -> void:
 		var trail: Trail = box.get_node("Trail")
 		trail.width = trail_width
 		trail.lifetime = trail_time
+		trail.frame = station
 		station.add_child(box)
 		box.global_position = station.to_global(_local_spawn_point() + offset)
 		box.global_rotation = station.global_rotation

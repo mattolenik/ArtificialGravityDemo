@@ -30,6 +30,15 @@ func _initialize() -> void:
 	# The far-ring window at 8 m has 16 tiles around.
 	var f := TerrainWindow.new(); f.configure(p, 512, 8.0)
 	check(f.tiles_around == 16 and f.tiles_along == 31, "far window %d %d" % [f.tiles_around, f.tiles_along])
+	# What a window draws, for the coarser levels' holes: first cell centre to one cell past the last.
+	w.center_tile = Vector2i(10, 249)  # wanted set from tile (8, 246)
+	var e := w.extent()
+	check(absf(e.x - 1280.5 * p.dtheta()) < 1e-6 and absf(e.y - (-16000.0 + 246 * 128 + 256.5)) < 1e-3 \
+			and absf(e.z - 256 * p.dtheta()) < 1e-6 and e.w == 256.0, "main extent %s" % e)
+	f.center_tile = Vector2i(3, 30)  # wanted set from tile (1, 27): 8 m cells 128..639 around, the last row ends at 31748 m
+	e = f.extent()
+	check(absf(e.x - 3076.0 * p.dtheta()) < 1e-6 and absf(e.y + e.w - (-16000.0 + 31748.0)) < 1e-3 \
+			and absf(e.z - 2048 * p.dtheta()) < 1e-6 and e.w == 2048.0, "far extent %s" % e)
 	# Collider patch frame: local Y points at the axis, X is spinward, origin on the hull.
 	var patch := ColliderPatch.new()
 	patch.set_frame(0.5 * PI, 300.0, 3200.0)

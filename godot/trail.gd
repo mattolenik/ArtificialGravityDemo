@@ -5,6 +5,9 @@ extends MeshInstance3D
 @export var width := 1.16
 @export var lifetime := 100.0
 @export var min_distance := 0.5
+## Points are kept in this node's space (the station, so a floating-origin shift moves the trail with the
+## world); global space when unset.
+var frame: Node3D
 
 var points := PackedVector3Array()
 var times := PackedFloat64Array()
@@ -40,17 +43,20 @@ func prune(now: float) -> void:
 
 func _process(delta: float) -> void:
 	_now += delta
-	add_point((get_parent() as Node3D).global_position, _now)
+	if frame:
+		global_transform = frame.global_transform
+	add_point(global_transform.affine_inverse() * (get_parent() as Node3D).global_position, _now)
 	prune(_now)
 	_mesh.clear_surfaces()
 	var cam := get_viewport().get_camera_3d()
 	if cam == null or points.size() < 2:
 		return
+	var eye := global_transform.affine_inverse() * cam.global_position
 	_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
 	for i in points.size():
 		var p := points[i]
 		var tangent := points[mini(i + 1, points.size() - 1)] - points[maxi(i - 1, 0)]
-		var side := tangent.cross(cam.global_position - p).normalized() * width / 2.0
+		var side := tangent.cross(eye - p).normalized() * width / 2.0
 		_mesh.surface_add_vertex(p - side)
 		_mesh.surface_add_vertex(p + side)
 	_mesh.surface_end()

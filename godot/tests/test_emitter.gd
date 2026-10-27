@@ -64,12 +64,15 @@ func _initialize() -> void:
 	emitter.distance_from_axis = 100
 	emitter.viewer = null
 	check(station.to_local(emitter.spawn_point()).is_equal_approx(Vector3(0, -100, emitter.position.z)), "no viewer restores the fixed point")
-	# Trail vertices are global, so the ribbon must not inherit the station's offset
+	# Trail points are kept in the station's space, so the ribbon lands on the box once, offset or not
 	station.position.x = 1000
 	emitter.count = 1; emitter.spawn()
 	await process_frame
-	var trail: Trail = station.get_children().filter(func(n): return n is Box)[0].find_children("*", "Trail")[0]
-	check(trail.global_transform == Transform3D.IDENTITY, "trail not at origin: %s" % trail.global_transform)
+	await process_frame
+	var box: Box = station.get_children().filter(func(n): return n is Box)[0]
+	var trail: Trail = box.find_children("*", "Trail")[0]
+	check(trail.points.size() > 0 and (trail.global_transform * trail.points[-1]).distance_to(box.global_position) < trail.min_distance + 0.1,
+			"trail point on the box: %s vs %s" % [trail.global_transform * trail.points[-1] if trail.points.size() > 0 else Vector3.INF, box.global_position])
 	if failed:
 		quit(1)
 	else:

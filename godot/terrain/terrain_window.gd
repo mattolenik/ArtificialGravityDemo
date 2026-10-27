@@ -36,6 +36,8 @@ var _shader: RID
 var _pipeline: RID
 var _sets: Array[RID] = []
 var _resident := {}  # slot -> tile
+## The window whose macro uploads, sampler and pipeline this one shares; it frees them.
+var _source: TerrainWindow
 
 
 ## Tile counts for a window of `size` cells at `cell` m. No GPU work.
@@ -53,28 +55,59 @@ func configure(p: WorldParams, window_size: int = 512, cell_size: float = 1.0) -
 
 
 ## Creates the window textures, uploads the macro maps, compiles detail.glsl and builds its uniform
-## sets, on the render thread.
-func setup(p: WorldParams, m: MacroMaps, window_size: int = 512, cell_size: float = 1.0) -> void:
+## sets, on the render thread. Given a source window that is already set up, shares its macro uploads,
+## sampler and pipeline instead of making its own.
+func setup(p: WorldParams, m: MacroMaps, window_size: int = 512, cell_size: float = 1.0, source: TerrainWindow = null) -> void:
 	configure(p, window_size, cell_size)
 	maps = m
+	_source = source
 	_resident.clear()
 	RenderingServer.call_on_render_thread(_setup_rd)
 
 
 func _setup_rd() -> void:
 	_rd = RenderingServer.get_rendering_device()
+	var macro_set := RID()
+	if _source == null:
+		macro_set = _upload_macro()
+	elif not _source._sets.is_empty():
+		_shader = _source._shader
+		_pipeline = _source._pipeline
+		_sampler = _source._sampler
+		_macro = _source._macro
+		macro_set = _source._sets[0]
+	if not macro_set.is_valid():
+		return
+	var usage := RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT \
+		| RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT
+	var window_uniforms: Array[RDUniform] = []
+	for i in FIELDS.size():
+		var format := RenderingDevice.DATA_FORMAT_R32_SFLOAT if i < 5 else RenderingDevice.DATA_FORMAT_R8_UNORM
+		var rid := _rd.texture_create(_format(size, size, format, usage), RDTextureView.new())
+		_textures[FIELDS[i]] = rid
+		var u := RDUniform.new()
+		u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+		u.binding = i
+		u.add_id(rid)
+		window_uniforms.append(u)
+	_sets = [macro_set, _rd.uniform_set_create(window_uniforms, _shader, 1)]
+
+
+## Compiles detail.glsl, uploads the macro maps and returns their uniform set (set 0), or an invalid RID
+## after reporting a failure.
+func _upload_macro() -> RID:
 	var spirv: RDShaderSPIRV = load("res://terrain/shaders/detail.glsl").get_spirv()
 	if spirv.compile_error_compute != "":
 		push_error("detail.glsl: %s" % spirv.compile_error_compute)
-		return
+		return RID()
 	_shader = _rd.shader_create_from_spirv(spirv)
 	if not _shader.is_valid():
 		push_error("detail.glsl: shader creation failed")
-		return
+		return RID()
 	_pipeline = _rd.compute_pipeline_create(_shader)
 	if not _pipeline.is_valid():
 		push_error("detail.glsl: pipeline creation failed")
-		return
+		return RID()
 	var ss := RDSamplerState.new()
 	ss.min_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
 	ss.mag_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
@@ -99,19 +132,7 @@ func _setup_rd() -> void:
 		u.add_id(_sampler)
 		u.add_id(rid)
 		macro_uniforms.append(u)
-	var usage := RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT \
-		| RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT
-	var window_uniforms: Array[RDUniform] = []
-	for i in FIELDS.size():
-		var format := RenderingDevice.DATA_FORMAT_R32_SFLOAT if i < 5 else RenderingDevice.DATA_FORMAT_R8_UNORM
-		var rid := _rd.texture_create(_format(size, size, format, usage), RDTextureView.new())
-		_textures[FIELDS[i]] = rid
-		var u := RDUniform.new()
-		u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
-		u.binding = i
-		u.add_id(rid)
-		window_uniforms.append(u)
-	_sets = [_rd.uniform_set_create(macro_uniforms, _shader, 0), _rd.uniform_set_create(window_uniforms, _shader, 1)]
+	return _rd.uniform_set_create(macro_uniforms, _shader, 0)
 
 
 func _notification(what: int) -> void:
@@ -119,10 +140,13 @@ func _notification(what: int) -> void:
 		return
 	for t: Texture2DRD in _wrappers.values():
 		t.texture_rd_rid = RID()
-	# Freeing the shader frees its pipeline and uniform sets.
-	var rids: Array[RID] = [_shader, _sampler]
+	var rids: Array[RID] = []
 	rids.append_array(_textures.values())
-	rids.append_array(_macro)
+	# Freeing the shader frees its pipeline and uniform sets. A sharing window leaves them to its source,
+	# which it keeps alive.
+	if _source == null:
+		rids.append_array([_shader, _sampler])
+		rids.append_array(_macro)
 	RenderingServer.call_on_render_thread(_free_rids.bind(_rd, rids))
 
 
@@ -160,6 +184,16 @@ func macro_rid(field: String) -> RID:
 	return _macro[MACRO.find(field)]
 
 
+## The macro map `field` as uploaded, wrapped for materials.
+func macro_texture_rd(field: String) -> Texture2DRD:
+	var key := "macro " + field
+	if not _wrappers.has(key):
+		var t := Texture2DRD.new()
+		t.texture_rd_rid = macro_rid(field)
+		_wrappers[key] = t
+	return _wrappers[key]
+
+
 func macro_sampler() -> RID:
 	return _sampler
 
@@ -188,6 +222,14 @@ func tile_of_cell(i: int, j: int) -> Vector2i:
 func tile_center(tile: Vector2i) -> Vector2:
 	var half := (TILE / 2.0) * cell
 	return Vector2((tile.x * TILE * cell + half) * params.dtheta(), -params.length / 2.0 + tile.y * TILE * cell + half)
+
+
+## (theta, z) of the centre and the half extents, in rad and m, of what the wanted set around
+## center_tile draws: from its first cell centre to one cell past its last, as the tiles place them.
+func extent() -> Vector4:
+	var half := size / 2.0
+	var c := (Vector2(wanted_origin(center_tile) * TILE) + Vector2.ONE * (half + 0.5)) * cell
+	return Vector4(c.x * params.dtheta(), -params.length / 2.0 + c.y, half * cell * params.dtheta(), half * cell)
 
 
 ## The first tile of the wanted set around center: offset -slots/2 in theta, wrapped, and along z slid so
@@ -234,6 +276,7 @@ func resident_tiles() -> Array[Vector2i]:
 
 
 func _dispatch(tiles: Array[Vector2i]) -> void:
+	_rd.capture_timestamp("detail_begin")
 	var list := _rd.compute_list_begin()
 	_rd.compute_list_bind_compute_pipeline(list, _pipeline)
 	_rd.compute_list_bind_uniform_set(list, _sets[0], 0)
@@ -245,6 +288,7 @@ func _dispatch(tiles: Array[Vector2i]) -> void:
 		@warning_ignore("integer_division")
 		_rd.compute_list_dispatch(list, TILE / 8, TILE / 8, 1)
 	_rd.compute_list_end()
+	_rd.capture_timestamp("detail_end")
 
 
 ## Matches the Params block in detail.glsl (std430, 64 bytes with its padding).

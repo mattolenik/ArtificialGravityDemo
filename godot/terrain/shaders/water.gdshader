@@ -1,4 +1,4 @@
-// Water of one 128 m tile of the terrain window: rivers follow their profile, lakes and the sea are flat.
+// Water of one 128-cell tile of a terrain window: rivers follow their profile, lakes and the sea are flat.
 shader_type spatial;
 // Two-sided, so the surface also shows from the bed.
 render_mode cull_disabled;
@@ -10,6 +10,7 @@ varying float depth;
 
 void vertex() {
 	ivec2 k = grid_cell(VERTEX);
+	theta_z = theta_z_of(VERTEX.x, VERTEX.z);
 	float s = height_of(surface_tex, k);
 	float w = height_of(water_tex, k);
 	depth = w > 0.0 ? w - s : -1.0;
@@ -19,7 +20,7 @@ void vertex() {
 }
 
 void fragment() {
-	if (depth <= 0.05) {
+	if (depth <= 0.05 || in_hole(theta_z, 0.0)) {
 		discard;
 	}
 	ALBEDO = mix(vec3(0.1, 0.45, 0.4), vec3(0.02, 0.1, 0.18), clamp(depth / 30.0, 0.0, 1.0));
