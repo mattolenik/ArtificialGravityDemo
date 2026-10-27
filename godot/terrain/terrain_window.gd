@@ -24,6 +24,8 @@ var cell: float
 var tiles_around: int
 var tiles_along: int
 var slots: int
+## The tile move_to last centred the window on.
+var center_tile: Vector2i
 
 var _rd: RenderingDevice
 var _textures := {}  # field -> RID
@@ -152,6 +154,16 @@ func texture_rid(field: String) -> RID:
 	return _textures[field]
 
 
+## The macro map `field` as uploaded for detail.glsl, and the sampler bound with it (linear, theta
+## repeats, z clamps).
+func macro_rid(field: String) -> RID:
+	return _macro[MACRO.find(field)]
+
+
+func macro_sampler() -> RID:
+	return _sampler
+
+
 static func wrap_tile(ti: int, around: int) -> int:
 	return posmod(ti, around)
 
@@ -178,27 +190,33 @@ func tile_center(tile: Vector2i) -> Vector2:
 	return Vector2((tile.x * TILE * cell + half) * params.dtheta(), -params.length / 2.0 + tile.y * TILE * cell + half)
 
 
-## The slots x slots tiles around center_tile (offsets -slots/2 .. slots/2 - 1), wrapped in theta and
-## slid along z so they stay within [0, tiles_along).
-func wanted_tiles(center_tile: Vector2i) -> Array[Vector2i]:
+## The first tile of the wanted set around center: offset -slots/2 in theta, wrapped, and along z slid so
+## the set stays within [0, tiles_along).
+func wanted_origin(center: Vector2i) -> Vector2i:
 	@warning_ignore("integer_division")
 	var half := slots / 2
-	var y0 := clampi(center_tile.y - half, 0, maxi(tiles_along - slots, 0))
+	return Vector2i(wrap_tile(center.x - half, tiles_around), clampi(center.y - half, 0, maxi(tiles_along - slots, 0)))
+
+
+## The slots x slots tiles from wanted_origin(center) on, theta wrapped.
+func wanted_tiles(center: Vector2i) -> Array[Vector2i]:
+	var o := wanted_origin(center)
 	var out: Array[Vector2i] = []
-	for y in range(y0, mini(y0 + slots, tiles_along)):
-		for dx in range(-half, slots - half):
-			out.append(Vector2i(wrap_tile(center_tile.x + dx, tiles_around), y))
+	for y in range(o.y, mini(o.y + slots, tiles_along)):
+		for dx in slots:
+			out.append(Vector2i(wrap_tile(o.x + dx, tiles_around), y))
 	return out
 
 
-## Brings the window to the tiles around center_tile, generating every tile that is new to its slot
+## Brings the window to the tiles around center, generating every tile that is new to its slot
 ## in one compute list on the render thread.
-func move_to(center_tile: Vector2i) -> void:
+func move_to(center: Vector2i) -> void:
 	if not _pipeline.is_valid():
 		push_error("TerrainWindow.move_to: no detail pipeline (setup not run or failed)")
 		return
+	center_tile = center
 	var dirty: Array[Vector2i] = []
-	for t in wanted_tiles(center_tile):
+	for t in wanted_tiles(center):
 		var s := slot_of(t)
 		if _resident.get(s) != t:
 			_resident[s] = t

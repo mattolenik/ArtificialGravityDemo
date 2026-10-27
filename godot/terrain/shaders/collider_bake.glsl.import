@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://cgnkr10elg71l"
+path="res://.godot/imported/collider_bake.glsl-cbf47fe756bf20f9dc158e2da650f2cd.res"
+
+[deps]
+
+source_file="res://terrain/shaders/collider_bake.glsl"
+dest_files=["res://.godot/imported/collider_bake.glsl-cbf47fe756bf20f9dc158e2da650f2cd.res"]
+
+[params]
+

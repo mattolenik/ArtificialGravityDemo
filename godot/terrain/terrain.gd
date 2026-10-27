@@ -1,12 +1,12 @@
 ## The ground inside the station: loads (or generates) the world, keeps the 1 m TerrainWindow around the
 ## viewer, and draws it as one tile mesh per window slot, each with a water mesh as its child, bent onto
-## the cylinder by tile.gdshader and water.gdshader. Place it under the Station at its origin, so its
-## space is station space.
+## the cylinder by tile.gdshader and water.gdshader; a ColliderPatch under the viewer is the ground. The
+## viewer is held still until the first patch is live, then stood on it at the spawn site. Place it under
+## the Station at its origin, so its space is station space.
 class_name Terrain
 extends Node3D
 
-## Emitted once the ground collider around the viewer exists (Task 7).
-@warning_ignore("unused_signal")
+## Emitted once the ground collider at the spawn site exists and the viewer stands on it.
 signal collider_live
 
 @export var station: Station
@@ -20,13 +20,17 @@ signal collider_live
 var params: WorldParams
 var maps: MacroMaps
 var window: TerrainWindow
+var patch: ColliderPatch
 
 ## One ground mesh per slot, slot (x, y) at index y * slots + x; its child is the water mesh.
 var _tiles: Array[MeshInstance3D] = []
 var _center := Vector2i(-1, -1)
+## Set once the first patch is live and the viewer is released.
+var _live := false
 
 
 func _ready() -> void:
+	viewer.process_mode = PROCESS_MODE_DISABLED
 	# Children are ready before their parent, so the station may not have measured its hull yet.
 	if station.radius == 0.0:
 		await station.ready
@@ -57,6 +61,25 @@ func _ready() -> void:
 		tile.add_child(w)
 		add_child(tile)
 		_tiles.append(tile)
+	# The viewer's scene position is under the sea floor: start the window and the patch at the spawn site.
+	patch = ColliderPatch.new()
+	add_child(patch)
+	patch.live.connect(_on_first_live, CONNECT_ONE_SHOT)
+	var spawn := maps.spawn
+	_move_window(window.tile_of_cell(floori(spawn.x / params.dtheta()), floori(spawn.y + params.length / 2.0)))
+	patch.rebuild(window, spawn.x, spawn.y)
+
+
+## Stands the viewer 2 m above the patch's centre, facing spinward with its up toward the axis, and lets
+## it go.
+func _on_first_live(center: Vector2) -> void:
+	var up := Vector3(-sin(center.x), cos(center.x), 0)
+	var forward := Vector3(cos(center.x), sin(center.x), 0)
+	var at := Cyl.position(center.x, center.y, patch.center_height() + 2.0, params.radius)
+	viewer.global_transform = station.global_transform * Transform3D(Basis(up.cross(-forward), up, -forward), at)
+	viewer.process_mode = PROCESS_MODE_INHERIT
+	_live = true
+	collider_live.emit()
 
 
 func _load_world() -> void:
@@ -94,8 +117,17 @@ func _material(shader: Shader) -> ShaderMaterial:
 
 
 func _process(_delta: float) -> void:
+	if not _live:
+		return
 	var cell := viewer_cell()
-	var center := window.tile_of_cell(cell.x, cell.y)
+	_move_window(window.tile_of_cell(cell.x, cell.y))
+	var p := station.to_local(viewer.global_position)
+	if patch.needs_rebuild(p):
+		patch.rebuild(window, Cyl.theta_of(p), p.z)
+
+
+## Moves the window to the tiles around center and points every tile node at its tile, if center changed.
+func _move_window(center: Vector2i) -> void:
 	if center == _center:
 		return
 	_center = center

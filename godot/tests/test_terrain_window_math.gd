@@ -30,5 +30,17 @@ func _initialize() -> void:
 	# The far-ring window at 8 m has 16 tiles around.
 	var f := TerrainWindow.new(); f.configure(p, 512, 8.0)
 	check(f.tiles_around == 16 and f.tiles_along == 31, "far window %d %d" % [f.tiles_around, f.tiles_along])
+	# Collider patch frame: local Y points at the axis, X is spinward, origin on the hull.
+	var patch := ColliderPatch.new()
+	patch.set_frame(0.5 * PI, 300.0, 3200.0)
+	check(patch.position.is_equal_approx(Vector3(3200, 0, 300)), "patch origin %s" % patch.position)
+	check(patch.basis.y.is_equal_approx(Vector3(-1, 0, 0)), "patch up toward the axis %s" % patch.basis.y)
+	check(patch.basis.x.is_equal_approx(Vector3(0, 1, 0)), "patch x spinward %s" % patch.basis.x)
+	check(patch.basis.z.is_equal_approx(Vector3(0, 0, 1)), "patch z axial")
+	var shape: HeightMapShape3D = patch.get_node("CollisionShape3D").shape
+	check(shape.map_width == 257 and shape.map_depth == 257, "patch samples")
+	check(patch.needs_rebuild(Vector3(3200, 0, 300) + patch.basis.x * 65.0), "rebuild beyond 64 m")
+	check(not patch.needs_rebuild(Vector3(3200, 0, 300) + patch.basis.x * 63.0), "no rebuild within 64 m")
+	patch.free()  # outside the tree, so nothing else frees it; a leaked body prints errors at exit
 	if failed: quit(1)
 	else: print("PASS"); quit(0)
