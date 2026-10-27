@@ -11,7 +11,7 @@ extends Resource
 @export var water_surface: Image
 ## 0 sea, 1 flat, 2 hill, 3 mountain, 4 island (FORMAT_R8).
 @export var region: Image
-## 255 in a cliff band (FORMAT_R8).
+## 255 on a cliff rim, the top of a cliff_min..cliff_max jump onto a plateau (FORMAT_R8).
 @export var cliff: Image
 ## 0 none, 1..8 the neighbour index (FORMAT_R8).
 @export var flow_dir: Image

@@ -31,6 +31,9 @@ class Heap:
 		cells.resize(capacity)
 
 	func push(key: float, cell: int) -> void:
+		if size == keys.size():
+			keys.resize(2 * size)
+			cells.resize(2 * size)
 		var i := size
 		size += 1
 		while i > 0:
@@ -362,16 +365,19 @@ func _profiles(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void
 	m.river = Image.create_from_data(w, h, false, Image.FORMAT_RGBF, tex.to_byte_array())
 
 
-## Cliff bands, then land heights. The cliff mask flags dry hill and mountain cells where |noise| is
-## below its cliff_fraction quantile, which gives bands along the noise's zero lines. Growth is
-## lowest-first from the sea and river cells at their water surface: popping cell c at height h gives
-## each unreached dry neighbour h + (s_region·b + s_river·(1 − b))·(1 + 2|noise|)·step·sqrt(max(0,
-## 1 − (h − h_sea) / h_mtn)), plus a cliff_min..cliff_max jump on a cliff cell, clamped to h_sea +
-## h_mtn; a lake cell is reached the same way but keeps its level. b = clamp(river distance /
-## (3·width), 0, 1) is the regional share: 0 on a river, 1 beyond three widths. A cell's height is
-## set when it is first reached, from its lowest neighbour, and it then drains there: flow_dir of
-## every land cell except river cells is re-pointed at the cell it grew from, so land drains downhill
-## to water and on to the sea without cycles. Writes surface, cliff and flow_dir.
+## Plateaus, then land heights. Plateaus are the dry hill and mountain cells where noise exceeds its
+## 1 − cliff_fraction quantile. Growth is lowest-first from the sea and river cells at their water
+## surface: popping cell c at height h gives each unreached dry neighbour h + (s_region·b + s_river·
+## (1 − b))·(1 + 2|noise|)·step·sqrt(max(0, 1 − (h − h_sea) / h_mtn)), clamped to h_sea + h_mtn. A
+## step from outside a plateau into it also adds a jump of cliff_min..cliff_max from low-frequency
+## noise (before the clamp), so the rim rises as one face and the plateau grows on from it at the
+## normal rate; cliff flags those rim cells, the tops of the jumps. b = clamp(river distance /
+## (3·width), 0, 1) is the regional share: 0 on a river, 1 beyond three widths. Each dry cell takes
+## its lowest candidate over the neighbours popped before it (Dijkstra with lazy deletion), so a rim
+## cell that the plateau itself reaches lower gets no jump and stands no lip above it. A lake cell
+## keeps its level. flow_dir of every land cell except river cells is re-pointed at the cell its
+## height came from, which was popped earlier, so land drains downhill to water and on to the sea
+## without cycles. Writes surface, cliff and flow_dir.
 func _grow(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void:
 	var w := p.macro_w()
 	var h := p.macro_h()
@@ -381,11 +387,13 @@ func _grow(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void:
 	var water := m.water_surface.get_data().to_float32_array()
 	var surface := m.surface.get_data().to_float32_array()
 	var river := m.river.get_data().to_float32_array()
-	var band := _noise(rng, 1.0 / 500.0)
-	band.fractal_type = FastNoiseLite.FRACTAL_NONE
+	var mesa := _noise(rng, 1.0 / 600.0)
+	mesa.fractal_type = FastNoiseLite.FRACTAL_NONE
+	var jump := _noise(rng, 1.0 / 400.0)
+	jump.fractal_type = FastNoiseLite.FRACTAL_NONE
 	var rough := _noise(rng, 1.0 / 1000.0)
-	var band_n := PackedFloat32Array()
-	band_n.resize(n)
+	var mesa_n := PackedFloat32Array()
+	mesa_n.resize(n)
 	var rough_n := PackedFloat32Array()
 	rough_n.resize(n)
 	var samples := PackedFloat32Array()
@@ -397,26 +405,31 @@ func _grow(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void:
 				continue
 			rough_n[i] = absf(rough.get_noise_3d(ring[x].x, ring[x].y, z))
 			if region[i] == 2 or region[i] == 3:
-				band_n[i] = absf(band.get_noise_3d(ring[x].x, ring[x].y, z))
-				samples.append(band_n[i])
+				mesa_n[i] = mesa.get_noise_3d(ring[x].x, ring[x].y, z)
+				samples.append(mesa_n[i])
+	var plateau := PackedByteArray()
+	plateau.resize(n)
+	if not samples.is_empty():
+		var t := _quantile(samples, 1.0 - p.cliff_fraction)
+		for i in n:
+			if (region[i] == 2 or region[i] == 3) and water[i] == 0.0 and mesa_n[i] > t:
+				plateau[i] = 1
 	var cliff := PackedByteArray()
 	cliff.resize(n)
-	if not samples.is_empty():
-		var t := _quantile(samples, p.cliff_fraction)
-		for i in n:
-			if (region[i] == 2 or region[i] == 3) and water[i] == 0.0 and band_n[i] < t:
-				cliff[i] = 255
 	var cap := p.h_sea + p.h_mtn()
 	var flow := m.flow_dir.get_data()
 	var heap := Heap.new(n)
-	var seen := PackedByteArray()
-	seen.resize(n)
+	var state := PackedByteArray()  # 0 unreached, 1 reached, 2 popped (final)
+	state.resize(n)
 	for i in n:
 		if water[i] > 0.0 and (region[i] == 0 or river[3 * i] == 0.0):
-			seen[i] = 1
+			state[i] = 1
 			heap.push(water[i], i)
 	while heap.size > 0:
 		var c := heap.pop()
+		if state[c] == 2:
+			continue  # stale entry of a cell that was lowered after it was pushed
+		state[c] = 2
 		var hc := water[c] if water[c] > 0.0 else surface[c]
 		var atten := sqrt(maxf(0.0, 1.0 - (hc - p.h_sea) / p.h_mtn()))
 		var x := c % w
@@ -427,18 +440,28 @@ func _grow(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void:
 			if ny < 0 or ny >= h:
 				continue
 			var i: int = ny * w + posmod(x + DX[j], w)
-			if seen[i]:
+			if state[i] == 2:
 				continue
-			seen[i] = 1
-			flow[i] = (j + 4) % 8 + 1
-			if water[i] == 0.0:
-				var width := river[3 * i + 1]
-				var b := 1.0 if width <= 0.0 else clampf(river[3 * i] / (3.0 * width), 0.0, 1.0)
-				var inc: float = (GROWTH_RATE[region[i]] * b + RIVER_RATE * (1.0 - b)) * (1.0 + 2.0 * rough_n[i]) * STEP[j] * atten
-				if cliff[i]:
-					inc += rng.randf_range(p.cliff_min, p.cliff_max)
-				surface[i] = minf(hc + inc, cap)
-			heap.push(surface[i], i)
+			if water[i] > 0.0:
+				if state[i] == 0:  # a lake cell: keeps its level, drains to the cell that reached it
+					state[i] = 1
+					flow[i] = (j + 4) % 8 + 1
+					heap.push(water[i], i)
+				continue
+			var width := river[3 * i + 1]
+			var b := 1.0 if width <= 0.0 else clampf(river[3 * i] / (3.0 * width), 0.0, 1.0)
+			var inc: float = (GROWTH_RATE[region[i]] * b + RIVER_RATE * (1.0 - b)) * (1.0 + 2.0 * rough_n[i]) * STEP[j] * atten
+			var rim := plateau[i] and not plateau[c]
+			if rim:
+				var u := 0.5 + 0.5 * jump.get_noise_3d(ring[i % w].x, ring[i % w].y, _z(ny, p))
+				inc += lerpf(p.cliff_min, p.cliff_max, clampf(u, 0.0, 1.0))
+			var hi := minf(hc + inc, cap)
+			if state[i] == 0 or hi < surface[i]:
+				state[i] = 1
+				surface[i] = hi
+				flow[i] = (j + 4) % 8 + 1
+				cliff[i] = 255 if rim else 0
+				heap.push(hi, i)
 	m.surface = _rf(surface, w, h)
 	m.cliff = _r8(cliff, w, h)
 	m.flow_dir = _r8(flow, w, h)
