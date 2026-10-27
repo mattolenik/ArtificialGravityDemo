@@ -160,7 +160,8 @@ func _drainage(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void
 ## River sources at river_sources_per_km2 over land, weighted by region (rejection sampled), each
 ## traced down flow_dir to the sea adding 1 to Q per cell. Cells with Q < river_q_min are dropped.
 ## The network is split into polylines, each from a headwater to the sea or to the cell where it
-## joins a larger river (at a confluence the branch with the largest Q continues).
+## joins a larger river (at a confluence the branch with the largest Q continues). theta is unwrapped
+## along each polyline (see _vertex).
 func _rivers(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void:
 	var w := p.macro_w()
 	var n := w * p.macro_h()
@@ -198,13 +199,13 @@ func _rivers(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void:
 	for i in n:
 		if region[i] == 0 or q[i] < q_min or main[i] >= 0:
 			continue
-		var line := PackedFloat32Array()
+		var line := _vertex(i, q[i], _theta(i % w, p), p)
 		var c := i
 		while true:
-			line.append_array(_vertex(c, q[c], p))
 			var d := _down(c, flow[c], w)
-			if region[d] == 0 or main[d] != c:
-				line.append_array(_vertex(d, q[c] if region[d] == 0 else q[d], p))
+			var end := region[d] == 0 or main[d] != c
+			line.append_array(_vertex(d, q[c] if region[d] == 0 else q[d], line[line.size() - 4], p))
+			if end:
 				break
 			c = d
 		rivers.append(line)
@@ -219,7 +220,7 @@ func _lakes(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void:
 		if rng.randf() >= p.lake_rate:
 			continue
 		var k := 4 * rng.randi_range(0, (r.size() >> 2) - 2)
-		lakes.append({"theta": r[k], "z": r[k + 1], "radius": 20.0 * sqrt(r[k + 3]), "level": 0.0})
+		lakes.append({"theta": fposmod(r[k], TAU), "z": r[k + 1], "radius": 20.0 * sqrt(r[k + 3]), "level": 0.0})
 	m.lakes = lakes
 
 
@@ -302,33 +303,71 @@ func _profiles(m: MacroMaps, p: WorldParams, _rng: RandomNumberGenerator) -> voi
 	m.river = Image.create_from_data(w, h, false, Image.FORMAT_RGBF, tex.to_byte_array())
 
 
-## Multi-source BFS over the grid (8 neighbours, x wrapping): for each cell, the source that reached
-## it first, or -1.
+## Exact Euclidean nearest source for every cell, x wrapping and y not: the index of the nearest
+## source cell, or -1 when there are none. Separable lower-envelope distance transform (Felzenszwalb
+## and Huttenlocher): the nearest source row in each column, then per row the lower envelope of the
+## parabolas (x - q)^2 + dy(q)^2 over the columns q unrolled to [-w/2, 3w/2). Linear in the cells.
 func _nearest(sources: PackedInt32Array, w: int, h: int) -> PackedInt32Array:
-	var origin := PackedInt32Array()
-	origin.resize(w * h)
-	origin.fill(-1)
-	var queue := sources.duplicate()
-	queue.resize(w * h)
+	var n := w * h
+	var is_source := PackedByteArray()
+	is_source.resize(n)
 	for i in sources:
-		origin[i] = i
-	var head := 0
-	var tail := sources.size()
-	while head < tail:
-		var i := queue[head]
-		head += 1
-		var x := i % w
-		@warning_ignore("integer_division")
-		var y := i / w
-		for j in 8:
-			var ny: int = y + DY[j]
-			if ny < 0 or ny >= h:
+		is_source[i] = 1
+	var row := PackedInt32Array()
+	row.resize(n)
+	for x in w:
+		var last := -1
+		for y in h:
+			if is_source[y * w + x]:
+				last = y
+			row[y * w + x] = last
+		last = -1
+		for y in range(h - 1, -1, -1):
+			var i := y * w + x
+			if is_source[i]:
+				last = y
+			if last >= 0 and (row[i] < 0 or last - y < y - row[i]):
+				row[i] = last
+	var origin := PackedInt32Array()
+	origin.resize(n)
+	origin.fill(-1)
+	@warning_ignore("integer_division")
+	var half := w / 2
+	var pos := PackedInt32Array()
+	pos.resize(2 * w)
+	var src := PackedInt32Array()
+	src.resize(2 * w)
+	var fq := PackedFloat64Array()
+	fq.resize(2 * w)
+	var edge := PackedFloat64Array()
+	edge.resize(2 * w)
+	for y in h:
+		var k := -1
+		for e in 2 * w:
+			var col := posmod(e - half, w)
+			var r := row[y * w + col]
+			if r < 0:
 				continue
-			var n: int = ny * w + posmod(x + DX[j], w)
-			if origin[n] < 0:
-				origin[n] = origin[i]
-				queue[tail] = n
-				tail += 1
+			var q := e - half
+			var f := float((r - y) * (r - y))
+			var s := -INF
+			while k >= 0:
+				s = (f + q * q - fq[k] - pos[k] * pos[k]) / (2.0 * (q - pos[k]))
+				if s > edge[k]:
+					break
+				k -= 1
+			k += 1
+			pos[k] = q
+			src[k] = r * w + col
+			fq[k] = f
+			edge[k] = s if k > 0 else -INF
+		if k < 0:
+			continue
+		var j := 0
+		for x in w:
+			while j < k and edge[j + 1] < x:
+				j += 1
+			origin[y * w + x] = src[j]
 	return origin
 
 
@@ -347,12 +386,14 @@ func _down(i: int, d: int, w: int) -> int:
 	return (i / w + DY[d - 1]) * w + posmod(i % w + DX[d - 1], w)
 
 
-## A polyline vertex [theta, z, width, Q] at the centre of cell i.
-func _vertex(i: int, q: float, p: WorldParams) -> PackedFloat32Array:
+## A polyline vertex [theta, z, width, Q] at the centre of cell i. theta is the cell's angle plus the
+## multiple of TAU that puts it within PI of near (the previous vertex's theta), so a polyline is
+## continuous across theta = 0 and its theta may leave [0, TAU).
+func _vertex(i: int, q: float, near: float, p: WorldParams) -> PackedFloat32Array:
 	var w := p.macro_w()
 	@warning_ignore("integer_division")
 	var y := i / w
-	return PackedFloat32Array([_theta(i % w, p), _z(y, p), 4.0 * sqrt(q), q])
+	return PackedFloat32Array([near + wrapf(_theta(i % w, p) - near, -PI, PI), _z(y, p), 4.0 * sqrt(q), q])
 
 
 ## Angle of the centre of column x.

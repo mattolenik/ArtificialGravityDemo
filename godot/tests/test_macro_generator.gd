@@ -57,6 +57,20 @@ func _initialize() -> void:
 	var far_cells := 0
 	for y in h: for x in w: if m.river.get_pixel(x, y).r > 100.0: far_cells += 1
 	check(far_cells > 0, "river distance field")
+	# The river distance is the exact Euclidean distance to the nearest river cell, wrapping in theta
+	# (the sea floor's distance to shore uses the same transform).
+	var river_cells: Array[Vector2i] = []
+	for r in m.rivers:
+		for i in range(0, r.size() - 4, 4): river_cells.append(m.cell(r[i], r[i + 1], p))
+	for y in range(0, h, 5): for x in range(0, w, 3):
+		var best := INF
+		for c in river_cells:
+			var dx := absi(x - c.x); dx = mini(dx, w - dx)
+			best = minf(best, Vector2(dx, y - c.y).length() * p.macro_cell)
+		check(absf(m.river.get_pixel(x, y).r - best) < 1e-2, "river distance at %d %d: %f vs %f" % [x, y, m.river.get_pixel(x, y).r, best])
+	# Polyline theta is unwrapped: consecutive vertices never jump across theta = 0.
+	for r in m.rivers:
+		for i in range(4, r.size(), 4): check(absf(r[i] - r[i - 4]) < PI, "theta unwrapped")
 	# Determinism.
 	var m2 := MacroGenerator.new().generate(small_params(7))
 	check(m.surface.get_data() == m2.surface.get_data() and m.water_surface.get_data() == m2.water_surface.get_data(), "deterministic")

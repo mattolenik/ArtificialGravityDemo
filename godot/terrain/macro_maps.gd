@@ -17,7 +17,9 @@ extends Resource
 @export var flow_dir: Image
 ## Distance to the nearest river centreline in m, that river's width in m, its surface height in m (FORMAT_RGBF).
 @export var river: Image
-## Each flattened [theta, z, width, Q, theta, z, width, Q, ...] from source to mouth.
+## Each flattened [theta, z, width, Q, theta, z, width, Q, ...] from source to mouth. theta is unwrapped
+## along a polyline (consecutive vertices differ by less than PI), so it may leave [0, TAU); wrap with
+## posmod or cell() when indexing.
 @export var rivers: Array[PackedFloat32Array] = []
 ## {"theta", "z", "radius", "level"}
 @export var lakes: Array[Dictionary] = []
