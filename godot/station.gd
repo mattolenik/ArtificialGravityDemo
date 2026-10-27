@@ -15,6 +15,8 @@ extends Node3D
 
 ## Distance from the axis to the outer hull, read from the mesh in _ready.
 var radius: float
+## Hull length along the axis, in m, read from the mesh in _ready.
+var length: float
 
 
 ## Isothermal air density at distance r from the axis: hydrostatic balance
@@ -36,6 +38,7 @@ func _ready() -> void:
 	# Assuming the mesh is a perfect cylinder on the outside,
 	# its bounds read (radius, length, radius) before the 90° turn.
 	radius = mesh.get_aabb().end.x
+	length = mesh.get_aabb().size.y
 	mesh.material_override = preload("res://oneill_grid.tres")
 	var shape := CollisionShape3D.new()
 	shape.shape = mesh.mesh.create_trimesh_shape()

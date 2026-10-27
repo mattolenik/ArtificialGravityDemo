@@ -14,6 +14,7 @@ func _initialize() -> void:
 	await physics_frame
 	# Mesh imported the right way round
 	check(absf(station.radius - 3200.0) < 1.0, "radius %f" % station.radius)
+	check(absf(station.length - 32000.0) < 1.0, "length %f" % station.length)
 	# Review Focus 1: on the axis
 	check(station.down_at(Vector3(0, 0, 5)) == Vector3.ZERO, "down on axis")
 	check(station.acceleration_at(Vector3(0, 0, 5), Vector3.ZERO) == Vector3.ZERO, "accel on axis")
