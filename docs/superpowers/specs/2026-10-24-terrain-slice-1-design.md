@@ -17,7 +17,7 @@ Goals:
 - Procedurally generated terrain over the full hull, deterministic from a seed, with mountains, valleys, flatlands, rivers, lakes and islands.
 - The datum from the research doc: sea level 400 m above the hull, mountain height set by sea-level gravity.
 - Three materials in the data and visibly different on the surface.
-- Walkable everywhere with the existing player, including up mountains where gravity is lower.
+- Collision and physics everywhere with the existing player, including up mountains where gravity is lower. Cliffs are required; steep faces block the player as a gameplay matter, never as a physics gap.
 - A debug fly camera for inspecting the world **(call)**.
 - A data layout that the later slices extend without migration: column spans on an angle-by-length grid, tiles, a GPU window of shared textures, grouped heightfield colliders.
 
@@ -49,7 +49,7 @@ Anti-goals (would make this a failure even if it ran):
 
 ### 4.1 Coordinates and datum
 
-- A cell is addressed by `(i, j)` on an angle-by-length grid: `θ = i·Δθ`, `z = j·Δz − L/2`, with `Δθ = 2π / 8192` and `Δz = 2 m`. Around the hull there are 8192 columns; along it `L / 2 m`, about 16,000. **(call)** on 8192: it gives 2.15 m cells at sea level, 2.45 m at the hull and 1.4 m at 1 km above sea level, and it is a power of two for tiling.
+- A cell is addressed by `(i, j)` on an angle-by-length grid: `θ = i·Δθ`, `z = j·Δz − L/2`, with `Δθ = 2π / 16384` and `Δz = 1 m`. Around the hull there are 16384 columns; along it `L / 1 m`, about 32,000. Cells are 1.07 m at sea level, 1.22 m at the hull and 0.7 m at 1 km above sea level (decided in conversation; 16384 is a power of two for tiling). Finer resolution comes later from the voxel bubble around tools, not from the global grid.
 - Heights are radial, measured inward from the hull. Radius of a point at height `h` is `r = R − h`.
 - Datum: sea level is `h_sea = 400 m`, so `R_sea = R − 400`. Water may lie anywhere between the hull and sea level, so up to 400 m deep.
 - Gravity is `g(h) = g_hull · (1 − h/R)`, from the station. Sea-level gravity is `g_sea = g_hull · R_sea / R`, 8.575 m/s² by default.
@@ -80,11 +80,11 @@ Dirt, clay and rock as in the research doc's table. In this slice only their app
 | level | cell | extent | lives |
 |---|---|---|---|
 | macro maps | 32 m, 512 × 1000 cells | whole station | on disk and in RAM, about 6 MB |
-| window | 2 m, 512 × 512 cells (1 km square) | around the viewer | GPU textures, about 3.5 MB |
-| tile | 128 × 128 cells (256 m) | unit of streaming and of the window's ring buffer | generated on the GPU when it enters the window |
-| collider patch | 257 × 257 samples at 2 m (512 m) | around the viewer | one `HeightMapShape3D` |
+| window | 1 m, 512 × 512 cells (512 m square) | around the viewer | GPU textures, about 3.5 MB |
+| tile | 128 × 128 cells (128 m) | unit of streaming and of the window's ring buffer | generated on the GPU when it enters the window |
+| collider patch | 257 × 257 samples at 1 m (256 m) | around the viewer | one `HeightMapShape3D` |
 
-The window size is a project setting; 1024 is the high-end option. Macro cells are exactly 16 × 16 fine cells so lookups are shifts.
+The window size is a project setting; 1024 (1 km square, 14 MB, four times the later simulation cost) is the high-end option. Macro cells are exactly 32 × 32 fine cells so lookups are shifts.
 
 ## 6. Generation
 
@@ -100,8 +100,8 @@ Fischer-style water-first growth adapted to the cylinder. Periodic in `θ`. Outp
 4. **Drainage.** A spanning forest over land cells seeded from every shoreline cell, grown by random-order fringe expansion, gives every land cell a flow direction toward the sea. River sources are placed by density weighted toward mountain regions. Each source traces its flow path to the sea; discharge `Q` accumulates at confluences. Reaches below a `Q` threshold are dropped. Width and depth follow `Q`.
 5. **Lakes.** On about one river in three, a lake on a river cell, radius from `Q`, boundary noised, level fixed when the river profile is set.
 6. **River profiles.** Walk each river upstream from its mouth, raising the water surface at a slope that falls with `Q`. Lakes are flat at the height the river reaches them. This gives every water cell a height before any land exists.
-7. **Growth.** Priority-queue growth of land height outward from all water cells: `h' = h + s_region·b + s_river·(1 − b) + |noise|`, with `b` the blend from river-bank growth to regional growth, all terms non-negative, and the rate attenuated as `h` approaches `h_sea + H_mtn` so peaks approach the cap smoothly. Rivers and lakes are therefore local minima by construction and every land cell drains to the sea.
-8. **Stratigraphy.** `bedrock_top = surface − D`, with `D` by region (flats 150 to 300 m, hills 60 to 150 m, mountains 0 to 40 m, noised) so peaks and cliffs expose rock. Clay lenses from thresholded 3D noise inside the dirt, 2 to 10 m thick. Topsoil thin on steep slopes. Islands get rock cores.
+7. **Growth.** Priority-queue growth of land height outward from all water cells: `h' = h + s_region·b + s_river·(1 − b) + |noise|`, with `b` the blend from river-bank growth to regional growth, all terms non-negative, and the rate attenuated as `h` approaches `h_sea + H_mtn` so peaks approach the cap smoothly. Rivers and lakes are therefore local minima by construction and every land cell drains to the sea. Cliffs are required: in mountain and hill regions a cliff mask from noise marks bands where the growth step jumps by 10 to 60 m across one macro cell, giving rock faces from 60° to vertical. There is no slope cap on land apart from the bank rule in step 9.
+8. **Stratigraphy.** `bedrock_top = surface − D`, with `D` by region (flats 150 to 300 m, hills 60 to 150 m, mountains 0 to 40 m, noised) so peaks and cliff bands expose rock. Clay lenses from thresholded 3D noise inside the dirt, 2 to 10 m thick. Topsoil thin on steep slopes. Islands get rock cores.
 9. **Banks.** Within 10 m of any water, limit the generated slope to the saturated stable slope of the bank material (35° for dirt), so later wetting cannot start a landslide the generator built in.
 10. **Pump loops (data only).** For each river system, one loop record: intake cell at the mouth, an outlet cell at each source, `Q`. Unused in this slice; stored so the water slice has them.
 11. **Spawn site.** A dirt cell with slope under 5°, within 100 m of a river, above sea level, nearest `θ = 0` **(call)**.
@@ -115,7 +115,7 @@ Implementation: GDScript is the baseline, including a binary heap for the growth
 One compute shader, `detail.glsl`, 8 × 8 workgroups over a tile, writes every field of 4.2 into the window textures at the tile's toroidal position. Per cell:
 
 1. Bilinear-sample the macro fields at `(θ, z)`.
-2. Add detail noise in the band between 2 m and 32 m that the macro stage cannot carry: amplitude by region and material (rock rough, dirt flats gentle), zero inside river channels and lakes, reduced within the bank distance of 4.1 step 9.
+2. Add detail noise in the band between 1 m and 32 m that the macro stage cannot carry: amplitude by region and material (rock rough, dirt flats gentle), zero inside river channels and lakes, reduced within the bank distance of 6.1 step 9, and damped on faces steeper than 50° so cliffs stay cliffs.
 3. Carve rivers from the river texture: within half a width of a centreline the surface drops to the river's surface minus a parabolic depth profile; banks blend out over 1.5 widths; `water_surface` is the river's surface. Lakes: inside the mask the surface sits at least a minimum depth below the level; `water_surface` is the level. Sea: wherever `surface < h_sea`, `water_surface = h_sea`.
 4. Stratigraphy from the macro fields plus small noise, clamped to the ordering invariant.
 5. `material` from the stratigraphy at the surface.
@@ -132,16 +132,16 @@ Determinism: the same seed, macro maps and tile index give identical output on e
 
 ## 8. Rendering
 
-- **Tiles.** One shared `ArrayMesh`, a 129 × 129 vertex grid. Sixteen `MeshInstance3D` nodes, one per window tile, each with a `ShaderMaterial` whose uniforms are the tile's `θ_c`, `z_c`, its toroidal offset and the window textures. The node sits at the hull point `(θ_c, R, z_c)` with local Y toward the axis, local X spinward and local Z axial. The vertex shader reads `surface` with `texelFetch`, sets `r = R − h`, and places the vertex at `(r·sin dθ, R − r·cos dθ, dz)` in the node's frame, where `dθ` and `dz` are the vertex's offsets from the tile centre. Angles stay below 0.05 rad so float32 trigonometry is exact to well under a millimetre. Normals come from finite differences of neighbouring texels scaled by the local metric `(R − h)·Δθ` across and `Δz` along. Adjacent tiles sample the same border texels, so there are no cracks. Each tile sets `custom_aabb` to its full height range.
+- **Tiles.** One shared `ArrayMesh`, a 129 × 129 vertex grid. Sixteen `MeshInstance3D` nodes, one per window tile, each with a `ShaderMaterial` whose uniforms are the tile's `θ_c`, `z_c`, its toroidal offset and the window textures. The node sits at the hull point `(θ_c, R, z_c)` with local Y toward the axis, local X spinward and local Z axial. The vertex shader reads `surface` with `texelFetch`, sets `r = R − h`, and places the vertex at `(r·sin dθ, R − r·cos dθ, dz)` in the node's frame, where `dθ` and `dz` are the vertex's offsets from the tile centre. Angles stay below 0.025 rad so float32 trigonometry is exact to well under a millimetre. Normals come from finite differences of neighbouring texels scaled by the local metric `(R − h)·Δθ` across and `Δz` along. Adjacent tiles sample the same border texels, so there are no cracks. Each tile sets `custom_aabb` to its full height range.
 - **Surface look.** The fragment shader colours by `material` and slope: dirt, clay and rock each a flat colour family with slope darkening and a little noise. No textures are required in this slice; the existing grid texture may be used for scale **(call)**.
 - **Water.** A second shared grid mesh per tile, drawn only where `water_surface > surface`, translucent, still, with a depth tint. Lakes read flat; rivers follow their generated profile.
-- **Far terrain.** Three rings outside the window, each a displaced grid like the tiles but sampling coarser data: an 8 m ring to about 4 km generated by `detail.glsl` with its noise cut at 8 m, a 32 m ring from the macro maps to about 10 km, and a 128 m whole-station mesh from a downsampled macro map. Each ring hides its inner edge under the finer level's skirt. The hull mesh stays as the backdrop beyond the far mesh and as the physical floor under the deepest water, where terrain thickness reaches zero.
+- **Far terrain.** Three rings outside the window, each a displaced grid like the tiles but sampling coarser data: an 8 m ring from the window edge (about 256 m out) to about 4 km generated by `detail.glsl` with its noise cut at 8 m, a 32 m ring from the macro maps to about 10 km, and a 128 m whole-station mesh from a downsampled macro map. Each ring hides its inner edge under the finer level's skirt. The hull mesh stays as the backdrop beyond the far mesh and as the physical floor under the deepest water, where terrain thickness reaches zero.
 - **Sky view.** From the floor the opposite side of the cylinder is 6.4 km away and always visible; the far mesh is what the player sees there. Its resolution is chosen so a 128 m cell subtends under 1.2° at that distance.
 
 ## 9. Collision
 
-- **One patch.** A single `StaticBody3D` with a `HeightMapShape3D` of 257 × 257 samples at 2 m spacing (scaled by `(2, 1, 2)`, which Jolt accepts) centred on the viewer. It is rebuilt when the viewer moves more than 128 m from the patch centre, so the patch always extends at least 128 m beyond the viewer in every direction. Spawned boxes land near the player and are covered by the same patch; a second patch per distant body is left to later slices.
-- **Curvature is baked in.** The patch's frame is the tangent frame at its centre, with local Y toward the axis. A heightfield can represent any single-valued surface over its grid, and the curved terrain is single-valued over a 512 m patch (9° of arc), so each sample stores the height of the curved surface above the tangent plane: for sample position `(x, z)` in the patch frame, solve `φ` from `(R − h(φ))·sin φ = x` (two fixed-point iterations starting from `φ = x / R_sea` suffice), read `h` at `(θ_c + φ, z_c + z)` bilinearly, and store `y = R − (R − h)·cos φ`. The collider is then the same curved surface the tiles draw, to within linear interpolation between 2 m samples, with no flat-tile sagitta error and no per-tile bodies to produce seam contacts.
+- **One patch.** A single `StaticBody3D` with a `HeightMapShape3D` of 257 × 257 samples at 1 m spacing (256 m, no shape scaling needed) centred on the viewer. It is rebuilt when the viewer moves more than 64 m from the patch centre, so the patch always extends at least 64 m beyond the viewer in every direction. Spawned boxes land near the player and are covered by the same patch; a second patch per distant body is left to later slices.
+- **Curvature is baked in.** The patch's frame is the tangent frame at its centre, with local Y toward the axis. A heightfield represents any single-valued surface over its grid, and the curved terrain is single-valued over a 256 m patch (5° of arc) everywhere except at cliffs, which lean in the patch frame by the local arc angle. The bake therefore works row by row: for each axial row, sample the surface at the 1 m `θ` steps, map each sample into the patch frame as `x = (R − h)·sin φ`, `y = R − (R − h)·cos φ`, and resample `y` onto the uniform `x` grid by linear interpolation along the row, taking the upper envelope wherever the mapped samples fold back (a cliff leaning over its own foot). No iteration and no convergence question. The result is the same curved surface the tiles draw, to within linear interpolation between samples and with no flat-tile sagitta error or per-tile seam bodies, except that a radial cliff of height `H` at arc angle `φ` from the patch centre is thinned by `H·sin φ` on one side: 1.1 m for a 50 m cliff at the edge of a 64 m rebuild zone, proportionally less nearer the centre and for lower cliffs, zero for ordinary slopes. If that ever shows at the foot of a tall cliff, the rebuild distance drops or a small trimesh patch around the player replaces the heightfield there; both are local changes.
 - **Baked on the GPU, read back once.** A small compute shader, `collider_bake.glsl`, produces the 257 × 257 float patch into a staging texture from the window textures (falling back to the macro maps where the patch extends outside the window). `texture_get_data_async` returns it after `frame_queue_size` frames; the callback converts the bytes with `PackedByteArray.to_float32_array` and assigns `map_data`. No per-sample GDScript loop. In this slice the terrain is static, so the latency only matters at startup and after a floating-origin shift; the player is held at the spawn point until the first patch is live.
 - **Holes.** None in this slice. The NaN-hole convention is reserved for the tunnel slice.
 - **Bodies never sleep.** The project's bodies apply a force every tick and never sleep; the tunnel slice depends on that for terrain changing under resting bodies, and nothing in this slice may introduce sleeping.
@@ -151,7 +151,7 @@ Determinism: the same seed, macro maps and tile index give identical output on e
 - The player spawns at the macro stage's spawn site, 2 m above the surface, facing spinward, after the first collider patch is live.
 - The existing walker is unchanged. Its `up_direction` is already radial and its gravity comes from the station, so lower gravity on mountains is automatic.
 - **Fly camera (call).** Toggled by F. WASD and mouse in the station frame, speed scaled by the scroll wheel, no collision. While active it is the viewer: the window, the collider patch and the far rings follow it. The player is frozen in place meanwhile.
-- The existing emitter panel keeps working; boxes spawn and fall onto terrain.
+- The emitter spawns at the viewer's angle and axial position, at its `distance_from_axis` setting, so boxes land beside the viewer wherever it is **(call)**. Its panel and other settings are unchanged; `test_emitter.gd` is updated to the new reference point. Boxes dropped against a cliff bounce or slide; they never tunnel.
 
 ## 11. Scene and code layout
 
@@ -193,11 +193,11 @@ Measured on the development machine at 1440p, default world, 512 window:
 
 Headless tests, run by `godot/tests/run.sh`, each a `SceneTree` script that prints `PASS`:
 
-- `test_cylinder_math.gd`: `(θ, z, h)` to position and back; the span-volume formula against a numeric integral; the curvature-bake `φ` solve against the analytic surface for a known height function, error under 1 mm at the patch edge.
-- `test_macro_generator.gd`: on a small world (64 × 128 macro cells) with a fixed seed: identical output hash on two runs; every land cell strictly higher than its flow-direction parent; every river reaches the sea; no cell above `h_sea + H_mtn`; stratigraphy ordering holds everywhere; the spawn site satisfies its rules; the bank rule holds within 10 m of water.
-- The existing `test_station.gd` and `test_player.gd` still pass unchanged.
+- `test_cylinder_math.gd`: `(θ, z, h)` to position and back; the span-volume formula against a numeric integral; the curvature-bake row resampling against the analytic surface for a known height function, error under 1 mm at the patch edge on a 45° slope, and bounded by `H·sin φ` on a vertical step.
+- `test_macro_generator.gd`: on a small world (64 × 128 macro cells) with a fixed seed: identical output hash on two runs; every land cell strictly higher than its flow-direction parent; every river reaches the sea; no cell above `h_sea + H_mtn`; stratigraphy ordering holds everywhere; rock cells with slope above 60° exist (cliffs); the spawn site satisfies its rules; the bank rule holds within 10 m of water.
+- The existing `test_station.gd` and `test_player.gd` still pass unchanged; `test_emitter.gd` passes with the viewer-relative spawn point.
 
-Windowed smoke run, manual but scripted: start the game, wait for the first patch, run the player spinward for 60 s and axially for 60 s, toggle the fly camera and fly 5 km, and record frame times and the timestamp overlay. Acceptance: no hole, crack or fall-through, budgets in section 12 met, no error output.
+Windowed smoke run, manual but scripted: start the game, wait for the first patch, run the player spinward for 60 s and axially for 60 s, toggle the fly camera and fly 5 km, and record frame times and the timestamp overlay. Acceptance: no hole, crack or fall-through anywhere including cliff faces, faces steeper than 45° block the player, boxes dropped against a cliff do not tunnel, budgets in section 12 met, no error output.
 
 ## 14. Left to the builder
 
@@ -207,9 +207,11 @@ Windowed smoke run, manual but scripted: start the game, wait for the first patc
 - The binary heap and fringe-expansion details in the macro stage, and whether the growth runs over the full 512 × 1000 grid or over land only.
 - Whether `surface` and the other heights use `R16_UNORM` with a scale or `R16_UINT`; both satisfy section 4.2.
 - How the player is held until the first collider patch is live.
+- The cliff-mask noise and band widths within the 10 to 60 m range.
+- The collider patch's rebuild distance, within the cliff error bound in section 9.
 
 ## 15. Calls made and open items
 
-Calls, listed so they can be checked while reading: 8192 columns; `H_ref = 1000 m`; one ring sea at `z = 0` with islands; 512 window with a 1024 option; 257 × 257 collider patch rebuilt at 128 m; spawn nearest `θ = 0`; fly camera on F; grid texture for scale; 1024 m origin shift step; GDScript macro generator with a GDExtension fallback.
+Calls, listed so they can be checked while reading (16384 columns at 1 m was decided in conversation, not a call): `H_ref = 1000 m`; one ring sea at `z = 0` with islands; 512 window with a 1024 option; 257 × 257 collider patch rebuilt at 64 m; spawn nearest `θ = 0`; fly camera on F; grid texture for scale; 1024 m origin shift step; GDScript macro generator with a GDExtension fallback; emitter spawning at the viewer; cliff bands of 10 to 60 m with no land slope cap (cliffs are the user's requirement, the band sizes are mine).
 
 Open after this slice, not before it: the exact `H_ref` once mountains are seen; whether the 8 m far ring is worth its cost; whether boxes need their own collider patches.
