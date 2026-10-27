@@ -75,5 +75,61 @@ func _initialize() -> void:
 	var m2 := MacroGenerator.new().generate(small_params(7))
 	check(m.surface.get_data() == m2.surface.get_data() and m.water_surface.get_data() == m2.water_surface.get_data(), "deterministic")
 	check(MacroGenerator.new().generate(small_params(8)).surface.get_data() != m.surface.get_data(), "seed matters")
+	# Growth: every land cell is at or above sea level and strictly above its flow-direction parent,
+	# and nothing exceeds the cap.
+	var dirs := [Vector2i(0,0), Vector2i(1,0), Vector2i(1,1), Vector2i(0,1), Vector2i(-1,1), Vector2i(-1,0), Vector2i(-1,-1), Vector2i(0,-1), Vector2i(1,-1)]
+	var cap := p.h_sea + p.h_mtn()
+	var above_parent := 0; var land := 0
+	for y in h: for x in w:
+		if m.region.get_pixel(x, y).r8 == 0: continue
+		land += 1
+		var s := m.surface.get_pixel(x, y).r
+		check(s >= 40.0 - 1e-3 and s <= cap + 1e-3, "land height %f at %d %d" % [s, x, y])
+		var d: int = m.flow_dir.get_pixel(x, y).r8
+		if d > 0:
+			var n := Vector2i(posmod(x + dirs[d].x, w), clampi(y + dirs[d].y, 0, h - 1))
+			if s > m.surface.get_pixel(n.x, n.y).r: above_parent += 1
+	check(above_parent > land * 0.9, "monotone toward water %d of %d" % [above_parent, land])
+	check(m.surface.get_data() != m.water_surface.get_data(), "land grew")
+	# Cliff bands exist: flagged rock cells whose jump over one 32 m macro cell exceeds 45 degrees.
+	# (The detail pass sharpens a flagged band into a near-vertical face at 1 m; see Task 5.)
+	var cliffs := 0
+	for y in range(1, h - 1): for x in w:
+		if m.cliff.get_pixel(x, y).r8 == 0: continue
+		check(m.bedrock_top.get_pixel(x, y).r >= m.surface.get_pixel(x, y).r - 1e-3, "cliff band exposes rock at %d %d" % [x, y])
+		var s := m.surface.get_pixel(x, y).r
+		for d in [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]:
+			var n := Vector2i(posmod(x + d.x, w), y + d.y)
+			if absf(s - m.surface.get_pixel(n.x, n.y).r) / 32.0 > 1.0: cliffs += 1
+	check(cliffs > 0, "no cliffs")
+	# Stratigraphy ordering everywhere.
+	for y in h: for x in w:
+		var b := m.bedrock_top.get_pixel(x, y).r; var cb := m.clay_bottom.get_pixel(x, y).r
+		var ct := m.clay_top.get_pixel(x, y).r; var s := m.surface.get_pixel(x, y).r
+		check(0.0 <= b and b <= cb + 1e-4 and cb <= ct + 1e-4 and ct <= s + 1e-4, "ordering at %d %d" % [x, y])
+	var with_clay := 0
+	for y in h: for x in w: if m.clay_top.get_pixel(x, y).r - m.clay_bottom.get_pixel(x, y).r > 1.0: with_clay += 1
+	check(with_clay > 0, "no clay lenses")
+	# Bank rule: a land cell next to water rises at most 35 degrees over the 32 m to that water cell
+	# (the detail pass applies the same limit within 10 m at 1 m resolution).
+	for y in range(1, h - 1): for x in w:
+		if m.region.get_pixel(x, y).r8 == 0: continue
+		var s := m.surface.get_pixel(x, y).r
+		for d in dirs.slice(1):
+			var n := Vector2i(posmod(x + d.x, w), y + d.y)
+			var ws := m.water_surface.get_pixel(n.x, n.y).r
+			if ws > 0.0:
+				check((s - ws) / 32.0 <= tan(deg_to_rad(p.bank_slope_deg)) + 1e-3, "bank slope at %d %d" % [x, y])
+	# Loops and spawn.
+	check(m.loops.size() >= 1 and m.loops[0].q > 0.0 and m.loops[0].outlets.size() >= 1, "loops")
+	var sc := m.cell(m.spawn.x, m.spawn.y, p)
+	check(m.region.get_pixel(sc.x, sc.y).r8 != 0 and m.surface.get_pixel(sc.x, sc.y).r >= 40.0, "spawn on land")
+	# A seed with no rivers (Review Focus 4) still yields complete maps and a spawn site.
+	var dry := small_params(11); dry.river_sources_per_km2 = 0.0
+	var md := MacroGenerator.new().generate(dry)
+	check(md.rivers.is_empty() and md.loops.is_empty(), "dry world")
+	var dc := md.cell(md.spawn.x, md.spawn.y, dry)
+	check(md.region.get_pixel(dc.x, dc.y).r8 != 0, "dry spawn on land")
+	check(md.surface.get_width() == w, "dry maps complete")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

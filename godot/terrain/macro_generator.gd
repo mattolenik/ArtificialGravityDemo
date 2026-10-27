@@ -1,15 +1,69 @@
 ## Builds a world's macro maps from its WorldParams, water first: seas, regions, drainage, rivers,
-## lakes and river profiles, so every water cell has a height before any land is grown. Each stage
-## reads the maps the earlier stages wrote and writes its own. Deterministic: all randomness comes
-## from one RandomNumberGenerator seeded from params.seed, and every noise field is periodic in theta.
+## lakes and river profiles, so every water cell has a height before any land is grown; then land
+## growth with cliff bands, strata, banks, pump loops and the spawn site. Each stage reads the maps
+## the earlier stages wrote and writes its own. Deterministic: all randomness comes from one
+## RandomNumberGenerator seeded from params.seed, and every noise field is periodic in theta.
 class_name MacroGenerator
 extends RefCounted
 
 ## Neighbour offsets (dx, dy); a flow_dir value d in 1..8 points to neighbour d - 1. x wraps, y does not.
 const DX := [1, 1, 0, -1, -1, -1, 0, 1]
 const DY := [0, 1, 1, 1, 0, -1, -1, -1]
+## Length in cells of the step to each neighbour.
+const STEP := [1.0, 1.4142135, 1.0, 1.4142135, 1.0, 1.4142135, 1.0, 1.4142135]
 ## River source weight by region: sea, flat, hill, mountain, island.
 const SOURCE_WEIGHT := [0, 1, 2, 4, 1]
+## Land growth rate in m per cell by region (islands grow like hills), and on river banks.
+const GROWTH_RATE := [0.0, 0.4, 2.5, 8.0, 2.5]
+const RIVER_RATE := 0.05
+## WorldParams.bedrock_depth key by region; the sea floor uses the flat range.
+const DEPTH_KEY := ["flat", "flat", "hill", "mountain", "hill"]
+
+
+## Array-backed binary min-heap of cell indices keyed on height.
+class Heap:
+	var keys := PackedFloat32Array()
+	var cells := PackedInt32Array()
+	var size := 0
+
+	func _init(capacity: int) -> void:
+		keys.resize(capacity)
+		cells.resize(capacity)
+
+	func push(key: float, cell: int) -> void:
+		var i := size
+		size += 1
+		while i > 0:
+			var parent := (i - 1) >> 1
+			if keys[parent] <= key:
+				break
+			keys[i] = keys[parent]
+			cells[i] = cells[parent]
+			i = parent
+		keys[i] = key
+		cells[i] = cell
+
+	## Removes and returns the cell with the lowest key.
+	func pop() -> int:
+		var top := cells[0]
+		size -= 1
+		var key := keys[size]
+		var cell := cells[size]
+		var i := 0
+		while true:
+			var c := 2 * i + 1
+			if c >= size:
+				break
+			if c + 1 < size and keys[c + 1] < keys[c]:
+				c += 1
+			if keys[c] >= key:
+				break
+			keys[i] = keys[c]
+			cells[i] = cells[c]
+			i = c
+		keys[i] = key
+		cells[i] = cell
+		return top
 
 
 ## Generates the macro maps for params. progress, when valid, is called with (stage_name, fraction)
@@ -18,7 +72,7 @@ func generate(params: WorldParams, progress: Callable = Callable()) -> MacroMaps
 	var rng := RandomNumberGenerator.new()
 	rng.seed = params.seed
 	var m := MacroMaps.new()
-	var stages: Array[Callable] = [_seas, _regions, _drainage, _rivers, _lakes, _profiles]
+	var stages: Array[Callable] = [_seas, _regions, _drainage, _rivers, _lakes, _profiles, _grow, _strata, _banks, _loops, _spawn]
 	for i in stages.size():
 		if progress.is_valid():
 			progress.call(stages[i].get_method().trim_prefix("_"), float(i) / stages.size())
@@ -227,9 +281,10 @@ func _lakes(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void:
 ## Walks each river upstream from its end (the sea, or the river it joins, once that one is done),
 ## raising the water surface by slope(Q)·cell per cell with slope(Q) = 0.004 / sqrt(Q). A lake holds
 ## its river flat at the height reached at its downstream edge, which becomes its level; lake cells
-## not already water get that level. surface equals water_surface on river and lake cells. The river
-## texture holds, per cell, the distance to the nearest river cell (m), its width and surface.
-func _profiles(m: MacroMaps, p: WorldParams, _rng: RandomNumberGenerator) -> void:
+## (within the radius scaled by 1 + 0.3·noise, so the edge is ragged) not already water get that
+## level. surface equals water_surface on river and lake cells. The river texture holds, per cell,
+## the distance to the nearest river cell (m), its width and surface.
+func _profiles(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void:
 	var w := p.macro_w()
 	var h := p.macro_h()
 	var n := w * h
@@ -277,13 +332,17 @@ func _profiles(m: MacroMaps, p: WorldParams, _rng: RandomNumberGenerator) -> voi
 			push_error("rivers without a reachable end: %d" % waiting.size())
 			break
 		pending = waiting
+	var ring := _ring(p)
+	var edge := _noise(rng, 1.0 / 64.0)
 	for lake in m.lakes:
 		var c := m.cell(lake.theta, lake.z, p)
-		var rc := ceili(lake.radius / p.macro_cell)
+		var rc := ceili(1.3 * lake.radius / p.macro_cell)
 		for y in range(maxi(c.y - rc, 0), mini(c.y + rc + 1, h)):
 			for dx in range(-rc, rc + 1):
-				var i := y * w + posmod(c.x + dx, w)
-				if water[i] == 0.0 and Vector2(dx, y - c.y).length() * p.macro_cell <= lake.radius:
+				var x := posmod(c.x + dx, w)
+				var i := y * w + x
+				var r: float = lake.radius * (1.0 + 0.3 * edge.get_noise_3d(ring[x].x, ring[x].y, _z(y, p)))
+				if water[i] == 0.0 and Vector2(dx, y - c.y).length() * p.macro_cell <= r:
 					water[i] = lake.level
 	var region := m.region.get_data()
 	var surface := m.surface.get_data().to_float32_array()
@@ -301,6 +360,277 @@ func _profiles(m: MacroMaps, p: WorldParams, _rng: RandomNumberGenerator) -> voi
 	m.water_surface = _rf(water, w, h)
 	m.surface = _rf(surface, w, h)
 	m.river = Image.create_from_data(w, h, false, Image.FORMAT_RGBF, tex.to_byte_array())
+
+
+## Cliff bands, then land heights. The cliff mask flags dry hill and mountain cells where |noise| is
+## below its cliff_fraction quantile, which gives bands along the noise's zero lines. Growth is
+## lowest-first from the sea and river cells at their water surface: popping cell c at height h gives
+## each unreached dry neighbour h + (s_region·b + s_river·(1 − b))·(1 + 2|noise|)·step·sqrt(max(0,
+## 1 − (h − h_sea) / h_mtn)), plus a cliff_min..cliff_max jump on a cliff cell, clamped to h_sea +
+## h_mtn; a lake cell is reached the same way but keeps its level. b = clamp(river distance /
+## (3·width), 0, 1) is the regional share: 0 on a river, 1 beyond three widths. A cell's height is
+## set when it is first reached, from its lowest neighbour, and it then drains there: flow_dir of
+## every land cell except river cells is re-pointed at the cell it grew from, so land drains downhill
+## to water and on to the sea without cycles. Writes surface, cliff and flow_dir.
+func _grow(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void:
+	var w := p.macro_w()
+	var h := p.macro_h()
+	var n := w * h
+	var ring := _ring(p)
+	var region := m.region.get_data()
+	var water := m.water_surface.get_data().to_float32_array()
+	var surface := m.surface.get_data().to_float32_array()
+	var river := m.river.get_data().to_float32_array()
+	var band := _noise(rng, 1.0 / 500.0)
+	band.fractal_type = FastNoiseLite.FRACTAL_NONE
+	var rough := _noise(rng, 1.0 / 1000.0)
+	var band_n := PackedFloat32Array()
+	band_n.resize(n)
+	var rough_n := PackedFloat32Array()
+	rough_n.resize(n)
+	var samples := PackedFloat32Array()
+	for y in h:
+		var z := _z(y, p)
+		for x in w:
+			var i := y * w + x
+			if region[i] == 0 or water[i] > 0.0:
+				continue
+			rough_n[i] = absf(rough.get_noise_3d(ring[x].x, ring[x].y, z))
+			if region[i] == 2 or region[i] == 3:
+				band_n[i] = absf(band.get_noise_3d(ring[x].x, ring[x].y, z))
+				samples.append(band_n[i])
+	var cliff := PackedByteArray()
+	cliff.resize(n)
+	if not samples.is_empty():
+		var t := _quantile(samples, p.cliff_fraction)
+		for i in n:
+			if (region[i] == 2 or region[i] == 3) and water[i] == 0.0 and band_n[i] < t:
+				cliff[i] = 255
+	var cap := p.h_sea + p.h_mtn()
+	var flow := m.flow_dir.get_data()
+	var heap := Heap.new(n)
+	var seen := PackedByteArray()
+	seen.resize(n)
+	for i in n:
+		if water[i] > 0.0 and (region[i] == 0 or river[3 * i] == 0.0):
+			seen[i] = 1
+			heap.push(water[i], i)
+	while heap.size > 0:
+		var c := heap.pop()
+		var hc := water[c] if water[c] > 0.0 else surface[c]
+		var atten := sqrt(maxf(0.0, 1.0 - (hc - p.h_sea) / p.h_mtn()))
+		var x := c % w
+		@warning_ignore("integer_division")
+		var y := c / w
+		for j in 8:
+			var ny: int = y + DY[j]
+			if ny < 0 or ny >= h:
+				continue
+			var i: int = ny * w + posmod(x + DX[j], w)
+			if seen[i]:
+				continue
+			seen[i] = 1
+			flow[i] = (j + 4) % 8 + 1
+			if water[i] == 0.0:
+				var width := river[3 * i + 1]
+				var b := 1.0 if width <= 0.0 else clampf(river[3 * i] / (3.0 * width), 0.0, 1.0)
+				var inc: float = (GROWTH_RATE[region[i]] * b + RIVER_RATE * (1.0 - b)) * (1.0 + 2.0 * rough_n[i]) * STEP[j] * atten
+				if cliff[i]:
+					inc += rng.randf_range(p.cliff_min, p.cliff_max)
+				surface[i] = minf(hc + inc, cap)
+			heap.push(surface[i], i)
+	m.surface = _rf(surface, w, h)
+	m.cliff = _r8(cliff, w, h)
+	m.flow_dir = _r8(flow, w, h)
+
+
+## bedrock_top = max(0, surface − D), D from bedrock_depth for the region (the sea floor uses the
+## flat range, islands the hill range tapering to 0 at 0.04·sea_width from their shore) blended by
+## noise, and D = 0 on cliff cells. Clay lenses on land where noise exceeds its 1 − clay_fraction
+## quantile: clay_thickness.x at the lens edge to .y inside, its top at a noise-chosen depth in the
+## dirt, clamped into it. Without a lens clay_bottom = clay_top = bedrock_top.
+func _strata(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void:
+	var w := p.macro_w()
+	var h := p.macro_h()
+	var n := w * h
+	var ring := _ring(p)
+	var region := m.region.get_data()
+	var surface := m.surface.get_data().to_float32_array()
+	var cliff := m.cliff.get_data()
+	var sea := PackedInt32Array()
+	for i in n:
+		if region[i] == 0:
+			sea.append(i)
+	var shore := _nearest(sea, w, h)
+	var depth := _noise(rng, 1.0 / 2000.0)
+	var lens := _noise(rng, 1.0 / 400.0)
+	var level := _noise(rng, 1.0 / 1000.0)
+	var lens_n := PackedFloat32Array()
+	lens_n.resize(n)
+	var land := PackedFloat32Array()
+	for y in h:
+		var z := _z(y, p)
+		for x in w:
+			var i := y * w + x
+			if region[i] != 0:
+				lens_n[i] = lens.get_noise_3d(ring[x].x, ring[x].y, z)
+				land.append(lens_n[i])
+	var t := INF if land.is_empty() else _quantile(land, 1.0 - p.clay_fraction)
+	var d_min := PackedFloat32Array()
+	var d_max := PackedFloat32Array()
+	for key: String in DEPTH_KEY:
+		d_min.append(p.bedrock_depth[key][0])
+		d_max.append(p.bedrock_depth[key][1])
+	var bedrock := PackedFloat32Array()
+	bedrock.resize(n)
+	var bottom := PackedFloat32Array()
+	bottom.resize(n)
+	var top := PackedFloat32Array()
+	top.resize(n)
+	for y in h:
+		var z := _z(y, p)
+		for x in w:
+			var i := y * w + x
+			var s := surface[i]
+			var rg := region[i]
+			var d := 0.0 if cliff[i] else lerpf(d_min[rg], d_max[rg], clampf(0.5 + depth.get_noise_3d(ring[x].x, ring[x].y, z), 0.0, 1.0))
+			if rg == 4:
+				d *= clampf(1.0 - _dist(i, shore[i], w) * p.macro_cell / (0.04 * p.sea_width), 0.0, 1.0)
+			var b := maxf(0.0, s - d)
+			var ct := b
+			var cb := b
+			if rg != 0 and lens_n[i] > t:
+				var thick := lerpf(p.clay_thickness.x, p.clay_thickness.y, clampf((lens_n[i] - t) / 0.2, 0.0, 1.0))
+				var u := clampf(0.5 + level.get_noise_3d(ring[x].x, ring[x].y, z), 0.0, 1.0)
+				ct = s - u * maxf(0.0, s - b - thick)
+				cb = maxf(b, ct - thick)
+			bedrock[i] = b
+			bottom[i] = cb
+			top[i] = ct
+	m.bedrock_top = _rf(bedrock, w, h)
+	m.clay_bottom = _rf(bottom, w, h)
+	m.clay_top = _rf(top, w, h)
+
+
+## Caps every dry land cell next to water at its lowest water neighbour's surface plus
+## tan(bank_slope_deg)·macro_cell, lowering its strata with it. At 32 m "within bank_distance of
+## water" is adjacency; the detail pass applies the limit at 1 m. One pass is stable: a cap depends
+## only on water cells, which never move.
+func _banks(m: MacroMaps, p: WorldParams, _rng: RandomNumberGenerator) -> void:
+	var w := p.macro_w()
+	var h := p.macro_h()
+	var region := m.region.get_data()
+	var water := m.water_surface.get_data().to_float32_array()
+	var surface := m.surface.get_data().to_float32_array()
+	var bedrock := m.bedrock_top.get_data().to_float32_array()
+	var bottom := m.clay_bottom.get_data().to_float32_array()
+	var top := m.clay_top.get_data().to_float32_array()
+	var rise := tan(deg_to_rad(p.bank_slope_deg)) * p.macro_cell
+	for y in h:
+		for x in w:
+			var i := y * w + x
+			if region[i] == 0 or water[i] > 0.0:
+				continue
+			var s := surface[i]
+			for j in 8:
+				var ny: int = y + DY[j]
+				if ny >= 0 and ny < h:
+					var ws := water[ny * w + posmod(x + DX[j], w)]
+					if ws > 0.0:
+						s = minf(s, ws + rise)
+			if s < surface[i]:
+				surface[i] = s
+				bedrock[i] = minf(bedrock[i], s)
+				bottom[i] = minf(bottom[i], s)
+				top[i] = minf(top[i], s)
+	m.surface = _rf(surface, w, h)
+	m.bedrock_top = _rf(bedrock, w, h)
+	m.clay_bottom = _rf(bottom, w, h)
+	m.clay_top = _rf(top, w, h)
+
+
+## One pump loop per river system that reaches the sea: intake at the main stem's mouth (its sea
+## vertex), an outlet at the source of the main stem and of every tributary draining into it
+## (directly or through other tributaries), and q the mouth's Q. theta is wrapped to [0, TAU).
+func _loops(m: MacroMaps, p: WorldParams, _rng: RandomNumberGenerator) -> void:
+	var w := p.macro_w()
+	var region := m.region.get_data()
+	var owner := PackedInt32Array()
+	owner.resize(w * p.macro_h())
+	owner.fill(-1)
+	for ri in m.rivers.size():
+		var r := m.rivers[ri]
+		for k in range(0, r.size() - 4, 4):
+			var c := m.cell(r[k], r[k + 1], p)
+			owner[c.y * w + c.x] = ri
+	var joins := PackedInt32Array()
+	for r in m.rivers:
+		var e := m.cell(r[r.size() - 4], r[r.size() - 3], p)
+		joins.append(-1 if region[e.y * w + e.x] == 0 else owner[e.y * w + e.x])
+	var stem := PackedInt32Array()
+	for ri in m.rivers.size():
+		var s := ri
+		while joins[s] >= 0:
+			s = joins[s]
+		stem.append(s)
+	var loops: Array[Dictionary] = []
+	for ri in m.rivers.size():
+		if stem[ri] != ri:
+			continue
+		var outlets := PackedVector2Array()
+		for rj in m.rivers.size():
+			if stem[rj] == ri:
+				outlets.append(Vector2(fposmod(m.rivers[rj][0], TAU), m.rivers[rj][1]))
+		var r := m.rivers[ri]
+		loops.append({"intake": Vector2(fposmod(r[r.size() - 4], TAU), r[r.size() - 3]), "outlets": outlets, "q": r[r.size() - 1]})
+	m.loops = loops
+
+
+## Spawn at the centre of the dry flat-region cell nearest theta = 0 (smallest min(theta, TAU −
+## theta)) with macro slope under spawn_max_slope_deg, surface at or above h_sea and within
+## spawn_river_distance of a river; else the lowest dry flat cell; else the first land cell.
+func _spawn(m: MacroMaps, p: WorldParams, _rng: RandomNumberGenerator) -> void:
+	var w := p.macro_w()
+	var h := p.macro_h()
+	var region := m.region.get_data()
+	var water := m.water_surface.get_data().to_float32_array()
+	var surface := m.surface.get_data().to_float32_array()
+	var river := m.river.get_data().to_float32_array()
+	var grade := tan(deg_to_rad(p.spawn_max_slope_deg)) * 2.0 * p.macro_cell
+	var best := -1
+	var best_t := INF
+	var low := -1
+	var any := -1
+	for y in h:
+		for x in w:
+			var i := y * w + x
+			if region[i] == 0:
+				continue
+			if any < 0:
+				any = i
+			if region[i] != 1 or water[i] > 0.0:
+				continue
+			if low < 0 or surface[i] < surface[low]:
+				low = i
+			if surface[i] < p.h_sea or river[3 * i] > p.spawn_river_distance:
+				continue
+			var gx := surface[y * w + posmod(x + 1, w)] - surface[y * w + posmod(x - 1, w)]
+			var gy := surface[mini(y + 1, h - 1) * w + x] - surface[maxi(y - 1, 0) * w + x]
+			var t := minf(_theta(x, p), TAU - _theta(x, p))
+			if gx * gx + gy * gy < grade * grade and t < best_t:
+				best = i
+				best_t = t
+	var pick := best if best >= 0 else (low if low >= 0 else any)
+	if pick >= 0:
+		@warning_ignore("integer_division")
+		m.spawn = Vector2(_theta(pick % w, p), _z(pick / w, p))
+
+
+## The value below which a fraction q of values lie.
+func _quantile(values: PackedFloat32Array, q: float) -> float:
+	var sorted := values.duplicate()
+	sorted.sort()
+	return sorted[clampi(floori(q * sorted.size()), 0, sorted.size() - 1)]
 
 
 ## Exact Euclidean nearest source for every cell, x wrapping and y not: the index of the nearest
