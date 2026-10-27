@@ -47,11 +47,7 @@ func _ready() -> void:
 	_load_world()
 	window = TerrainWindow.new()
 	window.setup(params, maps, window_size)
-	# The shaders move every vertex; this box holds any tile in its node's frame. Across, a vertex sits up
-	# to (R - h) sin(64.5 dtheta) from the centre (about 79 m at the hull on the default world, where a
-	# cell is 1.23 m wide); along, 64.5 m; up, under h_sea + h_mtn plus 1 m of curvature.
-	var half := params.radius * sin((TerrainWindow.TILE / 2.0 + 1.0) * params.dtheta()) + 1.0
-	_tiles = make_tiles(self, window, AABB(Vector3(-half, -10, -half), Vector3(2.0 * half, 2100, 2.0 * half)))
+	_tiles = make_tiles(self, window)
 	far.setup(window)
 	# The viewer's scene position is under the sea floor: start the windows and the patch at the spawn site.
 	patch = ColliderPatch.new()
@@ -73,13 +69,23 @@ static func origin_shift_for(viewer_global_z: float) -> float:
 
 
 ## One ground mesh per slot of w, slot (x, y) at index y * slots + x, each with a water mesh as its child,
-## added under parent and reading w's textures; aabb holds a tile in its node's frame.
-static func make_tiles(parent: Node3D, w: TerrainWindow, aabb: AABB) -> Array[MeshInstance3D]:
+## added under parent and reading w's textures.
+static func make_tiles(parent: Node3D, w: TerrainWindow) -> Array[MeshInstance3D]:
 	var mesh := PlaneMesh.new()
 	mesh.size = Vector2.ONE * TerrainWindow.TILE
 	mesh.subdivide_width = TerrainWindow.TILE - 1
 	mesh.subdivide_depth = TerrainWindow.TILE - 1
-	mesh.custom_aabb = aabb
+	# The shaders move every vertex; this box holds any tile in its node's frame, a cell of margin each
+	# way. Across, a vertex sits up to R sin(a) from the centre, a = 64.5 cells of angle (79 m for a 1 m
+	# tile on the default world, 631 m for an 8 m one); along, 64.5 cells; up, under h_sea + h_mtn plus
+	# the curvature 2R sin^2(a / 2); down, a dry water vertex tucks 1 m under the hull-level sea floor and a
+	# coarser level sinks a quarter cell.
+	var p := w.params
+	var a := (TerrainWindow.TILE / 2.0 + 0.5) * w.cell * p.dtheta()
+	var across := p.radius * sin(a) + w.cell
+	var along := (TerrainWindow.TILE / 2.0 + 1.5) * w.cell
+	var top := p.h_sea + p.h_mtn() + 2.0 * p.radius * sin(a / 2.0) ** 2 + w.cell
+	mesh.custom_aabb = AABB(Vector3(-across, -10, -along), Vector3(2.0 * across, top + 10, 2.0 * along))
 	var ground := _material(preload("res://terrain/shaders/tile.gdshader"), w)
 	ground.set_shader_parameter("material_tex", w.texture_rd("material"))
 	ground.set_shader_parameter("material_color", preload("res://terrain/materials.tres").color)

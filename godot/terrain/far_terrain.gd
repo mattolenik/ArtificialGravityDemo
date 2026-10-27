@@ -27,13 +27,12 @@ func setup(main: TerrainWindow) -> void:
 	var R := p.radius
 	window = TerrainWindow.new()
 	window.setup(p, main.maps, SIZE, CELL, main)
-	# The shaders move every vertex; far geometry is never culled, so its box is the whole cylinder in any
-	# tile's frame.
-	_tiles = Terrain.make_tiles(self, window, AABB(Vector3(-R, -10, -p.length), Vector3(2 * R, 2 * R + 20, 2 * p.length)))
+	_tiles = Terrain.make_tiles(self, window)
 	var mesh := PlaneMesh.new()
 	mesh.size = Vector2(p.macro_w(), p.macro_h() + 1)
 	mesh.subdivide_width = p.macro_w() - 1
 	mesh.subdivide_depth = p.macro_h()
+	# The shader places every vertex; the mesh spans the whole station.
 	mesh.custom_aabb = AABB(Vector3(-R, -R, -p.length / 2.0), Vector3(2 * R, 2 * R, p.length))
 	_whole = ShaderMaterial.new()
 	_whole.shader = preload("res://terrain/shaders/far.gdshader")

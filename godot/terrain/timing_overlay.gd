@@ -19,16 +19,16 @@ func _process(_delta: float) -> void:
 	var begin := {}
 	var sum := {}
 	for i in rd.get_captured_timestamps_count():
-		var name := rd.get_captured_timestamp_name(i)
+		var stamp := rd.get_captured_timestamp_name(i)
 		var t := rd.get_captured_timestamp_gpu_time(i)
-		if name.ends_with("_begin"):
-			begin[name.trim_suffix("_begin")] = t
-		elif name.ends_with("_end") and begin.has(name.trim_suffix("_end")):
-			var pass_name := name.trim_suffix("_end")
+		if stamp.ends_with("_begin"):
+			begin[stamp.trim_suffix("_begin")] = t
+		elif stamp.ends_with("_end") and begin.has(stamp.trim_suffix("_end")):
+			var pass_name := stamp.trim_suffix("_end")
 			sum[pass_name] = sum.get(pass_name, 0) + t - begin[pass_name]
 	for pass_name: String in _gpu:
 		if sum.get(pass_name, 0) > 0:
-			_gpu[pass_name] = sum[pass_name] / 1000.0
+			_gpu[pass_name] = sum[pass_name] / 1.0e6  # ns
 	_frames += 1
 	if _frames % 30 != 0:
 		return
