@@ -1,10 +1,11 @@
 ## The ground inside the station: loads (or generates) the world, keeps the 1 m TerrainWindow around the
 ## viewer, and draws it as one tile mesh per window slot, each with a water mesh as its child, bent onto
 ## the cylinder by tile.gdshader and water.gdshader; FarTerrain draws beyond it, and a ColliderPatch under
-## the viewer is the ground. The viewer is held still until the first patch is live, then stood on it at
-## the spawn site. Floating origin: the whole station moves along its axis in ORIGIN_STEP steps to keep
-## the viewer near the global origin; terrain works in station space only. Place it under the Station at
-## its origin, so its space is station space.
+## the viewer is the ground. The ground body (the viewer at the start) is held still until the first patch
+## is live, then stood on it at the spawn site, and held again whenever the live patch does not cover it.
+## Floating origin: the whole station moves along its axis in ORIGIN_STEP steps to keep the viewer near
+## the global origin; terrain works in station space only. Place it under the Station at its origin, so
+## its space is station space.
 class_name Terrain
 extends Node3D
 
@@ -12,6 +13,8 @@ extends Node3D
 signal collider_live
 ## Emitted after each floating-origin shift, with the station's z shift in m.
 signal origin_shifted(shift: float)
+## Emitted when Terrain starts or stops holding the ground body for want of a patch under it.
+signal body_held(held: bool)
 
 @export var station: Station
 ## The window follows this node.
@@ -35,6 +38,11 @@ var _tiles: Array[MeshInstance3D] = []
 var _center := Vector2i(-1, -1)
 ## Set once the first patch is live and the viewer is released.
 var _live := false
+## The node stood on the ground at spawn; the viewer may later become the FlyCamera.
+var _body: Node3D
+## Whether Terrain itself is holding _body (it does not release a hold that something else, like the
+## FlyCamera, put on it).
+var _held := false
 ## Where the viewer was stood at the spawn site, in station space.
 var _spawn_at: Vector3
 
@@ -42,7 +50,8 @@ var _spawn_at: Vector3
 
 
 func _ready() -> void:
-	viewer.process_mode = PROCESS_MODE_DISABLED
+	_body = viewer
+	_body.process_mode = PROCESS_MODE_DISABLED
 	# Children are ready before their parent, so the station may not have measured its hull yet.
 	if station.radius == 0.0:
 		await station.ready
@@ -175,6 +184,17 @@ func _process(_delta: float) -> void:
 	var p := station.to_local(viewer.global_position)
 	if patch.needs_rebuild(p):
 		patch.rebuild(window, Cyl.theta_of(p), p.z)
+	_hold_body(not patch.covers(station.to_local(_body.global_position)))
+
+
+## Holds _body while there is no ground under it, and lets it go once there is. A body that something else
+## already holds is left alone.
+func _hold_body(hold: bool) -> void:
+	if hold == _held or (hold and _body.process_mode == PROCESS_MODE_DISABLED):
+		return
+	_held = hold
+	_body.process_mode = PROCESS_MODE_DISABLED if hold else PROCESS_MODE_INHERIT
+	body_held.emit(hold)
 
 
 ## Moves the window to the tiles around center and points every tile node at its tile, if center changed.

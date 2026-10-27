@@ -50,6 +50,14 @@ func _initialize() -> void:
 	check(shape.map_width == 257 and shape.map_depth == 257, "patch samples")
 	check(patch.needs_rebuild(Vector3(3200, 0, 300) + patch.basis.x * 65.0), "rebuild beyond 64 m")
 	check(not patch.needs_rebuild(Vector3(3200, 0, 300) + patch.basis.x * 63.0), "no rebuild within 64 m")
+	# Coverage is Chebyshev, 4 m inside the 128 m half extent, and only once the patch has a frame.
+	for v: Vector3 in [Vector3(123, 0, 0), Vector3(-123, 0, 0), Vector3(0, 0, 123), Vector3(0, 0, -123), Vector3(123, 0, 123)]:
+		check(patch.covers(patch.transform * v), "covers %s" % v)
+	for v: Vector3 in [Vector3(125, 0, 0), Vector3(-125, 0, 0), Vector3(0, 0, 125), Vector3(0, 0, -125), Vector3(125, 0, 125)]:
+		check(not patch.covers(patch.transform * v), "does not cover %s" % v)
+	var fresh := ColliderPatch.new()
+	check(not fresh.covers(Vector3.ZERO), "a patch with no frame covers nothing")
+	fresh.free()
 	patch.free()  # outside the tree, so nothing else frees it; a leaked body prints errors at exit
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

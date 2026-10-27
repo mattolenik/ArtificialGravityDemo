@@ -26,6 +26,8 @@ var _pipeline: RID
 var _staging: RID
 var _set: RID
 var _pending := false
+## Set by the first set_frame; until then the patch has no ground.
+var _framed := false
 
 
 func _init() -> void:
@@ -48,6 +50,7 @@ func _notification(what: int) -> void:
 ## Puts the patch's frame on the hull of radius R at (theta, z), and makes that its centre.
 func set_frame(theta: float, z: float, R: float) -> void:
 	center = Vector2(theta, z)
+	_framed = true
 	transform = Transform3D(Basis(Vector3(cos(theta), sin(theta), 0), Vector3(-sin(theta), cos(theta), 0), Vector3(0, 0, 1)),
 			Cyl.position(theta, z, 0, R))
 
@@ -56,6 +59,15 @@ func set_frame(theta: float, z: float, R: float) -> void:
 func needs_rebuild(viewer_local: Vector3) -> bool:
 	var p := transform.affine_inverse() * viewer_local
 	return Vector2(p.x, p.z).length() > REBUILD_DISTANCE
+
+
+## Whether a station-space point is over the ground this patch holds: within _MID - 4 m (a margin of 4 m
+## from the edge) of the centre along both axes of the patch's plane. A patch with no frame covers nothing.
+func covers(viewer_local: Vector3) -> bool:
+	if not _framed:
+		return false
+	var p := transform.affine_inverse() * viewer_local
+	return maxf(absf(p.x), absf(p.z)) <= _MID - 4
 
 
 ## Height of the surface above the hull at the centre, from the last bake.

@@ -4,7 +4,8 @@
 ## flies 5 km along the axis, and prints a summary and quits. Frame times come from the process delta,
 ## GPU times from the timing overlay's pairs and the viewport's measured render time (zero where the backend
 ## reports none, shown as n/a).
-## Run: godot --path . res://terrain/smoke.tscn [-- --legs=10]; leave the window visible and the keyboard alone.
+## Run: godot --path . res://terrain/smoke.tscn [-- --legs=10]. If the window stops being drawn the collider
+## stops following, the player is held, and the summary shows held frames and shorter legs.
 extends Node
 
 const HOLD := 2.0
@@ -34,6 +35,10 @@ var _bake: Array[float] = []
 var _tiles: Array[int] = []
 var _listening := false
 var _shifts := 0
+## How many times Terrain held the player, whether it is holding it now, and for how many measured frames.
+var _holds := 0
+var _holding := false
+var _held_frames := 0
 ## Frames over SLOW ms, as "phase t=..s ..ms".
 var _slow: Array[String] = []
 ## Application focus changes, as "out/in phase t=..s".
@@ -51,6 +56,7 @@ func _ready() -> void:
 	_fly = _station.get_node("FlyCamera")
 	main.get_node("Panel/Box/Timing").timed.connect(_on_timed)
 	_terrain.origin_shifted.connect(func(_shift: float) -> void: _shifts += 1)
+	_terrain.body_held.connect(_on_body_held)
 	_terrain.collider_live.connect(_route, CONNECT_ONE_SHOT)
 	RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
 	add_child(main)
@@ -140,6 +146,7 @@ func _process(delta: float) -> void:
 		return
 	if _phase == "flight":
 		_hold_height()
+	_held_frames += int(_holding)
 	var s: Dictionary = _stats[_phase]
 	s.time += delta
 	s.cpu.append(delta * 1000.0)
@@ -171,6 +178,11 @@ func _on_timed(pass_name: String, ms: float) -> void:
 		(_detail if pass_name == "detail" else _bake).append(ms)
 
 
+func _on_body_held(held: bool) -> void:
+	_holding = held
+	_holds += int(held)
+
+
 func _on_tiles(tiles: Array[Vector2i]) -> void:
 	_tiles.append(tiles.size())
 
@@ -198,7 +210,8 @@ func _summary() -> void:
 	print("per phase (CPU = frame interval from the process delta; GPU = viewport render time):")
 	print(rows.trim_suffix("\n"))
 	print("all frames: %d, %s" % [all_cpu.size(), _times(all_cpu, all_gpu)])
-	print("origin shifts: %d; frames over %.0f ms: %s; focus changes: %s" % [_shifts, SLOW, _slow, _focus])
+	print("origin shifts: %d; held: %d times, %d frames; frames over %.0f ms: %s; focus changes: %s" % [_shifts, _holds,
+			_held_frames, SLOW, _slow, _focus])
 	print("detail lists: %s; tiles per dispatch %s..%s; %s" % [_stat(_detail, 2.0), _tiles.min() if _tiles else "-",
 			_tiles.max() if _tiles else "-", _per_tile()])
 	print("bake: %s" % _stat(_bake, 1.0))

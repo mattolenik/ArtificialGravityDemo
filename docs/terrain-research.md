@@ -372,7 +372,7 @@ Parcels, wetting, collapse, the displaced-grid rendering and Godot's own frame c
 | detail, 4-tile list max (per tile) | 2 ms per tile | 0.71 (0.18) ms | n/a |
 | bake max (median) | 1 ms | 0.69 (0.42) ms | n/a |
 
-Frames sit on the 8.33 ms refresh, so the GPU time is the figure that means anything. No budget was missed in this run, but the bake is marginal: its max was 0.69 to 1.12 ms over four 1440p runs and 1.05 and 1.76 ms at the 1152×648 default window.
+Frames sit on the 8.33 ms refresh, so the GPU time is the figure that means anything. No budget was missed in this run, but the bake is marginal: its max was 0.69 to 1.12 ms over four 1440p runs and 1.05 and 1.76 ms at the 1152×648 default window. The ground body is held while the collider patch does not cover it, so a run whose window stops being drawn shows held frames and shorter legs rather than a fall.
 
 **Rendering without CPU meshing**
 
