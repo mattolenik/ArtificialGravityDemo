@@ -40,7 +40,8 @@ layout(push_constant, std430) uniform Params {
 	float macro_cell;      // m per macro texel
 	float bank_distance;
 	float bank_slope_tan;
-	vec2 pad;              // to 64 bytes: Godot wants push constants in multiples of 16
+	float cliff_min;
+	float pad;             // to 64 bytes: Godot wants push constants in multiples of 16
 } pc;
 
 const float CLIFF_BAND = 4.0;  // m: width of a sharpened cliff face
@@ -63,10 +64,11 @@ vec4 fetch(sampler2D s, ivec2 t) {
 }
 
 // A bilinear footprint: lower-left texel t and weights (across, up the left column, up the right
-// column). A pair of texels whose higher one is a cliff cell (a cliff cell is the top of its 10-60 m
-// jump) interpolates with a smoothstep over CLIFF_BAND at their shared boundary instead of the 32 m
-// ramp, so the jump becomes a near-vertical face. The across weight blends the two rows' choices by
-// height so the surface stays continuous where the choice changes.
+// column). A pair across a cliff jump (the higher texel a rim cell, the lower one not, at least half of
+// cliff_min below) interpolates with a smoothstep over CLIFF_BAND at their shared boundary instead of
+// the 32 m ramp, so the jump becomes a near-vertical face; pairs along a rim or into the plateau keep
+// the ramp. The across weight blends the two rows' choices by height so the surface stays continuous
+// where the choice changes.
 struct Foot {
 	ivec2 t;
 	vec3 w;
@@ -81,11 +83,13 @@ vec4 corners(sampler2D s, ivec2 t, int channel) {
 	return v;
 }
 
-// The weight across a pair, sharpened when the higher texel of the pair is a cliff cell.
-float sharp(float f, vec4 h, vec4 c, int lo, int hi) {
-	float b = 0.5 * CLIFF_BAND / pc.macro_cell;
-	bool face = (h[lo] >= h[hi] ? c[lo] : c[hi]) > 0.5;
-	return face ? smoothstep(0.5 - b, 0.5 + b, f) : f;
+// The weight across texels a and b, sharpened across a cliff jump.
+float sharp(float f, vec4 h, vec4 c, int a, int b) {
+	int top = h[a] >= h[b] ? a : b;
+	int low = a + b - top;
+	bool face = c[top] > 0.5 && c[low] < 0.5 && h[top] - h[low] >= 0.5 * pc.cliff_min;
+	float band = 0.5 * CLIFF_BAND / pc.macro_cell;
+	return face ? smoothstep(0.5 - band, 0.5 + band, f) : f;
 }
 
 Foot foot(vec2 m) {
@@ -224,6 +228,12 @@ void main() {
 			/ (pc.macro_cell * pc.dtheta * (pc.radius - s));
 	float gz = (bilinear(m_surface, m + vec2(0.0, 0.5)) - bilinear(m_surface, m - vec2(0.0, 0.5))) / pc.macro_cell;
 	float slope = length(vec2(gx, gz));
+	// Slope of the sharpened surface at the window's cell spacing: a face steeper than 60 deg is rock.
+	float dm = pc.cell / pc.macro_cell;
+	float fx = (interp(m_surface, foot(m + vec2(dm, 0.0))) - interp(m_surface, foot(m - vec2(dm, 0.0))))
+			/ (2.0 * pc.cell * pc.dtheta * (pc.radius - s));
+	float fz = (interp(m_surface, foot(m + vec2(0.0, dm))) - interp(m_surface, foot(m - vec2(0.0, dm)))) / (2.0 * pc.cell);
+	bool face = length(vec2(fx, fz)) > tan(radians(60.0));
 
 	// Lakes: water cells that are neither sea nor on a river path. lam is their bilinear share here.
 	vec4 lake;
@@ -261,9 +271,9 @@ void main() {
 	h = clamp(h, 0.0, pc.h_max);
 
 	// Strata follow 0.3 of the noise, all of it on bare rock so rock stays at the surface; a lens cut
-	// away entirely collapses onto the bedrock.
+	// away entirely collapses onto the bedrock; steep faces are bare rock.
 	float nb = n * (0.3 + 0.7 * exposed);
-	float bt = clamp(b + nb, 0.0, h);
+	float bt = face ? h : clamp(b + nb, 0.0, h);
 	float cbt = cb + nb;
 	float ctt = ct + nb;
 	if (cbt >= h) {

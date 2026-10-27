@@ -66,7 +66,13 @@ func _setup_rd() -> void:
 		push_error("detail.glsl: %s" % spirv.compile_error_compute)
 		return
 	_shader = _rd.shader_create_from_spirv(spirv)
+	if not _shader.is_valid():
+		push_error("detail.glsl: shader creation failed")
+		return
 	_pipeline = _rd.compute_pipeline_create(_shader)
+	if not _pipeline.is_valid():
+		push_error("detail.glsl: pipeline creation failed")
+		return
 	var ss := RDSamplerState.new()
 	ss.min_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
 	ss.mag_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
@@ -188,6 +194,9 @@ func wanted_tiles(center_tile: Vector2i) -> Array[Vector2i]:
 ## Brings the window to the tiles around center_tile, generating every tile that is new to its slot
 ## in one compute list on the render thread.
 func move_to(center_tile: Vector2i) -> void:
+	if not _pipeline.is_valid():
+		push_error("TerrainWindow.move_to: no detail pipeline (setup not run or failed)")
+		return
 	var dirty: Array[Vector2i] = []
 	for t in wanted_tiles(center_tile):
 		var s := slot_of(t)
@@ -207,8 +216,6 @@ func resident_tiles() -> Array[Vector2i]:
 
 
 func _dispatch(tiles: Array[Vector2i]) -> void:
-	if not _pipeline.is_valid():
-		return
 	var list := _rd.compute_list_begin()
 	_rd.compute_list_bind_compute_pipeline(list, _pipeline)
 	_rd.compute_list_bind_uniform_set(list, _sets[0], 0)
@@ -241,4 +248,5 @@ func _push_constants(tile: Vector2i) -> PackedByteArray:
 	b.encode_float(44, params.macro_cell)
 	b.encode_float(48, params.bank_distance)
 	b.encode_float(52, tan(deg_to_rad(params.bank_slope_deg)))
+	b.encode_float(56, params.cliff_min)
 	return b
