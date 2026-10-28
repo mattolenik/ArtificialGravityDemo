@@ -382,6 +382,14 @@ Frames sit on the 8.33 ms refresh, so the GPU time is the figure that means anyt
 | refactor | 1, .5, .25, .125, .0625, .03125 | 23.0 / 63.2 cm | 1.4 / 9.5 cm | n/a |
 | no1m | 1, .5, .25, .125, .0625, 0 | 22.1 / 60.2 cm | 1.4 / 9.5 cm | n/a |
 | after | 1, .5, .25, .125, 0, 0 | 15.1 / 63.6 cm | 1.0 / 9.5 cm | 0.258 ms |
+| c5 | 1, .5, .25, .15, 0, 0 | 16.9 / 69.2 cm | 1.1 / 9.5 cm | n/a |
+| c1 | 1, .5, .25, .2, 0, 0 | 20.9 / 80.2 cm | 1.3 / 9.5 cm | n/a |
+| c2 | 1, .5, .25, .3, 0, 0 | 28.4 / 101.1 cm | 1.7 / 9.5 cm | n/a |
+| c3 | 1, .5, .25, .2, 0, 0; rock roughness 3 | 27.4 / 106.6 cm | 1.3 / 9.5 cm | n/a |
+| c4 | 1, .5, .25, .125, 0, 0; region amplitudes ÷ 1.05 | 14.4 / 60.8 cm | 1.0 / 9.5 cm | n/a |
+| tuned (= after) | 1, .5, .25, .125, 0, 0 | 15.1 / 63.6 cm | 1.0 / 9.5 cm | 0.100 ms |
+
+Tuning pass, 2026-10-28: the 4 m weight trades bare-rock grain against collider error at altitude (0.64 m cells), and the spawn flats do not change with it; the extra grain only shows at 0.3, where the collider sits up to a metre off the drawn rock. The defaults stay at `after`'s values (`tuned`).
 
 `refactor` is `before` with the weights as push constants: identical statistics, but different surface MD5s. With the old constant divisor (1.96875) in place of the runtime sum of the weights, the MD5s match `before` bit for bit, so the only difference is the rounding of the normalisation. The rock max in `after` is 0.4 cm over `before`'s: dropping the 2 m and 1 m octaves renormalises the rest up by 1.96875 / 1.875 = 1.05. At `before`'s absolute amplitudes (the region amplitudes times 1.875 / 1.96875), the rock site reads 14.4 / 60.8 cm. The Vulkan per-tile figure is the larger of two timed lists from one run, and it varies about 2× between runs: a repeat of `after` gave 0.117 ms.
 
