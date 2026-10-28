@@ -26,5 +26,11 @@ func _initialize() -> void:
 	check(Tools.push_dir(Vector3(-1, 0, 0.5), 0.0) == Vector2i(-1, 0), "the larger component wins")
 	check(Tools.push_dir(Vector3(0.2, 0, -1), 0.0) == Vector2i(0, -1), "axial")
 	check(Tools.push_dir(Vector3.ZERO, 0.0) == Vector2i.ZERO, "no motion, no direction")
+	# The auger's stop rule and its spoil cell across the seam.
+	check(Auger.stop_reason_for(0.5, 10.0, 0.02, false) == "" and Auger.stop_reason_for(10.0, 10.0, 0.02, false) == "depth", "boring on, then at depth")
+	check(Auger.stop_reason_for(0.5, 10.0, 0.0, false) == "rock", "a dry tick that cut nothing is rock everywhere")
+	check(Auger.stop_reason_for(20.0, 10.0, 0.0, true) == "", "a pump never stops")
+	check(Auger.spoil_cell_of(Vector2i(16382, 7), Vector2i(1, 0), 7, 16384) == Vector2i(5, 7), "spoil cell wraps")
+	check(Auger.spoil_cell_of(Vector2i(10, 9), Vector2i(0, -1), 7, 16384) == Vector2i(10, 2), "spoil cell along the axis")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

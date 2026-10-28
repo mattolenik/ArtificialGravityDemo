@@ -38,6 +38,20 @@
 ## jumps (S4): stood on the pile's highest cell, the player jumps four times 1.2 s apart: at least four
 ##    tamps, the solid gained over the box above 0.1 m³ and, times the swell, the loose lost within 1 %, and
 ##    at least one cell folded (no loose, surface risen).
+## The auger (Task 5), back at the spawn, at A = spawn_cell + (6, 0), its spoil side (1, 0):
+## bore: an auger placed at A bores to depth in 30 ± 2 s: the counter's landings add up to the annulus between
+##    the surfaces within 0.1 %, the loose over the box of 24 is that times the swell and what it deposited
+##    within 0.5 %, the shaft is 10 m down and bare, no loose within 2 cells of A (decision 6), the pile at
+##    repose, no tick refused; the edit-shape landings at most 5 a second over the bore and at most one zone
+##    move (printed and asserted).
+## box: a 1 m box dropped 2 m over the pile's top rests on it after 3 s, its lowest corner on the collider and
+##    its bottom at surface + loose.
+## pickup: the auger picked up, the shaft stays bare for 1 s; a 2 m³ column on the cell beside the shaft's
+##    rim slumps into the open hole, the box's loose growing by 2 m³.
+## pause: an auger at A + (0, 20), a second one refused; with the player 600 m spinward its ticks are refused
+##    and stop, and resume when it is back; it is picked up while its ticks are in flight (no ERROR line).
+## rock: at NoiseReport.rock_site an auger 3 cells spinward of the player stops at rock before 10 m, its
+##    counter matching the annulus, every shaft cell at its bedrock_top; then back to the spawn.
 ## Then prints the GPU times of the edit (stamp), pack and sim lists against their budget, reported and not
 ## asserted (Vulkan only: Metal reports zeros, shown as n/a), and PASS and exits 0 when every check holds,
 ## else FAIL and 1; persist_edits is off, so nothing is saved. Last, a small deposit makes a tile active and
@@ -75,6 +89,10 @@ var _counts: Array[int] = []
 var _seen := {}
 var _sim_ms := {}
 var _active_max := {}
+## The edit-shape landings and zone moves counted while the bore phase records them, and the last zone seen.
+var _edit_bakes := 0
+var _zone_moves := 0
+var _last_zone := Vector2i.ZERO
 
 
 func _ready() -> void:
@@ -146,6 +164,22 @@ func _route() -> void:
 		return
 	_phase = "jumps"
 	if not await _jumps(s4):
+		return
+	if not await _teleport(spawn):
+		return
+	var a := spawn + Vector2i(6, 0)
+	_phase = "bore"
+	if not await _bore(a):
+		return
+	_phase = "box"
+	await _box_drop(a)
+	_phase = "pickup"
+	await _pickup(a)
+	_phase = "pause"
+	if not await _pause(a, spawn):
+		return
+	_phase = "rock"
+	if not await _rock(spawn):
 		return
 	_phase = ""
 	# Let the last timestamps arrive.
@@ -496,6 +530,213 @@ func _jumps(s4: Vector2i) -> bool:
 	return true
 
 
+## Phase bore at a: an auger bores to depth and heaps its spoil beside itself, conserved and clear of the rim,
+## the collider following at most 5 times a second (see the header). False after quitting on a timeout.
+func _bore(a: Vector2i) -> bool:
+	var t := _terrain.tool_params
+	var swell := _terrain.materials.swell_factor[0]
+	var box := _box(a, 24)
+	var shaft := _disc(a, t.bore_radius)
+	var s0 := _read("surface")
+	var l0 := _vol(_read("loose"), s0, box)
+	_edit_bakes = 0
+	_zone_moves = 0
+	_last_zone = _terrain.patch.zone
+	var zone0 := _last_zone
+	_terrain.patch.baked.connect(_on_baked)
+	var start := Time.get_ticks_msec()
+	var at := _center(a)
+	var auger := _tools.place(at.x, at.y, Vector2i(1, 0))
+	if auger == null:
+		return _quit("The auger was not placed at %s." % a)
+	var reason := await _stopped(auger, 40.0)
+	var wall := (Time.get_ticks_msec() - start) / 1000.0
+	_terrain.patch.baked.disconnect(_on_baked)
+	if reason.is_empty():
+		return _quit("The auger did not stop in 40 s.")
+	var waited := await _settled(auger.spoil_cell())
+	var s1 := _read("surface")
+	var loose := _read("loose")
+	var removed := _removed(s0, s1, shaft)
+	var piled := _vol(loose, s1, box) - l0
+	var drops: Array[String] = []
+	var bare := true
+	for c in shaft:
+		drops.append("%.4f" % (_f(s0, c) - _f(s1, c)))
+		bare = bare and _f(loose, c) < 1e-6 and absf(_f(s0, c) - _f(s1, c) - t.bore_depth) <= 0.05
+	# The most loose within 2 cells of a (the shaft and its rim ring), and where.
+	var rim_at := a
+	for c in _disc(a, 2):
+		if _f(loose, c) > _f(loose, rim_at):
+			rim_at = c
+	var rim := _f(loose, rim_at)
+	var steep := _steepest(box, shaft)
+	var repose := tan(deg_to_rad(_terrain.materials.repose_dry[0])) * 1.02
+	print("bore: stopped (%s) after %.2f s, %d ticks, depth %.4f m, %d refused; settled in %.2f s; counter %.6f m³, annulus %.6f m³ (%+.4f %%)" % [
+			reason, wall, auger.ticks, auger.depth, auger.refused, waited, auger.removed, removed, (auger.removed / removed - 1.0) * 100.0])
+	print("bore: loose %.6f m³ over the box for %.6f · %.2f = %.6f (%+.4f %%), deposited %.6f (%+.4f %%); shaft drops %s m, bare: %s; loose within 2 cells max %.6f m at A %+d, %+d; steepest %.4f, repose · 1.02 %.4f" % [
+			piled, removed, swell, removed * swell, (piled / (removed * swell) - 1.0) * 100.0, auger.deposited,
+			(piled / auger.deposited - 1.0) * 100.0, drops, bare, rim, rim_at.x - a.x, rim_at.y - a.y, steep, repose])
+	var rate := _edit_bakes / wall
+	print("bore: %d edit-shape landings in %.2f s: %.2f a second; %d zone moves (the zone was at %s, A is %s)" % [
+			_edit_bakes, wall, rate, _zone_moves, zone0, a])
+	_report("bore to depth, spoil conserved and clear of the rim", reason == "depth" and waited >= 0.0
+			and absf(auger.removed - removed) <= 1e-3 * removed and absf(piled - removed * swell) <= 0.005 * removed * swell
+			and absf(piled - auger.deposited) <= 0.005 * auger.deposited and bare and rim <= 0.01 and steep <= repose
+			and auger.refused == 0)
+	_report("bore in 30 ± 2 s, edit-shape landings at most 5 a second, at most one zone move", absf(wall - 30.0) <= 2.0
+			and rate <= 5.0 and _zone_moves <= 1)
+	return true
+
+
+## Counts the edit-shape landings and the zone moves among them for the bore phase. Inside the readback flush:
+## stores only. An edit landing is for the last zone requested (edit_run's rule).
+func _on_baked(kind: String, _ms: float) -> void:
+	if kind != "edit":
+		return
+	_edit_bakes += 1
+	if _terrain.patch._issued_zone != _last_zone:
+		_zone_moves += 1
+		_last_zone = _terrain.patch._issued_zone
+
+
+## Phase box: a 1 m box dropped 2 m over the pile's top comes to rest on it (see the header).
+func _box_drop(a: Vector2i) -> void:
+	var loose := _read("loose")
+	var top := a
+	for c in _box(a, 24):
+		if _f(loose, c) > _f(loose, top):
+			top = c
+	var patch := _terrain.patch
+	var box: Box = load("res://box.tscn").instantiate()
+	box.station = _station
+	box.setup(1.0, 8.0, 0.0)
+	_station.add_child(box)
+	var at := _center(top)
+	box.global_transform = _station.global_transform * Transform3D(patch.transform.basis,
+			patch.surface_point(Cyl.position(at.x, at.y, 0.0, _terrain.params.radius), 2.0))
+	await get_tree().create_timer(3.0).timeout
+	var q := _station.to_local(box.global_position)
+	var c := _terrain.params.cell_of(Cyl.theta_of(q), q.z)
+	var bottom := Cyl.height_of(q, _terrain.params.radius) - 0.5
+	loose = _read("loose")
+	var ground := _f(_read("surface"), c) + _f(loose, c)
+	var corner := _corner_clearance(box)
+	var speed := box.linear_velocity.length()
+	print("box: dropped over %s, rests at %s (%.3f m loose): %.4f m/s, lowest corner %+.4f m over the collider, bottom %+.4f m over surface + loose" % [
+			top, c, _f(loose, c), speed, corner, bottom - ground])
+	_report("box rests on the pile", speed < 0.05 and corner >= -0.05 and corner <= 0.1 and absf(bottom - ground) <= 0.1)
+	box.queue_free()
+
+
+## Phase pickup at a: the picked-up auger's shaft stays bare, and a column beside its rim slumps into it (see
+## the header).
+func _pickup(a: Vector2i) -> void:
+	var box := _box(a, 24)
+	var shaft := _disc(a, _terrain.tool_params.bore_radius)
+	var before := _vol(_read("loose"), _read("surface"), box)
+	_tools.pickup()
+	await get_tree().create_timer(1.0).timeout
+	var loose := _read("loose")
+	var held: float = shaft.map(func(c: Vector2i) -> float: return _f(loose, c)).max()
+	var gone := _tools.auger == null
+	# Settled at the column's own cell: the shaft's centre holds no loose before the column slumps, so its
+	# blob would match the window before the column's activity flag has even landed.
+	var column := a + Vector2i(0, 2)
+	_stamp(_op(column, 0, EditLayer.MODE_DEPOSIT, 2.0))
+	var waited := await _settled(column)
+	loose = _read("loose")
+	var after := _vol(loose, _read("surface"), box)
+	var fell: float = shaft.map(func(c: Vector2i) -> float: return _f(loose, c)).max()
+	print("pickup: auger gone: %s, shaft loose max %.6f m after 1 s; a 2 m³ column at %s settled in %.2f s: %.6f m³ over the box, was %.6f + 2 (%+.4f %%); shaft loose max %.4f m" % [
+			gone, held, column, waited, after, before, (after / (before + 2.0) - 1.0) * 100.0, fell])
+	_report("pickup opens the hole", gone and held < 1e-6 and waited >= 0.0 and absf(after - before - 2.0) <= 0.005 * (before + 2.0)
+			and fell > 0.05)
+
+
+## Phase pause at a + (0, 20): one auger at a time; its ticks are refused while the player is 600 m away and
+## resume when it is back; picked up with ticks in flight (see the header). False after quitting on a timeout.
+func _pause(a: Vector2i, spawn: Vector2i) -> bool:
+	var at := _center(a + Vector2i(0, 20))
+	var first := _tools.place(at.x, at.y, Vector2i(0, 1))
+	at = _center(a)
+	var second := _tools.place(at.x, at.y, Vector2i(1, 0))
+	_report("one auger at a time", first != null and second == null and _tools.auger == first)
+	if first == null:
+		return true
+	await get_tree().create_timer(1.0).timeout
+	var bored := first.ticks
+	var away := spawn + Vector2i(roundi(600.0 / (_terrain.params.radius * _terrain.params.dtheta())), 0)
+	if not await _teleport(away):
+		return false
+	var ticks0 := first.ticks
+	await get_tree().create_timer(1.0).timeout
+	var ticks1 := first.ticks
+	var refused := first.refused
+	if not await _teleport(spawn):
+		return false
+	var ticks2 := first.ticks
+	await get_tree().create_timer(2.0).timeout
+	var ticks3 := first.ticks
+	print("pause: %d ticks in the first second; 600 m away at %s: ticks %d -> %d over 1 s, %d refused; back: ticks %d -> %d over 2 s" % [
+			bored, away, ticks0, ticks1, refused, ticks2, ticks3])
+	_tools.pickup()
+	_report("pause and resume", bored > 0 and refused > 0 and ticks1 == ticks0 and ticks3 > ticks2)
+	return true
+
+
+## Phase rock at NoiseReport.rock_site: an auger stops at rock before its depth, every shaft cell at its
+## bedrock_top (see the header). Back to the spawn after. False after quitting on a timeout.
+func _rock(spawn: Vector2i) -> bool:
+	var site := NoiseReport.rock_site(_terrain.maps, _terrain.params)
+	_terrain.teleport(site.x, site.y)
+	if not await _settled_patch():
+		return false
+	var t := _terrain.tool_params
+	var c := _tools.player_cell() + Vector2i(3, 0)
+	var shaft := _disc(c, t.bore_radius)
+	var s0 := _read("surface")
+	var bedrock := _read("bedrock_top")
+	var at := _center(c)
+	var start := Time.get_ticks_msec()
+	var auger := _tools.place(at.x, at.y, Vector2i(1, 0))
+	if auger == null:
+		return _quit("The auger was not placed at the rock site %s." % c)
+	var reason := await _stopped(auger, 10.0)
+	var wall := (Time.get_ticks_msec() - start) / 1000.0
+	var s1 := _read("surface")
+	var removed := _removed(s0, s1, shaft)
+	var cover: Array[String] = []
+	var floored := true
+	for x in shaft:
+		cover.append("%.3f" % (_f(s0, x) - _f(bedrock, x)))
+		floored = floored and absf(_f(s1, x) - _f(bedrock, x)) <= 1e-3
+	print("rock: at %s, cover %s m; stopped (%s) after %.2f s at depth %.4f m, %d ticks; counter %.6f m³, annulus %.6f m³ (%+.4f %%); shaft at bedrock_top: %s" % [
+			c, cover, reason, wall, auger.depth, auger.ticks, auger.removed, removed,
+			(auger.removed / removed - 1.0) * 100.0 if removed > 0.0 else 0.0, floored])
+	_report("rock floors the bore", reason == "rock" and auger.depth < t.bore_depth and absf(auger.removed - removed) <= 1e-3 * removed
+			and floored)
+	_tools.pickup()
+	return await _teleport(spawn)
+
+
+## Waits for auger's stopped signal, at most limit s: its reason, "" on a timeout.
+func _stopped(auger: Auger, limit: float) -> String:
+	var reason: Array[String] = [""]
+	auger.stopped.connect(func(r: String) -> void: reason[0] = r)
+	var start := Time.get_ticks_msec()
+	while reason[0].is_empty() and Time.get_ticks_msec() - start < limit * 1000.0:
+		await get_tree().process_frame
+	return reason[0]
+
+
+## Fails the run at once with what: false, for the phase to return.
+func _quit(what: String) -> bool:
+	push_error(what)
+	get_tree().quit(1)
+	return false
+
+
 ## The player's feet (1 m under its origin along its up) over surface + loose at their cell, from synchronous
 ## reads, in m: negative when they are in the ground.
 func _feet_clearance() -> float:
@@ -506,9 +747,31 @@ func _feet_clearance() -> float:
 
 ## Teleports the player to the centre of cell c and waits for the collider under it (_settled_patch).
 func _teleport(c: Vector2i) -> bool:
-	var p := _terrain.params
-	_terrain.teleport((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5)
+	var at := _center(c)
+	_terrain.teleport(at.x, at.y)
 	return await _settled_patch()
+
+
+## Station-local (theta, z) of the centre of cell c.
+func _center(c: Vector2i) -> Vector2:
+	var p := _terrain.params
+	return Vector2((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5)
+
+
+## Height of station-space point q over the collider under it, along the patch's up; negative when under it
+## (edit_run's).
+func _clearance(q: Vector3) -> float:
+	var patch := _terrain.patch
+	return (q - patch.surface_point(q, 0.0)).dot(patch.transform.basis.y)
+
+
+## The lowest clearance among a 1 m box's eight corners (edit_run's, for any box).
+func _corner_clearance(box: Node3D) -> float:
+	var low := INF
+	for i in 8:
+		var corner := Vector3(i & 1, (i >> 1) & 1, (i >> 2) & 1) - Vector3.ONE * 0.5
+		low = minf(low, _clearance(_station.to_local(box.global_transform * corner)))
+	return low
 
 
 ## Turns the player upright to face station-space direction d (across its up), as Terrain._on_first_live

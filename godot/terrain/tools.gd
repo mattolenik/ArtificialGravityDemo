@@ -1,9 +1,13 @@
-## The player's feet as tools (the terrain slice 3 plan): walking pushes the loose dirt under them a little
+## The player's tools (the terrain slice 3 plan). The feet: walking pushes the loose dirt under them a little
 ## toward where the player is going, and a hard landing tamps it, the fourth folding it into the solid
-## ground. Every stamp goes through Terrain.stamp_tool, from Player's signals on the main thread after
-## move_and_slide, one stamp per signal.
+## ground; every stamp goes through Terrain.stamp_tool, from Player's signals on the main thread after
+## move_and_slide, one stamp per signal. The auger: E places one where the crosshair hits the ground within
+## place_reach, its spoil on the far side from the player, and E within pickup_distance of it picks it up;
+## one at a time, and E does nothing while the fly camera is the viewer (it climbs on E).
 class_name Tools
 extends Node
+
+const AUGER := preload("res://terrain/auger.tscn")
 
 @export var terrain: Terrain
 @export var player: Player
@@ -11,6 +15,8 @@ extends Node
 ## Stamps made (accepted by stamp_tool), for the driver.
 var pushes := 0
 var tamps := 0
+## The placed auger, null while there is none.
+var auger: Auger
 
 
 func _ready() -> void:
@@ -35,6 +41,58 @@ func _on_landed(speed: float) -> void:
 	if speed < t.tamp_land_speed:
 		return
 	tamps += int(terrain.stamp_tool(_foot(EditLayer.MODE_TAMP, t.tamp_step, terrain.materials.swell_factor[0])))
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo or key.keycode != KEY_E or terrain.viewer != player:
+		return
+	var at := terrain.station.to_local(player.global_position)
+	if auger != null:
+		if at.distance_to(auger.position) <= terrain.tool_params.pickup_distance:
+			pickup()
+		else:
+			print("Pick up the auger first")
+		return
+	var hit := DebugEdit.look_hit(get_viewport(), [player.get_rid()])
+	var q: Vector3 = terrain.station.to_local(hit.position) if not hit.is_empty() else at
+	if hit.is_empty() or q.distance_to(at) > terrain.tool_params.place_reach:
+		print("Nowhere to place the auger")
+		return
+	var theta := Cyl.theta_of(q)
+	place(theta, q.z, push_dir(q - at, theta))
+
+
+## Places an auger at the cell of station-local (theta, z), its spoil disc toward side, and stands it on the
+## collider there (the macro surface where no patch covers it). Null, with a line printed, while an auger is
+## placed or where its bore or spoil disc could not be stamped.
+func place(theta: float, z: float, side: Vector2i) -> Auger:
+	var t := terrain.tool_params
+	var p := terrain.params
+	var c := p.cell_of(theta, z)
+	if auger != null:
+		print("One auger at a time: pick it up first")
+		return null
+	if not (terrain.can_stamp(c, t.bore_radius) and terrain.can_stamp(Auger.spoil_cell_of(c, side, t.spoil_offset, p.n_theta()), t.spoil_radius)):
+		print("The auger cannot bore there")
+		return null
+	var theta_c := (c.x + 0.5) * p.dtheta()
+	var z_c := -p.length / 2.0 + c.y + 0.5
+	var hull := Cyl.position(theta_c, z_c, 0.0, p.radius)
+	var ground := Cyl.height_of(terrain.patch.surface_point(hull, 0.0), p.radius) if terrain.patch.covers(hull) \
+			else terrain.height_at(theta_c, z_c)
+	auger = AUGER.instantiate()
+	auger.setup(terrain, c, side, ground)
+	terrain.station.add_child(auger)
+	terrain.set_obstacle(c, t.bore_radius)
+	return auger
+
+
+## Takes the placed auger away; its hole stays and opens to the loose dirt around it.
+func pickup() -> void:
+	terrain.set_obstacle(TerrainSim.NO_CELL, -1)
+	auger.queue_free()
+	auger = null
 
 
 ## The cell of the player's origin.
