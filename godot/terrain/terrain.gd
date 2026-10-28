@@ -43,6 +43,8 @@ var _body: Node3D
 ## Whether Terrain itself is holding _body (it does not release a hold that something else, like the
 ## FlyCamera, put on it).
 var _held := false
+## Set by teleport() while the body waits, held, for a patch at its new place; cleared once stood on one.
+var _teleporting := false
 ## Where the viewer was stood at the spawn site, in station space.
 var _spawn_at: Vector3
 
@@ -64,6 +66,7 @@ func _ready() -> void:
 	patch = ColliderPatch.new()
 	add_child(patch)
 	patch.live.connect(_on_first_live, CONNECT_ONE_SHOT)
+	patch.live.connect(_on_live)
 	var spawn := maps.spawn
 	var cell := Vector2i(floori(spawn.x / params.dtheta()), floori(spawn.y + params.length / 2.0))
 	_move_window(window.tile_of_cell(cell.x, cell.y))
@@ -196,6 +199,34 @@ func _hold_body(hold: bool) -> void:
 	_held = hold
 	_body.process_mode = PROCESS_MODE_DISABLED if hold else PROCESS_MODE_INHERIT
 	body_held.emit(hold)
+
+
+## Moves the ground body to stand on the surface at (theta, z), with no velocity. Over the live patch it
+## is stood on it at once; elsewhere it is put 2 m over the macro surface and held until a patch covers
+## it, then stood on that (_on_live). Nothing before the first patch is live.
+func teleport(theta: float, z: float) -> void:
+	if not _live:
+		return
+	var p := Cyl.position(theta, z, height_at(theta, z) + 2.0, params.radius)
+	if patch.covers(p):
+		p = patch.surface_point(p, 2.0)
+	else:
+		_teleporting = true
+		_hold_body(true)
+	if _body is CharacterBody3D:
+		(_body as CharacterBody3D).velocity = Vector3.ZERO
+	_body.global_position = station.global_transform * p
+
+
+## Stands a teleported body on the patch that has just landed under it.
+func _on_live(_center: Vector2) -> void:
+	if not _teleporting:
+		return
+	var p := station.to_local(_body.global_position)
+	if not patch.covers(p):
+		return
+	_teleporting = false
+	_body.global_position = station.global_transform * patch.surface_point(p, 2.0)
 
 
 ## Moves the window to the tiles around center and points every tile node at its tile, if center changed.

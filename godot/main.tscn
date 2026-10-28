@@ -1,4 +1,4 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="PackedScene" path="res://station.tscn" id="1"]
 [ext_resource type="Script" path="res://emitter.gd" id="2"]
@@ -7,6 +7,7 @@
 [ext_resource type="PackedScene" path="res://terrain/terrain.tscn" id="5"]
 [ext_resource type="Script" path="res://terrain/fly_camera.gd" id="6"]
 [ext_resource type="Script" path="res://terrain/timing_overlay.gd" id="7"]
+[ext_resource type="Script" path="res://terrain/click_teleport.gd" id="8"]
 
 [sub_resource type="Environment" id="1"]
 ambient_light_source = 2
@@ -75,12 +76,24 @@ layout_mode = 2
 focus_mode = 0
 text = "Spawn view"
 
+[node name="Teleport" type="Button" parent="Panel/Box/Buttons"]
+layout_mode = 2
+focus_mode = 0
+toggle_mode = true
+tooltip_text = "While on, a click puts the player on the ground under the cursor."
+text = "Teleport"
+
 [node name="Info" type="Label" parent="Panel/Box"]
 layout_mode = 2
 
 [node name="Timing" type="Label" parent="Panel/Box"]
 layout_mode = 2
 script = ExtResource("7")
+
+[node name="ClickTeleport" type="Node" parent="." node_paths=PackedStringArray("terrain", "button")]
+script = ExtResource("8")
+terrain = NodePath("../Station/Terrain")
+button = NodePath("../Panel/Box/Buttons/Teleport")
 
 [connection signal="pressed" from="Panel/Box/Buttons/Spawn" to="Station/Emitter" method="spawn"]
 [connection signal="pressed" from="Panel/Box/Buttons/Clear" to="Station/Emitter" method="clear_spawned"]

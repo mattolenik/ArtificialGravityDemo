@@ -75,6 +75,20 @@ func center_height() -> float:
 	return _shape.map_data[_MID * SAMPLES + _MID]
 
 
+## The station-space point `lift` m (along the patch's up) over the baked surface under the station-space
+## point p, bilinear between the four samples around it; p should be covered by the patch.
+func surface_point(p: Vector3, lift: float) -> Vector3:
+	var q := transform.affine_inverse() * p
+	var x := clampf(q.x + _MID, 0.0, SAMPLES - 1.001)
+	var z := clampf(q.z + _MID, 0.0, SAMPLES - 1.001)
+	var i := int(x)
+	var j := int(z)
+	var d := _shape.map_data
+	var low := lerpf(d[j * SAMPLES + i], d[j * SAMPLES + i + 1], x - i)
+	var high := lerpf(d[(j + 1) * SAMPLES + i], d[(j + 1) * SAMPLES + i + 1], x - i)
+	return transform * Vector3(q.x, lerpf(low, high, z - j) + lift, q.z)
+
+
 ## Bakes the patch around the cell centre nearest (theta, z) from the window as it now stands; the shape
 ## and the frame change together when the readback lands, then `live` fires. While a bake is in flight
 ## this does nothing: the staging texture is still being read, and Terrain asks again every frame until
