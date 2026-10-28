@@ -74,6 +74,30 @@ func _initialize() -> void:
 	var fresh := ColliderPatch.new()
 	check(not fresh.covers(Vector3.ZERO), "a patch with no frame covers nothing")
 	fresh.free()
+	# The edit shape sits in the body's frame so that its own frame is the tangent frame at its centre, and stays
+	# put when the body's frame moves.
+	var a := 0.5 * PI + 0.01
+	patch.set_edit_frame(a, 320.0, 3200.0)
+	var edit_node: CollisionShape3D = patch.get_node("EditShape")
+	var g := patch.transform * edit_node.transform
+	check(g.origin.is_equal_approx(Cyl.position(a, 320.0, 0.0, 3200.0)), "edit frame origin %s" % g.origin)
+	check(g.basis.y.is_equal_approx(Vector3(-sin(a), cos(a), 0)), "edit frame up toward the axis")
+	check(edit_node.shape.map_width == 65 and edit_node.shape.map_depth == 65 and edit_node.disabled, "edit shape 65 x 65, off until baked")
+	patch.set_frame(0.5 * PI + 0.02, 290.0, 3200.0)
+	check((patch.transform * edit_node.transform).is_equal_approx(g), "edit frame kept across a big-patch move")
+	# surface_point falls back to the edit shape where the big patch has a NaN hole.
+	var big := PackedFloat32Array(); big.resize(257 * 257); big.fill(10.0)
+	for j in range(120, 137): for i in range(120, 137): big[j * 257 + i] = NAN
+	shape.map_data = big
+	patch.set_edit_frame(0.5 * PI + 0.02, 290.0, 3200.0)
+	var small := PackedFloat32Array(); small.resize(65 * 65); small.fill(7.0)
+	edit_node.shape.map_data = small
+	var inside := patch.transform.affine_inverse() * patch.surface_point(patch.transform * Vector3(0.5, 0, -1.5), 1.0)
+	# Within 1 mm: a float32 station point near x = 3200 is good to 2.4e-4 m, and the round trip of the exact
+	# answer alone reads 7.999756 here.
+	check(inside.distance_to(Vector3(0.5, 8.0, -1.5)) < 1e-3, "hole reads the edit shape: %s" % inside)
+	var outside := patch.transform.affine_inverse() * patch.surface_point(patch.transform * Vector3(40.0, 0, 0), 1.0)
+	check(is_equal_approx(outside.y, 11.0), "outside the hole reads the big patch: %s" % outside)
 	patch.free()  # outside the tree, so nothing else frees it; a leaked body prints errors at exit
 	# detail.glsl push constants: 112 bytes, the detail knobs at their std430 offsets, short lists padded.
 	var q := WorldParams.new()
