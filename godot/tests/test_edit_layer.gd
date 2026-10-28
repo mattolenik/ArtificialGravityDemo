@@ -73,5 +73,21 @@ func _initialize() -> void:
 	check(not ColliderPatch.zone_holds(Vector2i(10, 10), Vector2i(24, 10), 5, 16384), "14 + 5 = 19 moves")
 	check(not ColliderPatch.zone_holds(Vector2i(10, 10), Vector2i(10, 29), 5, 16384), "along z too")
 	check(ColliderPatch.zone_holds(Vector2i(2, 10), Vector2i(16382, 10), 5, 16384), "across the seam the delta is 4")
+	# Slice 3 stamps: disc cell counts, the push's reach, and the push-constant layout of edit.glsl.
+	check(EditLayer.disc_cells(0) == 1 and EditLayer.disc_cells(1) == 5 and EditLayer.disc_cells(2) == 13, "disc cells")
+	check(EditLayer.box_groups(1) == 1 and EditLayer.box_groups(4) == 2, "box groups")
+	var op := EditLayer.Op.new()
+	op.cell = Vector2i(16383, 40); op.radius = 1; op.mode = EditLayer.MODE_PUSH; op.dir = Vector2i(1, 0)
+	check(op.reach() == 2, "a push reaches one cell past its disc")
+	op.mode = EditLayer.MODE_TAMP
+	check(op.reach() == 1, "other modes reach their radius")
+	op.amount = 0.05; op.limit = 0.03; op.obstacle = Vector2i(5, 6); op.obstacle_radius = 1
+	# dtheta is a float32 there: 2 pi / 16384 rounds by 1.07e-11, so the bound is 1e-10.
+	var pc := EditLayer.new()._params(w, op, Vector2i(127, 0), 3)
+	check(pc.size() == 96 and pc.decode_s32(0) == 16383 and pc.decode_s32(4) == 40 and pc.decode_s32(16) == 127 and pc.decode_s32(28) == 4 \
+			and pc.decode_s32(32) == EditLayer.MODE_TAMP and pc.decode_s32(36) == 1 and pc.decode_s32(40) == 3 and pc.decode_s32(44) == 1 \
+			and pc.decode_s32(48) == 1 and pc.decode_s32(52) == 0 and pc.decode_s32(56) == 5 and pc.decode_s32(60) == 6 \
+			and absf(pc.decode_float(64) - 0.05) < 1e-7 and absf(pc.decode_float(68) - 0.03) < 1e-7 and pc.decode_float(76) == p.radius \
+			and absf(pc.decode_float(80) - p.dtheta()) < 1e-10, "edit push constants")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

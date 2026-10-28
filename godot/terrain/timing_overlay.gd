@@ -1,7 +1,7 @@
 ## The last GPU times of the detail pass, the collider bakes (big and edit) and the edit layer's stamp (with
-## its pack) and apply, from the capture_timestamp pairs TerrainWindow, ColliderPatch and EditLayer put
-## around their compute lists (pairs in one frame add up), and of the frame; refreshed every 30 frames. A
-## backend that reports no GPU time (Metal returns zeros) shows "n/a" there, and the CPU time
+## its pack), apply and tile packs, from the capture_timestamp pairs TerrainWindow, ColliderPatch and
+## EditLayer put around their compute lists (pairs in one frame add up), and of the frame; refreshed every
+## 30 frames. A backend that reports no GPU time (Metal returns zeros) shows "n/a" there, and the CPU time
 ## Performance.TIME_PROCESS reports (the slowest frame of the last second).
 extends Label
 
@@ -10,7 +10,7 @@ extends Label
 signal timed(pass_name: String, ms: float)
 
 ## Last nonzero GPU time per pass in ms.
-var _gpu := {"detail": 0.0, "bake": 0.0, "bake_edit": 0.0, "edit": 0.0, "apply": 0.0}
+var _gpu := {"detail": 0.0, "bake": 0.0, "bake_edit": 0.0, "edit": 0.0, "apply": 0.0, "pack": 0.0}
 var _frames := 0
 var _stamp_frame := -1
 

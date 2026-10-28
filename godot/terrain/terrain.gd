@@ -26,6 +26,8 @@ signal body_held(held: bool)
 ## Whether edited tiles are saved to the world's tiles/ directory (edits are always loaded). Windowed test
 ## drivers set it false, so they never write into a real world.
 @export var persist_edits := true
+## The tunables of the tools and of the loose-dirt simulation; a default ToolParams when unset.
+@export var tool_params: ToolParams
 
 ## The station shifts along its axis by whole steps of this many m once the viewer is farther than this
 ## from the global origin.
@@ -44,6 +46,8 @@ var params: WorldParams
 var maps: MacroMaps
 var window: TerrainWindow
 var patch: ColliderPatch
+## Per-material numbers: swell, repose, porosity, wetting distance.
+var materials: MaterialSet = preload("res://terrain/materials.tres")
 
 ## One ground mesh per slot, slot (x, y) at index y * slots + x; its child is the water mesh.
 var _tiles: Array[MeshInstance3D] = []
@@ -58,11 +62,20 @@ var _teleporting := false
 var _spawn_at: Vector3
 ## Seconds since the edits were last saved.
 var _since_save := 0.0
+## The cells tool stamps never push loose dirt into (set_obstacle): within _obstacle_radius cells of
+## _obstacle; none while the radius is negative.
+var _obstacle := Vector2i(-1, -1)
+var _obstacle_radius := -1
+## The last tool stamp's centre and reach; the reach is -1 until the first.
+var _last_tool := Vector2i(-1, -1)
+var _last_reach := -1
 
 @onready var far: FarTerrain = $Far
 
 
 func _ready() -> void:
+	if tool_params == null:
+		tool_params = ToolParams.new()
 	_body = viewer
 	_body.process_mode = PROCESS_MODE_DISABLED
 	# Children are ready before their parent, so the station may not have measured its hull yet.
@@ -355,6 +368,39 @@ func edit(theta: float, z: float, radius: float, dh: float) -> bool:
 	window.edits.stamp(window, cell, r, dh)
 	patch.on_edit(cell, r)
 	return true
+
+
+## Whether a tool stamp reaching `reach` cells around cell may run now: edit's residency rule (live, reach under
+## a tile, the box's tiles at most DOWN_SLOTS and all resident) and, unlike edit, the box wholly on the
+## station, so a tool never places part of a disc off the world.
+func can_stamp(cell: Vector2i, reach: int) -> bool:
+	if not _live or reach < 0 or reach >= TerrainWindow.TILE or cell.y - reach < 0 or cell.y + reach >= params.n_z():
+		return false
+	var tiles := EditLayer.stamp_tiles(window, cell, reach)
+	return not tiles.is_empty() and tiles.size() <= EditLayer.DOWN_SLOTS and tiles.all(window.is_resident)
+
+
+## Runs a tool stamp (EditLayer.stamp_op) with the obstacle set_obstacle gave, unless can_stamp refuses it
+## (false, nothing changes). Every mode but the push points the collider at it (decision 10: a push may move
+## nothing, and sixty a second would keep the edit shape rebaking).
+func stamp_tool(op: EditLayer.Op) -> bool:
+	if not can_stamp(op.cell, op.reach()):
+		return false
+	op.obstacle = _obstacle
+	op.obstacle_radius = _obstacle_radius
+	window.edits.stamp_op(window, op)
+	_last_tool = op.cell
+	_last_reach = op.reach()
+	if op.mode != EditLayer.MODE_PUSH:
+		patch.on_edit(op.cell, op.reach())
+	return true
+
+
+## Keeps tool stamps from pushing loose dirt into the cells within radius cells of cell (the standing
+## auger's shaft); a negative radius clears it.
+func set_obstacle(cell: Vector2i, radius: int) -> void:
+	_obstacle = cell
+	_obstacle_radius = radius
 
 
 ## Surface height in m at (theta, z), bilinear from the 32 m macro map: approximate, no detail, no edits and
