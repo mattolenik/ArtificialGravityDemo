@@ -378,7 +378,7 @@ Frames sit on the 8.33 ms refresh, so the GPU time is the figure that means anyt
 
 | run | octaves 32, 16, 8, 4, 2, 1 m | rock p99 / max | spawn p99 / max | detail per tile (Vulkan) |
 |---|---|---|---|---|
-| before | 1, .5, .25, .125, .0625, .03125 | 15.3 / 91.5 cm | 1.4 / 9.5 cm | 0.185 ms |
+| before | 1, .5, .25, .125, .0625, .03125 | 23.0 / 63.2 cm | 1.4 / 9.5 cm | 0.215 ms |
 
 **Rendering without CPU meshing**
 

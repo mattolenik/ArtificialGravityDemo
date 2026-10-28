@@ -224,19 +224,25 @@ static func row_mismatch(h: PackedFloat32Array, dtheta: float, R: float, row: Pa
 
 
 ## (theta, z) of the centre of the highest macro cell that is bare rock (bedrock_top within 1 m of the
-## surface), or of the highest cell of all if none is.
+## surface), or of the highest cell of all if none is; either way not a cliff rim (whose views face the
+## cliff) and at least 5 cells from either station end (so the 257 m patch stays on the station).
 static func rock_site(maps: MacroMaps, params: WorldParams) -> Vector2:
 	var s := maps.surface.get_data().to_float32_array()
 	var b := maps.bedrock_top.get_data().to_float32_array()
-	var top := 0
-	var bare := -1
-	for i in s.size():
-		if s[i] > s[top]:
-			top = i
-		if b[i] >= s[i] - 1.0 and (bare < 0 or s[i] > s[bare]):
-			bare = i
-	var i := bare if bare >= 0 else top
+	var rim := maps.cliff.get_data()
 	var w := maps.surface.get_width()
+	var top := -1
+	var bare := -1
+	for y in range(5, maps.surface.get_height() - 5):
+		for x in w:
+			var i := y * w + x
+			if rim[i] == 255:
+				continue
+			if top < 0 or s[i] > s[top]:
+				top = i
+			if b[i] >= s[i] - 1.0 and (bare < 0 or s[i] > s[bare]):
+				bare = i
+	var i := bare if bare >= 0 else top
 	@warning_ignore("integer_division")
 	return Vector2((i % w + 0.5) * 32.0 * params.dtheta(), -params.length / 2.0 + (i / w + 0.5) * params.macro_cell)
 

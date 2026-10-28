@@ -42,19 +42,26 @@ func _initialize() -> void:
 	worst = 0.0
 	for x in NoiseReport.row_mismatch(h, dtheta, R, row): worst = maxf(worst, absf(x))
 	check(worst <= 0.4, "macro chord leaked: %f m" % worst)
-	# rock_site: the highest macro cell with bedrock within 1 m of the surface, else the highest cell.
+	# rock_site: the highest macro cell with bedrock within 1 m of the surface, else the highest cell; never a
+	# cliff rim, nor within 4 rows of a station end.
 	var p := WorldParams.new()
 	p.radius = 64 * 32 / TAU + 40.0; p.h_sea = 40.0; p.length = 128 * 32
 	var m := MacroMaps.new()
 	m.surface = Image.create(64, 128, false, Image.FORMAT_RF)
 	m.bedrock_top = Image.create(64, 128, false, Image.FORMAT_RF)
+	m.cliff = Image.create(64, 128, false, Image.FORMAT_R8)
 	for x in 64: for y in 128:
 		m.surface.set_pixel(x, y, Color(float(x + y), 0, 0))
 		m.bedrock_top.set_pixel(x, y, Color(float(x + y) - 10.0, 0, 0))
+	m.surface.set_pixel(41, 4, Color(1000.0, 0, 0))  # the highest cell, 4 rows from the end
 	var mc := 32 * p.dtheta()
-	check(NoiseReport.rock_site(m, p).is_equal_approx(Vector2(63.5 * mc, -p.length / 2.0 + 127.5 * 32)), "no bare rock: the highest cell")
+	check(NoiseReport.rock_site(m, p).is_equal_approx(Vector2(63.5 * mc, -p.length / 2.0 + 122.5 * 32)), "no bare rock: the highest cell away from the ends")
 	m.bedrock_top.set_pixel(20, 30, Color(50.0, 0, 0))  # bare, surface 50
 	m.bedrock_top.set_pixel(10, 15, Color(25.0, 0, 0))  # bare, lower
-	check(NoiseReport.rock_site(m, p).is_equal_approx(Vector2(20.5 * mc, -p.length / 2.0 + 30.5 * 32)), "the highest bare cell")
+	m.bedrock_top.set_pixel(41, 4, Color(1000.0, 0, 0))  # bare and higher, 4 rows from one end
+	m.bedrock_top.set_pixel(40, 123, Color(163.0, 0, 0))  # bare and higher, 4 rows from the other
+	check(NoiseReport.rock_site(m, p).is_equal_approx(Vector2(20.5 * mc, -p.length / 2.0 + 30.5 * 32)), "the highest bare cell away from the ends")
+	m.cliff.set_pixel(20, 30, Color(1.0, 0, 0))  # 255: a cliff rim
+	check(NoiseReport.rock_site(m, p).is_equal_approx(Vector2(10.5 * mc, -p.length / 2.0 + 15.5 * 32)), "a cliff rim passed over")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)
