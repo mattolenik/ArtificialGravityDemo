@@ -1,30 +1,40 @@
-## Click to teleport: while `button` is down, a left click puts the ground body on the surface under the
-## cursor (under the crosshair while the mouse is captured) and the click goes no further, so it does not
-## capture the mouse. The point is found on the 32 m macro surface along the camera's ray; Terrain then
-## stands the body on the exact collider once a patch covers it.
+## Ctrl-click to teleport. Holding Ctrl frees the mouse so the cursor can point at a target; a click while
+## Ctrl is held puts the ground body on the surface under the cursor and goes no further, so it does not
+## capture the mouse; letting go of Ctrl captures the mouse again if it was captured before. On macOS Godot
+## reports Ctrl-left-click as a right click, so either button counts. The point is found on the 32 m
+## macro surface along the camera's ray; Terrain then stands the body on the exact collider once a patch
+## covers it.
 class_name ClickTeleport
 extends Node
 
 @export var terrain: Terrain
-## A toggle button; clicks teleport while it is pressed.
-@export var button: BaseButton
 
 ## m between samples along the ray. The macro surface is bilinear on 32 m cells, so nothing is skipped.
 const STEP := 8.0
 
+## Whether letting go of Ctrl should capture the mouse again.
+var _recapture := false
+
 
 func _input(event: InputEvent) -> void:
-	if not button.button_pressed or not (event is InputEventMouseButton and event.pressed \
-			and event.button_index == MOUSE_BUTTON_LEFT):
+	if event is InputEventKey and event.keycode == KEY_CTRL and not event.echo:
+		if event.pressed:
+			_recapture = Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		elif _recapture:
+			_recapture = false
+			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+		return
+	if not (event is InputEventMouseButton and event.pressed and event.ctrl_pressed \
+			and event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]):
 		return
 	var vp := get_viewport()
 	if vp.gui_get_hovered_control() != null:
 		return
-	var pos: Vector2 = vp.get_visible_rect().size / 2.0 if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED else event.position
 	var cam := vp.get_camera_3d()
 	var station := terrain.station
-	var hit = ground_hit(terrain.maps, terrain.params, station.to_local(cam.project_ray_origin(pos)),
-			station.global_basis.inverse() * cam.project_ray_normal(pos))
+	var hit = ground_hit(terrain.maps, terrain.params, station.to_local(cam.project_ray_origin(event.position)),
+			station.global_basis.inverse() * cam.project_ray_normal(event.position))
 	if hit != null:
 		terrain.teleport(hit.x, hit.y)
 	vp.set_input_as_handled()

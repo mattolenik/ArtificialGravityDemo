@@ -76,13 +76,6 @@ layout_mode = 2
 focus_mode = 0
 text = "Spawn view"
 
-[node name="Teleport" type="Button" parent="Panel/Box/Buttons"]
-layout_mode = 2
-focus_mode = 0
-toggle_mode = true
-tooltip_text = "While on, a click puts the player on the ground under the cursor."
-text = "Teleport"
-
 [node name="Info" type="Label" parent="Panel/Box"]
 layout_mode = 2
 
@@ -90,10 +83,9 @@ layout_mode = 2
 layout_mode = 2
 script = ExtResource("7")
 
-[node name="ClickTeleport" type="Node" parent="." node_paths=PackedStringArray("terrain", "button")]
+[node name="ClickTeleport" type="Node" parent="." node_paths=PackedStringArray("terrain")]
 script = ExtResource("8")
 terrain = NodePath("../Station/Terrain")
-button = NodePath("../Panel/Box/Buttons/Teleport")
 
 [connection signal="pressed" from="Panel/Box/Buttons/Spawn" to="Station/Emitter" method="spawn"]
 [connection signal="pressed" from="Panel/Box/Buttons/Clear" to="Station/Emitter" method="clear_spawned"]
