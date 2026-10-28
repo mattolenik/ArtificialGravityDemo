@@ -4,6 +4,9 @@
 ## whole station from the macro maps (far.gdshader), discarding inside both windows; it also covers the
 ## last 256 m of the station, where the 8 m window has no tile. A child of Terrain, so its space is
 ## station space.
+## Neither level shows edits (decision 12 of the terrain edits plan): they regenerate from the macro maps, a
+## 1 m pit is below their resolution and a hand tool edits within 256 m of the viewer, so the only visible
+## effect is an edit appearing when its tile crosses from the ring into the 1 m window.
 class_name FarTerrain
 extends Node3D
 

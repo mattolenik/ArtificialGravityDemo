@@ -26,6 +26,7 @@ layout(set = 1, binding = 4, r32f) uniform restrict writeonly image2D o_water;
 layout(set = 1, binding = 5, r8) uniform restrict writeonly image2D o_material;
 layout(set = 1, binding = 6, r8) uniform restrict writeonly image2D o_compaction;
 layout(set = 1, binding = 7, r8) uniform restrict writeonly image2D o_saturation;
+layout(set = 1, binding = 8, r8) uniform restrict writeonly image2D o_mask;  // edit_mask: no edit here
 
 layout(push_constant, std430) uniform Params {
 	ivec2 tile;            // tile index (theta, z), theta already wrapped
@@ -354,4 +355,5 @@ void main() {
 	imageStore(o_material, o, vec4(material / 255.0));
 	imageStore(o_compaction, o, vec4(0.0));
 	imageStore(o_saturation, o, vec4(0.0));
+	imageStore(o_mask, o, vec4(0.0));
 }

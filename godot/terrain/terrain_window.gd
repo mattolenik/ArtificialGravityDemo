@@ -9,7 +9,8 @@ extends RefCounted
 ## Emitted by move_to with the tiles it dispatched, after queueing the dispatch.
 signal tiles_generated(tiles: Array[Vector2i])
 
-const FIELDS := ["surface", "bedrock_top", "clay_bottom", "clay_top", "water_surface", "material", "compaction", "saturation"]
+## edit_mask is 1 where an edit overrides the generator (EditLayer); the detail pass writes 0.
+const FIELDS := ["surface", "bedrock_top", "clay_bottom", "clay_top", "water_surface", "material", "compaction", "saturation", "edit_mask"]
 const TILE := 128
 ## Heights are R32_SFLOAT metres above the hull, so a texel times HEIGHT_SCALE is metres.
 const HEIGHT_SCALE := 1.0
@@ -26,6 +27,8 @@ var tiles_along: int
 var slots: int
 ## The tile move_to last centred the window on.
 var center_tile: Vector2i
+## Re-applied to every tile that enters; null on the far window, which shows no edits.
+var edits: EditLayer
 
 var _rd: RenderingDevice
 var _textures := {}  # field -> RID
@@ -278,6 +281,11 @@ func regenerate() -> void:
 	move_to(center_tile)
 
 
+## Whether tile (theta wrapped) is in its slot, as of the last move_to.
+func is_resident(tile: Vector2i) -> bool:
+	return _resident.get(slot_of(tile)) == tile
+
+
 func resident_tiles() -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	out.assign(_resident.values())
@@ -298,6 +306,8 @@ func _dispatch(tiles: Array[Vector2i]) -> void:
 		_rd.compute_list_dispatch(list, TILE / 8, TILE / 8, 1)
 	_rd.compute_list_end()
 	_rd.capture_timestamp("detail_end")
+	if edits != null:
+		edits.apply_entering(self, tiles)
 
 
 ## Matches the Params block in detail.glsl (std430, 112 bytes with its padding). A detail list shorter

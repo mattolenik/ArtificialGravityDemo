@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3]
+[gd_scene load_steps=13 format=3]
 
 [ext_resource type="PackedScene" path="res://station.tscn" id="1"]
 [ext_resource type="Script" path="res://emitter.gd" id="2"]
@@ -9,6 +9,7 @@
 [ext_resource type="Script" path="res://terrain/timing_overlay.gd" id="7"]
 [ext_resource type="Script" path="res://terrain/click_teleport.gd" id="8"]
 [ext_resource type="Script" path="res://light_bar.gd" id="9"]
+[ext_resource type="Script" path="res://terrain/debug_edit.gd" id="10"]
 
 [sub_resource type="Environment" id="1"]
 ambient_light_source = 2
@@ -87,6 +88,10 @@ script = ExtResource("7")
 
 [node name="ClickTeleport" type="Node" parent="." node_paths=PackedStringArray("terrain")]
 script = ExtResource("8")
+terrain = NodePath("../Station/Terrain")
+
+[node name="DebugEdit" type="Node" parent="." node_paths=PackedStringArray("terrain")]
+script = ExtResource("10")
 terrain = NodePath("../Station/Terrain")
 
 [connection signal="pressed" from="Panel/Box/Buttons/Spawn" to="Station/Emitter" method="spawn"]

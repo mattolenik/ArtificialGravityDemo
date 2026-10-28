@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://cameoxyub570s"
+path="res://.godot/imported/edit.glsl-674c7f96ee859041a07edfb3fcbb5107.res"
+
+[deps]
+
+source_file="res://terrain/shaders/edit.glsl"
+dest_files=["res://.godot/imported/edit.glsl-674c7f96ee859041a07edfb3fcbb5107.res"]
+
+[params]
+
