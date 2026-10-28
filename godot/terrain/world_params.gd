@@ -37,7 +37,8 @@ extends Resource
 @export var spawn_max_slope_deg: float = 5
 @export var spawn_river_distance: float = 100
 ## Detail noise: relative weight of the 32, 16, 8, 4, 2 and 1 m octaves, normalised by their sum; 0 drops
-## one. Under 4 cells an octave is per-cell noise, so the 1 m window's 2 m and 1 m are off.
+## one. The weights are non-negative (a mixed-sign list whose sum is at or below 0 divides by 1e-6 in the
+## shader). Under 4 cells an octave is per-cell noise, so the 1 m window's 2 m and 1 m are off.
 @export var detail_octaves: PackedFloat32Array = PackedFloat32Array([1.0, 0.5, 0.25, 0.125, 0.0, 0.0])
 ## Detail noise peak in m by region id: sea, flat, hill, mountain, island.
 @export var detail_region_amp: PackedFloat32Array = PackedFloat32Array([1.5, 1.5, 4.0, 8.0, 4.0])

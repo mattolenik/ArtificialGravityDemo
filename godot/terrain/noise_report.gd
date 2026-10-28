@@ -7,6 +7,8 @@
 ## (GPU timestamps: Vulkan only, Metal reports zeros) and quits. One-shot readback loops: debug only.
 ## --octaves, --amp and --rock override WorldParams.detail_octaves, detail_region_amp and
 ## detail_rock_roughness for the run: both windows regenerate and the patch rebakes before the first site.
+## After editing detail.glsl run `godot --headless --path . --import` before a windowed run (the suite does
+## it): a windowed run uses the last imported SPIR-V silently.
 ## Run: godot --path . [--rendering-driver vulkan] res://terrain/noise_report.tscn -- [--label=NAME] [--at=THETA,Z]
 ##     [--octaves=W32,W16,W8,W4,W2,W1] [--amp=SEA,FLAT,HILL,MOUNTAIN,ISLAND] [--rock=X]
 class_name NoiseReport
@@ -222,7 +224,9 @@ func _mismatch() -> Dictionary:
 ## left out, as are NaN heights (outside the window, where the bake read the macro surface) and every
 ## vertex whose two collider samples do not both lie on its run of drawn heights: toward a NaN the bake's
 ## chord runs to a macro sample. With cells of 1 m or more that is the NaN's two neighbours; narrower cells
-## can add one more on a side.
+## can add one more on a side. Ceiling: the skip rule assumes x increases with k along a run, so a fold at a
+## window-edge macro segment (drawn heights stepping more than cell / sin phi, about 8 m per 0.64 m cell at
+## the patch edge) can leak; the rock site avoids rims, so the baseline does not hit it.
 static func row_mismatch(h: PackedFloat32Array, dtheta: float, R: float, row: PackedFloat32Array) -> PackedFloat32Array:
 	var n := h.size()
 	var x := PackedFloat64Array()

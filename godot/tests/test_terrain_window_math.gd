@@ -99,5 +99,6 @@ func _initialize() -> void:
 	check(loaded != null and loaded.seed == 7 and loaded.detail_octaves == fresh_params.detail_octaves \
 			and loaded.detail_region_amp == fresh_params.detail_region_amp \
 			and loaded.detail_rock_roughness == fresh_params.detail_rock_roughness, "an old world file takes the defaults")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://old_params.tres"))
 	if failed: quit(1)
 	else: print("PASS"); quit(0)
