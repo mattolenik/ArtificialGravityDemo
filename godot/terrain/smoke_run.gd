@@ -297,7 +297,7 @@ static func _times(cpu: Array, gpu: Array) -> String:
 static func _stat(a: Array[float], budget: float) -> String:
 	if a.is_empty():
 		return "n/a"
-	return "n %d, median %.3f, p90 %.3f, max %.3f ms, %d over %.1f ms" % [a.size(), _pct(a, 0.5), _pct(a, 0.9), a.max(),
+	return "n %d, median %.3f, p90 %.3f, max %.3f ms, %d over %.2f ms" % [a.size(), _pct(a, 0.5), _pct(a, 0.9), a.max(),
 			a.filter(func(x: float) -> bool: return x > budget).size(), budget]
 
 

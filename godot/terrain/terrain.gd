@@ -46,6 +46,8 @@ var params: WorldParams
 var maps: MacroMaps
 var window: TerrainWindow
 var patch: ColliderPatch
+## The loose-dirt and sheet-water simulation over the window's active tiles.
+var sim: TerrainSim
 ## Per-material numbers: swell, repose, porosity, wetting distance.
 var materials: MaterialSet = preload("res://terrain/materials.tres")
 
@@ -69,6 +71,12 @@ var _obstacle_radius := -1
 ## The last tool stamp's centre and reach; the reach is -1 until the first.
 var _last_tool := Vector2i(-1, -1)
 var _last_reach := -1
+## The one collider touch waiting for _flush_collider (last touch wins); none while the radius is -1.
+var _touch_cell := Vector2i(-1, -1)
+var _touch_radius := -1
+## When _flush_collider last rebaked the edit shape, and last moved the zone, in s.
+var _edit_at := -INF
+var _zone_at := -INF
 
 @onready var far: FarTerrain = $Far
 
@@ -86,6 +94,10 @@ func _ready() -> void:
 	window.setup(params, maps, window_size)
 	window.edits = EditLayer.new()
 	window.edits.setup(window)
+	sim = TerrainSim.new()
+	sim.params = tool_params
+	sim.materials = materials
+	sim.setup(window, window.edits)
 	# Before the first move_to, so the spawn tiles get their edits in their first dispatch.
 	window.edits.blobs = WorldIO.load_edits(world_name)
 	if not window.edits.blobs.is_empty():
@@ -221,6 +233,14 @@ func _process(delta: float) -> void:
 	var cell := viewer_cell()
 	_move_window(window.tile_of_cell(cell.x, cell.y))
 	far.follow(cell)
+	# Settled tiles are packed after the step's lists, so the pack sees the last apply.
+	var settled := sim.step(window, delta)
+	if not settled.is_empty():
+		window.edits.pack_tiles(window, settled)
+	# A slumping pile, or a push that moved loose, reaches the collider through the last tool stamp's place.
+	if sim.has_active() and _last_reach >= 0:
+		_collider_touch(_last_tool, _last_reach)
+	_flush_collider(Time.get_ticks_msec() / 1000.0)
 	var p := station.to_local(viewer.global_position)
 	patch.issue_again(window)
 	if patch.needs_rebuild(p):
@@ -230,7 +250,10 @@ func _process(delta: float) -> void:
 		_hold(b, not patch.covers(station.to_local(b.global_position)))
 
 
+## Packs the active tiles synchronously first, so a quit mid-slump keeps the pile (with persist_edits).
 func _exit_tree() -> void:
+	if window != null:
+		window.edits.pack_tiles_sync(window, sim.active_tiles())
 	_save_edits()
 
 
@@ -297,10 +320,15 @@ func _on_live(_center: Vector2) -> void:
 
 
 ## Moves the window to the tiles around center and points every tile node at its tile, if center changed.
+## Active tiles the move evicts are packed first and leave the simulation, so a pile mid-slump is kept.
 func _move_window(center: Vector2i) -> void:
 	if center == _center:
 		return
 	_center = center
+	var leaving: Array[Vector2i] = window.evicted_by(center).filter(sim.is_active)
+	window.edits.pack_tiles(window, leaving)
+	sim.drop(leaving)
+	sim.invalidate()
 	window.move_to(center)
 	place_tiles(window, _tiles, center)
 
@@ -381,8 +409,9 @@ func can_stamp(cell: Vector2i, reach: int) -> bool:
 
 
 ## Runs a tool stamp (EditLayer.stamp_op) with the obstacle set_obstacle gave, unless can_stamp refuses it
-## (false, nothing changes). Every mode but the push points the collider at it (decision 10: a push may move
-## nothing, and sixty a second would keep the edit shape rebaking).
+## (false, nothing changes). Every mode but the push touches the collider there (_collider_touch, decision
+## 10: a push may move nothing, and sixty a second would keep the edit shape rebaking; the simulation
+## re-touches the last stamp's place while tiles are active).
 func stamp_tool(op: EditLayer.Op) -> bool:
 	if not can_stamp(op.cell, op.reach()):
 		return false
@@ -392,15 +421,44 @@ func stamp_tool(op: EditLayer.Op) -> bool:
 	_last_tool = op.cell
 	_last_reach = op.reach()
 	if op.mode != EditLayer.MODE_PUSH:
-		patch.on_edit(op.cell, op.reach())
+		_collider_touch(op.cell, op.reach())
 	return true
 
 
-## Keeps tool stamps from pushing loose dirt into the cells within radius cells of cell (the standing
-## auger's shaft); a negative radius clears it.
+## Keeps tool stamps and the simulation from moving loose dirt or water into the cells within radius cells
+## of cell (the standing auger's shaft); a negative radius clears it. The tiles under the old obstacle are
+## activated, so a pile held against it slumps on once it goes (decision 3).
 func set_obstacle(cell: Vector2i, radius: int) -> void:
+	if _obstacle_radius >= 0:
+		sim.activate(EditLayer.stamp_tiles(window, _obstacle, _obstacle_radius + 1))
 	_obstacle = cell
 	_obstacle_radius = radius
+	sim.obstacle = cell
+	sim.obstacle_radius = radius
+
+
+## Records a change of `radius` cells around cell for the collider; _flush_collider passes it on. One touch
+## waits at a time: the last one wins.
+func _collider_touch(cell: Vector2i, radius: int) -> void:
+	_touch_cell = cell
+	_touch_radius = radius
+
+
+## The collider throttle (decision 10): passes the waiting touch to patch.on_edit at most every
+## collider_edit_interval while the zone holds it, and at most every collider_zone_interval when it would
+## move the zone; the first touch goes at once. A touch that must wait stays for a later frame.
+func _flush_collider(now: float) -> void:
+	if _touch_radius < 0:
+		return
+	var holds := patch.has_zone and ColliderPatch.zone_holds(patch.zone, _touch_cell, _touch_radius, params.n_theta())
+	if (holds and now - _edit_at < tool_params.collider_edit_interval) \
+			or (not holds and now - _zone_at < tool_params.collider_zone_interval):
+		return
+	if not holds:
+		_zone_at = now
+	patch.on_edit(_touch_cell, _touch_radius)
+	_edit_at = now
+	_touch_radius = -1
 
 
 ## Surface height in m at (theta, z), bilinear from the 32 m macro map: approximate, no detail, no edits and

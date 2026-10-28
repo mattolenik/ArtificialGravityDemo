@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://31ax2h5qav41"
+path="res://.godot/imported/sim.glsl-dedbee574853883208ba5f2d360af908.res"
+
+[deps]
+
+source_file="res://terrain/shaders/sim.glsl"
+dest_files=["res://.godot/imported/sim.glsl-dedbee574853883208ba5f2d360af908.res"]
+
+[params]
+

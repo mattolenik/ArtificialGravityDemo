@@ -41,6 +41,28 @@ func _initialize() -> void:
 	patch._landed_edit(PackedByteArray(), 1.0, 0.0, 3200.0)
 	Engine.print_error_messages = true
 	check(not patch._pending_edit and patch._again_edit, "a failed edit readback retries")
+	# The collider throttle: the first touch goes at once; in-zone touches bake at most every edit interval; a
+	# touch that would move the zone waits for the zone interval.
+	terrain.params = WorldParams.new()
+	terrain.tool_params = ToolParams.new()
+	terrain.patch = patch
+	patch._n_theta = terrain.params.n_theta()
+	patch._pending = false
+	terrain._collider_touch(Vector2i(100, 100), 2)
+	terrain._flush_collider(10.0)
+	check(patch.has_zone and patch.zone == Vector2i(100, 100) and patch._again_edit and patch._again_big, "first touch sets the zone at once")
+	patch._again_edit = false; patch._again_big = false
+	terrain._collider_touch(Vector2i(102, 100), 2)
+	terrain._flush_collider(10.1)
+	check(not patch._again_edit, "an in-zone touch waits for the edit interval")
+	terrain._flush_collider(10.21)
+	check(patch._again_edit and not patch._again_big and patch.zone == Vector2i(100, 100), "then the edit shape bakes, zone kept")
+	patch._again_edit = false
+	terrain._collider_touch(Vector2i(140, 100), 2)
+	terrain._flush_collider(10.5)
+	check(not patch._again_big and patch.zone == Vector2i(100, 100), "a zone move waits for the zone interval")
+	terrain._flush_collider(11.01)
+	check(patch._again_big and patch._again_edit and patch.zone == Vector2i(140, 100), "the zone moves after a second")
 	patch.free(); box.free(); body.free(); terrain.free()
 	if failed: quit(1)
 	else: print("PASS"); quit(0)
