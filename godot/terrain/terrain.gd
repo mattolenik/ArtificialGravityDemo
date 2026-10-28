@@ -320,15 +320,20 @@ func _on_live(_center: Vector2) -> void:
 
 
 ## Moves the window to the tiles around center and points every tile node at its tile, if center changed.
-## Active tiles the move evicts are packed first and leave the simulation, so a pile mid-slump is kept.
+## Active tiles the move evicts are packed first and leave the simulation, so a pile mid-slump is kept; the
+## evicted tiles' slots are invalidated in the simulation's activity flags.
 func _move_window(center: Vector2i) -> void:
 	if center == _center:
 		return
 	_center = center
-	var leaving: Array[Vector2i] = window.evicted_by(center).filter(sim.is_active)
+	var evicted := window.evicted_by(center)
+	var leaving: Array[Vector2i] = evicted.filter(sim.is_active)
 	window.edits.pack_tiles(window, leaving)
 	sim.drop(leaving)
-	sim.invalidate()
+	var slots: Array[Vector2i] = []
+	for t in evicted:
+		slots.append(window.slot_of(t))
+	sim.invalidate(slots)
 	window.move_to(center)
 	place_tiles(window, _tiles, center)
 

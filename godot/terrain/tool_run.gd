@@ -33,7 +33,8 @@
 ## asserted (Vulkan only: Metal reports zeros, shown as n/a), and PASS and exits 0 when every check holds,
 ## else FAIL and 1; persist_edits is off, so nothing is saved. Last, a small deposit makes a tile active and
 ## the run quits at once, so Terrain._exit_tree packs it synchronously during the engine's quit (the path an
-## in-process restart does not take); the line printed then says whether its blob landed.
+## in-process restart does not take); the line printed then says whether its blob landed, and an ERROR line
+## fails the run when it did not.
 ## After editing a .glsl run `godot --headless --path . --import` first (the suite does it).
 ## Run: godot --rendering-driver vulkan --path . res://terrain/tool_run.tscn
 extends Node
@@ -426,7 +427,8 @@ func _nearest(c: Vector2i, cells: Array[Vector2i], surface: PackedByteArray) -> 
 
 ## The engine-quit path: a small deposit at site makes a tile active, and the run quits at once, so
 ## Terrain._exit_tree packs it with pack_tiles_sync inside the engine's quit. The active tiles' blobs are
-## dropped first; the line printed once Terrain has left the tree says whether the exit pack brought them back.
+## dropped first; once Terrain has left the tree, the exit pack must have brought them back, else an ERROR
+## line fails the run (its exit code is set before the quit).
 func _quit_active(site: Vector2i) -> void:
 	_stamp(_op(site, 1, EditLayer.MODE_DEPOSIT, 0.5))
 	for i in 30:
@@ -438,8 +440,10 @@ func _quit_active(site: Vector2i) -> void:
 	for t in tiles:
 		edits.blobs.erase(t)
 	_terrain.tree_exited.connect(func() -> void:
-		print("exit pack: %d active tiles %s at quit, packed: %s" % [tiles.size(), tiles,
-				not tiles.is_empty() and tiles.all(func(t: Vector2i) -> bool: return edits.blobs.has(t))]))
+		var packed := not tiles.is_empty() and tiles.all(func(t: Vector2i) -> bool: return edits.blobs.has(t))
+		print("exit pack: %d active tiles %s at quit, packed: %s" % [tiles.size(), tiles, packed])
+		if not packed:
+			push_error("exit pack: no active tile at quit, or its blob did not land"))
 	get_tree().quit(0 if _ok else 1)
 
 

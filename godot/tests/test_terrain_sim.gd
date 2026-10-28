@@ -39,11 +39,15 @@ func _initialize() -> void:
 	sim.activate([Vector2i(10, 20), Vector2i(999, 999)])
 	check(sim.is_active(Vector2i(10, 20)) and sim.active_tiles().size() == 1, "activate resident tiles only")
 	sim.drop(sim.active_tiles())
-	# A landing from before a window move is dropped: its slots name other tiles.
-	var stale := PackedByteArray(); stale.resize(65 * 4); stale.encode_u32(0, 1)
-	sim.invalidate()
+	# A landing from before a window move ignores the slots the move changed (they name other tiles now) and
+	# keeps the rest, and its absorbed water counts: flags at slot (0, 0), evicted, and (1, 1), kept.
+	var stale := PackedByteArray(); stale.resize(65 * 4); stale.encode_u32(0, 1); stale.encode_u32(9 * 4, 1)
+	stale.encode_u32(64 * 4, 2000000)
+	sim.invalidate([Vector2i(0, 0)])
 	sim._on_stats(stale, 0)
-	check(sim.settle(w, 0.0, sim._flags).is_empty() and not sim.has_active(), "a stale landing is ignored")
+	check(sim.settle(w, 0.0, sim._flags).is_empty() and not sim.is_active(w.tile_at(Vector2i(0, 0))) and sim.is_active(w.tile_at(Vector2i(1, 1))) \
+			and sim.active_tiles().size() == 1 and is_equal_approx(sim.absorbed, 2.0), "a stale landing's evicted slots are ignored, its others count")
+	sim.drop(sim.active_tiles())
 	sim._on_stats(stale, 1)
 	check(sim.settle(w, 0.0, sim._flags).is_empty() and sim.is_active(w.tile_at(Vector2i(0, 0))), "a current landing counts")
 	sim.drop(sim.active_tiles())

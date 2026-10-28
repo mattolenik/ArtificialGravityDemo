@@ -28,11 +28,14 @@ var steps := 0
 
 ## Active tile -> seconds since one of its cells last moved.
 var _active := {}
-## The last landed stats: one word per window slot (slot y * slots + x), bit 0 a cell of it moved, bit 1 a
-## cell across one of its edges moved.
+## The stats landed since the last step, ORed: one word per window slot (slot y * slots + x), bit 0 a cell of
+## it moved, bit 1 a cell across one of its edges moved.
 var _flags := PackedInt32Array()
-## Bumped by invalidate on every window move: a stats landing requested before it names other tiles.
+## Bumped by invalidate on every window move; each stats readback carries the value it was requested at.
 var _generation := 0
+## Per window slot, the generation at which its tile last changed (invalidate): a landing requested before
+## that names another tile there, so its flag for the slot is ignored.
+var _changed := PackedInt32Array()
 ## Seconds not yet stepped, at most MAX_STEPS steps' worth.
 var _accum := 0.0
 ## The window (setup's, then the one settle last saw), for activate's residency test.
@@ -187,19 +190,34 @@ func _step_rd(lists: Array[Array], generation: int) -> void:
 	_rd.buffer_clear(_stats, 0, _stats_size)
 
 
-## Runs inside the device's readback flush: stores the flags and adds the absorbed water, nothing else. A
-## landing requested before the window last moved is dropped: its slots name other tiles.
+## Runs inside the device's readback flush, storing only: adds the absorbed water, and ORs in the flags of
+## every slot whose tile has not changed since the readback was requested at `generation` (a slot that
+## changed since names another tile). ORed, so a second landing in one flush keeps the first's flags.
 func _on_stats(data: PackedByteArray, generation: int) -> void:
-	if generation != _generation or data.size() < 4:
+	if data.size() < 4:
 		return
-	_flags = data.slice(0, data.size() - 4).to_int32_array()
 	absorbed += data.decode_u32(data.size() - 4) * 1e-6
+	var flags := data.slice(0, data.size() - 4).to_int32_array()
+	if _flags.size() != flags.size():
+		_flags.resize(flags.size())
+	for i in flags.size():
+		if i >= _changed.size() or _changed[i] <= generation:
+			_flags[i] |= flags[i]
 
 
-## The window is about to move (Terrain._move_window): stats landing from now on that were requested before
-## it are dropped.
-func invalidate() -> void:
+## The window is about to move (Terrain._move_window) and `slots` (those of the tiles it evicts, which the
+## entering tiles take) change tile: their landed flags are dropped now, and those of readbacks requested
+## before this call when they land.
+func invalidate(slots: Array[Vector2i]) -> void:
 	_generation += 1
+	var n := _window.slots * _window.slots
+	if _changed.size() != n:
+		_changed.resize(n)
+	for s in slots:
+		var i := s.y * _window.slots + s.x
+		_changed[i] = _generation
+		if i < _flags.size():
+			_flags[i] = 0
 
 
 ## Makes each of `tiles` that is resident active with quiet 0: the activation the GPU cannot see, cells
