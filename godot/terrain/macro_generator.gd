@@ -469,9 +469,10 @@ func _grow(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void:
 
 ## bedrock_top = max(0, surface − D), D from bedrock_depth for the region (the sea floor uses the
 ## flat range, islands the hill range tapering to 0 at 0.04·sea_width from their shore) blended by
-## noise, and D = 0 on cliff cells. Clay lenses on land where noise exceeds its 1 − clay_fraction
-## quantile: clay_thickness.x at the lens edge to .y inside, its top at a noise-chosen depth in the
-## dirt, clamped into it. Without a lens clay_bottom = clay_top = bedrock_top.
+## noise and scaled by 1 − slope / tan(soil_slope_deg) (0 where the macro slope reaches it), and D = 0
+## on cliff cells. Clay lenses on land where noise exceeds its 1 − clay_fraction quantile:
+## clay_thickness.x at the lens edge to .y inside, its top at a noise-chosen depth in the dirt,
+## clamped into it. Without a lens clay_bottom = clay_top = bedrock_top.
 func _strata(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void:
 	var w := p.macro_w()
 	var h := p.macro_h()
@@ -504,6 +505,7 @@ func _strata(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void:
 	for key: String in DEPTH_KEY:
 		d_min.append(p.bedrock_depth[key][0])
 		d_max.append(p.bedrock_depth[key][1])
+	var soil_tan := tan(deg_to_rad(p.soil_slope_deg))
 	var bedrock := PackedFloat32Array()
 	bedrock.resize(n)
 	var bottom := PackedFloat32Array()
@@ -517,6 +519,7 @@ func _strata(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void:
 			var s := surface[i]
 			var rg := region[i]
 			var d := 0.0 if cliff[i] else lerpf(d_min[rg], d_max[rg], clampf(0.5 + depth.get_noise_3d(ring[x].x, ring[x].y, z), 0.0, 1.0))
+			d *= clampf(1.0 - _slope(surface, x, y, s, w, h, p) / soil_tan, 0.0, 1.0)
 			if rg == 4:
 				d *= clampf(1.0 - _dist(i, shore[i], w) * p.macro_cell / (0.04 * p.sea_width), 0.0, 1.0)
 			var b := maxf(0.0, s - d)
@@ -533,6 +536,14 @@ func _strata(m: MacroMaps, p: WorldParams, rng: RandomNumberGenerator) -> void:
 	m.bedrock_top = _rf(bedrock, w, h)
 	m.clay_bottom = _rf(bottom, w, h)
 	m.clay_top = _rf(top, w, h)
+
+
+## Macro slope (rise over run) at cell (x, y) by central differences of surface: across the theta
+## wrap at radius − s, and along z, combined as a vector length.
+func _slope(surface: PackedFloat32Array, x: int, y: int, s: float, w: int, h: int, p: WorldParams) -> float:
+	var across := (surface[y * w + posmod(x + 1, w)] - surface[y * w + posmod(x - 1, w)]) / (2.0 * (p.radius - s) * 32.0 * p.dtheta())
+	var along := (surface[clampi(y + 1, 0, h - 1) * w + x] - surface[clampi(y - 1, 0, h - 1) * w + x]) / (2.0 * p.macro_cell)
+	return Vector2(across, along).length()
 
 
 ## Caps every dry land cell next to water at its lowest water neighbour's surface plus

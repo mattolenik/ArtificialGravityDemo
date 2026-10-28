@@ -14,6 +14,7 @@ func small_params(seed: int) -> WorldParams:
 	p.h_ref = 100.0; p.sea_width = 800.0; p.sea_edge_noise = 100.0; p.sea_depth_max = 40.0
 	p.island_count = 1; p.region_scale = 600.0; p.river_sources_per_km2 = 4.0; p.river_q_min = 1.0
 	p.cliff_min = 40.0; p.cliff_fraction = 0.3
+	p.soil_slope_deg = 12.0
 	return p
 
 func _initialize() -> void:
@@ -110,6 +111,29 @@ func _initialize() -> void:
 	var with_clay := 0
 	for y in h: for x in w: if m.clay_top.get_pixel(x, y).r - m.clay_bottom.get_pixel(x, y).r > 1.0: with_clay += 1
 	check(with_clay > 0, "no clay lenses")
+	# Topsoil thins with slope: a land cell whose macro slope reaches soil_slope_deg is bare rock, gentle land keeps soil.
+	# Cells within two of water are left out: _banks runs after _strata and steepens them after their soil depth was chosen.
+	var soil_tan := tan(deg_to_rad(p.soil_slope_deg))
+	var steep := 0; var steep_bare := 0; var gentle_soil := 0
+	for y in range(1, h - 1): for x in w:
+		if m.region.get_pixel(x, y).r8 == 0: continue
+		var wet := false
+		for dy in range(-2, 3): for dx in range(-2, 3):
+			if m.water_surface.get_pixel(posmod(x + dx, w), clampi(y + dy, 0, h - 1)).r > 0.0: wet = true
+		if wet: continue
+		var s := m.surface.get_pixel(x, y).r
+		var sx := (m.surface.get_pixel(posmod(x + 1, w), y).r - m.surface.get_pixel(posmod(x - 1, w), y).r) / (2.0 * (p.radius - s) * 32.0 * p.dtheta())
+		var sz := (m.surface.get_pixel(x, y + 1).r - m.surface.get_pixel(x, y - 1).r) / (2.0 * p.macro_cell)
+		var depth := s - m.bedrock_top.get_pixel(x, y).r
+		if Vector2(sx, sz).length() >= soil_tan:
+			steep += 1
+			if depth < 1e-3: steep_bare += 1
+		elif Vector2(sx, sz).length() < 0.25 * soil_tan and depth > 1.0:
+			gentle_soil += 1
+	print("soil slope: steep %d steep_bare %d gentle_soil %d" % [steep, steep_bare, gentle_soil])
+	check(steep > 0, "no steep land on the small world")
+	check(steep_bare == steep, "steep land is bare rock: %d of %d" % [steep_bare, steep])
+	check(gentle_soil > 0, "gentle land keeps soil")
 	# Bank rule: a land cell next to water rises at most 35 degrees over the 32 m to that water cell
 	# (the detail pass applies the same limit within 10 m at 1 m resolution).
 	for y in range(1, h - 1): for x in w:

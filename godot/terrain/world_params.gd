@@ -1,5 +1,7 @@
 ## Every knob of a generated world, plus the grid sizes derived from the geometry. Saved with the
-## world, so a world file reproduces itself regardless of later changes to the defaults.
+## world, but ResourceSaver omits exported fields that equal their defaults, so a world file does not
+## reproduce itself against later default changes: a world takes the current default for every field
+## its file omits.
 class_name WorldParams
 extends Resource
 
@@ -32,6 +34,8 @@ extends Resource
 @export var bank_slope_deg: float = 35
 ## Bedrock depth below the surface in m, [min, max] per region.
 @export var bedrock_depth: Dictionary = {"flat": [150, 300], "hill": [60, 150], "mountain": [0, 40]}
+## Macro slope, in degrees, at and above which the soil depth is zero; below it the depth scales by 1 − slope / tan(soil_slope_deg).
+@export var soil_slope_deg: float = 30
 @export var clay_thickness: Vector2 = Vector2(2, 10)
 @export var clay_fraction: float = 0.2
 @export var spawn_max_slope_deg: float = 5
