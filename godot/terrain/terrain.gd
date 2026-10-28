@@ -88,7 +88,7 @@ static func make_tiles(parent: Node3D, w: TerrainWindow) -> Array[MeshInstance3D
 	mesh.subdivide_depth = TerrainWindow.TILE - 1
 	# The shaders move every vertex; this box holds any tile in its node's frame, a cell of margin each
 	# way. Across, a vertex sits up to R sin(a) from the centre, a = 64.5 cells of angle (79 m for a 1 m
-	# tile on the default world, 631 m for an 8 m one); along, 64.5 cells; up, under h_sea + h_mtn plus
+	# tile on the default world, 637 m for an 8 m one); along, 64.5 cells; up, under h_sea + h_mtn plus
 	# the curvature 2R sin^2(a / 2); down, a dry water vertex tucks 1 m under the hull-level sea floor and a
 	# coarser level sinks a quarter cell.
 	var p := w.params

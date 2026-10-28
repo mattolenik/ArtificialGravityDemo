@@ -14,7 +14,7 @@ layout(set = 0, binding = 2) uniform sampler2D m_clay_bottom;
 layout(set = 0, binding = 3) uniform sampler2D m_clay_top;
 layout(set = 0, binding = 4) uniform sampler2D m_water;
 layout(set = 0, binding = 5) uniform sampler2D m_region;  // id / 255: 0 sea, 1 flat, 2 hill, 3 mountain, 4 island
-layout(set = 0, binding = 6) uniform sampler2D m_cliff;   // 1 in a cliff band
+layout(set = 0, binding = 6) uniform sampler2D m_cliff;   // 1 on a cliff rim (the top of a jump)
 layout(set = 0, binding = 7) uniform sampler2D m_river;   // distance to the nearest river cell (m), its width (m), its surface (m)
 layout(set = 0, binding = 8) uniform sampler2D m_flow;    // flow_dir / 255: 1..8 the downstream neighbour, see DIR
 

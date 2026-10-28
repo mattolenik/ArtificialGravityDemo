@@ -118,11 +118,17 @@ func _bake(window: TerrainWindow, cell: Vector2i) -> void:
 	_rd.capture_timestamp("bake_end")
 	var theta := (cell.x + 0.5) * p.dtheta()
 	var z := -p.length / 2.0 + cell.y + 0.5
-	_rd.texture_get_data_async(_staging, 0, _landed.bind(theta, z, p.radius))
+	# On failure _pending stays set, so the error shows once and the hold keeps the body safe.
+	var err := _rd.texture_get_data_async(_staging, 0, _landed.bind(theta, z, p.radius))
+	if err != OK:
+		push_error("collider bake readback: %s" % error_string(err))
 
 
 ## Runs where RenderingDevice callbacks run: the main thread under the default thread model.
 func _landed(data: PackedByteArray, theta: float, z: float, R: float) -> void:
+	if data.size() != SAMPLES * SAMPLES * 4:
+		push_error("collider bake readback: %d bytes, expected %d" % [data.size(), SAMPLES * SAMPLES * 4])
+		return  # _pending stays set, as above
 	_shape.map_data = data.to_float32_array()
 	set_frame(theta, z, R)
 	_pending = false
