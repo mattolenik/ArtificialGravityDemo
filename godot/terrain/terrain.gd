@@ -23,6 +23,9 @@ signal body_held(held: bool)
 @export var world_name := "default"
 ## Window side in 1 m cells, a multiple of TerrainWindow.TILE.
 @export var window_size := 512
+## Whether edited tiles are loaded from and saved to the world's tiles/ directory. Windowed test drivers
+## set it false, so they never write into a real world.
+@export var persist_edits := true
 
 ## The station shifts along its axis by whole steps of this many m once the viewer is farther than this
 ## from the global origin.
@@ -30,6 +33,8 @@ const ORIGIN_STEP := 1024.0
 ## Render layer mask of every terrain mesh: the LightBar lights the terrain through its own shaders and
 ## everything else through a plain directional light, split on this layer.
 const RENDER_LAYER := 2
+## Seconds between autosaves of the edited tiles that have been read back since the last one.
+const SAVE_INTERVAL := 30.0
 
 var params: WorldParams
 var maps: MacroMaps
@@ -50,6 +55,8 @@ var _held := false
 var _teleporting := false
 ## Where the viewer was stood at the spawn site, in station space.
 var _spawn_at: Vector3
+## Seconds since the edits were last saved.
+var _since_save := 0.0
 
 @onready var far: FarTerrain = $Far
 
@@ -65,6 +72,10 @@ func _ready() -> void:
 	window.setup(params, maps, window_size)
 	window.edits = EditLayer.new()
 	window.edits.setup(window)
+	# Before the first move_to, so the spawn tiles get their edits in their first dispatch.
+	window.edits.blobs = WorldIO.load_edits(world_name)
+	if not window.edits.blobs.is_empty():
+		print("Loaded %d edited tiles" % window.edits.blobs.size())
 	_tiles = make_tiles(self, window)
 	far.setup(window)
 	# The viewer's scene position is under the sea floor: start the windows and the patch at the spawn site.
@@ -186,9 +197,12 @@ func _physics_process(_delta: float) -> void:
 		origin_shifted.emit(shift)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if not _live:
 		return
+	_since_save += delta
+	if _since_save >= SAVE_INTERVAL:
+		_save_edits()
 	var cell := viewer_cell()
 	_move_window(window.tile_of_cell(cell.x, cell.y))
 	far.follow(cell)
@@ -196,6 +210,27 @@ func _process(_delta: float) -> void:
 	if patch.needs_rebuild(p):
 		patch.rebuild(window, Cyl.theta_of(p), p.z)
 	_hold_body(not patch.covers(station.to_local(_body.global_position)))
+
+
+func _exit_tree() -> void:
+	_save_edits()
+
+
+## Writes the tiles whose blobs have landed since the last save (all of window.edits.unsaved: no GPU wait,
+## so a tile still being read back is saved by the next call) and forgets them once written. A tile whose
+## readback lands after _exit_tree's save is lost: the exit does not wait for it.
+func _save_edits() -> void:
+	_since_save = 0.0
+	if not persist_edits or window == null or window.edits.unsaved.is_empty():
+		return
+	var landed := {}
+	for tile: Vector2i in window.edits.unsaved:
+		landed[tile] = window.edits.blobs[tile]
+	var err := WorldIO.save_edits(world_name, landed)
+	if err != OK:
+		push_error("Saving the edits of world '%s' failed: %s" % [world_name, error_string(err)])
+		return
+	window.edits.unsaved.clear()
 
 
 ## Holds _body while there is no ground under it, and lets it go once there is. A body that something else

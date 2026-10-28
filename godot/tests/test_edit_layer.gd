@@ -32,5 +32,13 @@ func _initialize() -> void:
 	var d := EditLayer.decode(blob, 5, 7)
 	check(d.surface == 412.5 and d.bedrock_top == 400.0 and d.material == 2 and d.mask == 255, "decode %s" % d)
 	check(EditLayer.decode(blob, 6, 7).mask == 0, "untouched cell")
+	# Edits round-trip through the world files, one zstd file per tile; a corrupt file is skipped.
+	check(WorldIO.save_edits("test_world", {Vector2i(5, 7): blob, Vector2i(127, 3): blob}) == OK, "save edits")
+	var loaded := WorldIO.load_edits("test_world")
+	check(loaded.size() == 2 and loaded[Vector2i(127, 3)] == blob and loaded[Vector2i(5, 7)].size() == EditLayer.BLOB_SIZE, "load edits")
+	var bad := FileAccess.open("user://worlds/test_world/tiles/9_9.edit", FileAccess.WRITE)
+	bad.store_32(1); bad.store_32(12); bad.store_buffer(PackedByteArray([1, 2, 3])); bad.close()
+	check(WorldIO.load_edits("test_world").size() == 2, "corrupt tile skipped")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://worlds/test_world/tiles/9_9.edit"))
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

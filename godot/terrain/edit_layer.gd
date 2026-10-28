@@ -17,6 +17,8 @@ const DOWN_SLOTS := 4
 
 ## Wrapped tile -> PackedByteArray of BLOB_SIZE: the tile as last packed.
 var blobs := {}
+## The tiles in blobs that were packed since Terrain last saved them (a set: tile -> true).
+var unsaved := {}
 
 var _rd: RenderingDevice
 var _shader: RID
@@ -112,6 +114,7 @@ func _stamp_rd(tiles: Array[Vector2i], blocks: Array[PackedByteArray], groups: i
 func _packed(data: PackedByteArray, tile: Vector2i) -> void:
 	if data.size() == BLOB_SIZE:
 		blobs[tile] = data
+		unsaved[tile] = true
 	else:
 		push_error("edit pack readback: %d bytes, expected %d" % [data.size(), BLOB_SIZE])
 

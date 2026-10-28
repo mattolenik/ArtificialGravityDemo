@@ -31,6 +31,7 @@ func _ready() -> void:
 	var main: Node = load("res://main.tscn").instantiate()
 	_station = main.get_node("Station")
 	_terrain = _station.get_node("Terrain")
+	_terrain.persist_edits = false
 	_player = _station.get_node("Player")
 	main.get_node("Panel/Box/Timing").timed.connect(func(pass_name: String, ms: float) -> void:
 		if pass_name == "bake":
