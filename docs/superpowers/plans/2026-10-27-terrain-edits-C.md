@@ -706,3 +706,16 @@ In `docs/terrain-research.md`, after the slice 1 measurement table, add "Edit sl
 git add godot/terrain/edit_run.gd docs/terrain-research.md docs/superpowers/plans/2026-10-27-terrain-slice-1-followups.md docs/superpowers/plans/2026-10-27-terrain-edits-followups.md
 git commit -m "Terrain: edit run measurements, budgets and follow-ups for the next slice"
 ```
+
+## Pending amendments (from the noise-octaves branch review, 2026-10-27)
+
+Found by the scoped re-review of the deferral rewrite above; apply them in the pre-flight scan before Task 7 is dispatched.
+
+1. **Task 7's `hole never unbacked: ok` assertion is over-broad.** On a zone move with nothing in flight, `on_edit` requests the edit bake and the big bake in one call and both land in one flush (decision 8: "both callbacks run in the same frame, in order"), so a one-frame gap cannot be required there. Assert order always (the edit landing first, the big landing in the same frame or later); require the one-frame gap only for zone moves that found an edit bake in flight, and have `edit_run.gd` force one such case (two zone-moving `terrain.edit` calls in consecutive frames) and assert a big bake landed for it.
+2. **Who sets `_again_big`:** set both `_again_edit` and `_again_big` at the zone move in `on_edit` (as review C1 first asked); `issue_again`'s "no edit bake pending or wanted" gate already holds the big bake back, so no landing sets anything. Give `_rebuild_here` the "issues nothing while an edit bake is pending or wanted" guard that the else-branch of `on_edit` now implies.
+3. **Task 7 Interfaces:** the sentence "`_bake_edit` uses`_bake_edit` uses `n = EDIT_SAMPLES`" is garbled; fix the duplication.
+4. **Decision 8:** "Task 2's report records the zeros" refers to the noise-octaves plan's Task 2; cite `godot/terrain/noise_report.gd` (the one-frame wait after `collider_live`) and the message of the commit "Terrain: detail noise octaves, region amplitudes and rock roughness in WorldParams; the 2 m and 1 m octaves are off" instead.
+5. **Starvation:** under per-frame edits the coalesced edit bake is re-issued at every landing, so the big bake never goes out; fine at the 10 Hz hand tool, but decision 8's later per-frame refresh needs a fairness rule (for example, let the big bake go out once per N edit bakes).
+6. **`rebuild` (the viewer moved 64 m) bakes the hole at the current zone:** if it fires within the frames after a zone move that deferred its edit bake, the new hole can land before the new edit shape; pass the hole only when no edit bake is pending or wanted.
+7. **A big bake in flight at a zone move** leaves the old hole unbacked beyond the new shape's extent for about two frames; rare, and worth one sentence in decision 8.
+8. **`_process` order:** say whether `issue_again` runs before or after the `needs_rebuild`/`rebuild` check, so one frame cannot request two big bakes.
