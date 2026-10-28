@@ -20,5 +20,11 @@ func _initialize() -> void:
 	var m: MaterialSet = load("res://terrain/materials.tres")
 	check(m.swell_factor[0] == 1.25 and m.repose_dry[0] == 35.0 and m.repose_damp[0] == 40.0 and m.repose_saturated[0] == 20.0 \
 			and is_equal_approx(m.porosity[0], 0.4) and m.wetting_distance[0] == 3.0 and m.wetting_distance[2] == 0.0, "dirt and rock from materials.tres")
+	# push_dir: the axis-quantised (theta, z) direction of a station-space velocity at angle theta.
+	check(Tools.push_dir(Vector3(1, 0, 0), 0.0) == Vector2i(1, 0), "spinward at theta 0 is +x")
+	check(Tools.push_dir(Vector3(0, 1, 0), 0.5 * PI) == Vector2i(1, 0), "spinward at theta pi/2 is +y")
+	check(Tools.push_dir(Vector3(-1, 0, 0.5), 0.0) == Vector2i(-1, 0), "the larger component wins")
+	check(Tools.push_dir(Vector3(0.2, 0, -1), 0.0) == Vector2i(0, -1), "axial")
+	check(Tools.push_dir(Vector3.ZERO, 0.0) == Vector2i.ZERO, "no motion, no direction")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

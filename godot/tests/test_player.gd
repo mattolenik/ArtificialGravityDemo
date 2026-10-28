@@ -18,6 +18,10 @@ func _initialize() -> void:
 		player.station = station
 		player.position = Vector3(sin(a), -cos(a), 0) * (station.radius - 2)
 		station.add_child(player)
+		var landings: Array[float] = []
+		var steps: Array[Vector3] = []
+		player.landed.connect(func(speed: float) -> void: landings.append(speed))
+		player.stepped.connect(func(v: Vector3) -> void: steps.append(v))
 		for i in 180:
 			await physics_frame
 		var down := station.down_at(player.global_position)
@@ -26,6 +30,14 @@ func _initialize() -> void:
 		check(player.is_on_floor(), "on floor at %d°" % deg)
 		check(player.global_basis.y.dot(-down) > 0.999, "upright at %d°" % deg)
 		check(player.velocity.slide(down).length() < 0.05, "no drift at %d°" % deg)
+		# The drop (about 0.45 s airborne, longer than AIRBORNE_TICKS) lands exactly once at a few m/s; any
+		# settling contact after it is too short to count. Standing still, every step reports no floor speed;
+		# the landing tick's step still carries the drop's Coriolis drift (2ω · 1 m, about 0.11 m/s, under
+		# push_min_speed), which the floor's grip takes the tick after.
+		check(Player.AIRBORNE_TICKS == 9, "airborne ticks")
+		check(landings.size() == 1 and landings[0] > 1.0 and landings[0] < 10.0, "landed once at %s" % [landings])
+		check(steps.size() > 1 and steps[0].length() < 0.5 and steps.slice(1).all(func(v: Vector3) -> bool: return v.length() < 0.05),
+				"steps while standing %d, the first %.4f m/s" % [steps.size(), steps[0].length() if steps else 0.0])
 		# Mouse look turns about the player's own up, not world Y, and the tilt is clamped.
 		var heading := -player.global_basis.z
 		player.look(Vector2(100, -100000))

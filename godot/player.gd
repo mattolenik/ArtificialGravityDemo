@@ -3,6 +3,18 @@
 class_name Player
 extends CharacterBody3D
 
+## Every physics tick the body is on the floor after moving: its velocity with the component along
+## up_direction removed, in global space.
+signal stepped(floor_velocity: Vector3)
+## The tick the body is on the floor again after at least AIRBORNE_TICKS ticks off it: the downward speed
+## along up_direction it had before moving, at least 0.
+signal landed(speed: float)
+
+## Ticks off the floor that make the next floor contact a landing: 0.15 s at 60 Hz. A 3 m/s jump is airborne
+## about 0.6 s, while the ground dropping a few centimetres under the feet when a collider bake lands is caught
+## within two or three ticks, so walking over a pile never counts as a landing.
+const AIRBORNE_TICKS := 9
+
 ## The station whose rotating frame this player lives in.
 @export var station: Station
 ## Top walking speed along the floor, in m/s.
@@ -17,6 +29,8 @@ extends CharacterBody3D
 @export var mouse_sensitivity := 0.003
 
 var _jump_cooldown := 0.0
+## Ticks since the floor was last under the body.
+var _airborne := 0
 
 @onready var _pivot: SpringArm3D = $CameraPivot
 
@@ -62,7 +76,15 @@ func _physics_process(delta: float) -> void:
 		if Input.is_physical_key_pressed(KEY_SPACE) and _jump_cooldown <= 0.0:
 			velocity += up_direction * jump_speed
 			_jump_cooldown = jump_delay
+	var falling := maxf(0.0, -velocity.dot(up_direction))
 	move_and_slide()
+	if not is_on_floor():
+		_airborne += 1
+		return
+	if _airborne >= AIRBORNE_TICKS:
+		landed.emit(falling)
+	_airborne = 0
+	stepped.emit(velocity.slide(up_direction))
 
 
 ## +1 if either positive key is held, -1 for either negative key, 0 for both or neither.

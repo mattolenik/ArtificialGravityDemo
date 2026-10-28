@@ -29,6 +29,15 @@
 ##    soaks: the window's sheet water, its pore water and what reservoirs absorbed add up to 2 m³ within 2 %,
 ##    and every cell whose saturation rose is dirt-topped and within 3.05 m of a cell that was wet. A water
 ##    read every 0.5 s marks the wet cells: this phase carries the driver's own synchronous reads.
+## walk (k = -2, S4; Task 4): a 12 m³ deposit of radius 2 settles; the player, stood 8 m before it along -z
+##    and facing +z, holds W for 1.5 s and walks over it: at least 10 pushes, no landing counted, the loose
+##    volume over the box of 24 kept within 0.5 %, its loose-weighted mean row 0.1 cells further on, and the
+##    feet (1 m under the player's origin) never more than 0.3 m under surface + loose at their cell. The
+##    feet are sampled every 0.1 s of the walk, a synchronous surface and loose read each: this phase too
+##    carries the driver's own reads.
+## jumps (S4): stood on the pile's highest cell, the player jumps four times 1.2 s apart: at least four
+##    tamps, the solid gained over the box above 0.1 m³ and, times the swell, the loose lost within 1 %, and
+##    at least one cell folded (no loose, surface risen).
 ## Then prints the GPU times of the edit (stamp), pack and sim lists against their budget, reported and not
 ## asserted (Vulkan only: Metal reports zeros, shown as n/a), and PASS and exits 0 when every check holds,
 ## else FAIL and 1; persist_edits is off, so nothing is saved. Last, a small deposit makes a tile active and
@@ -56,7 +65,8 @@ var _timed: Array[Dictionary] = []
 var _bored := 0.0
 var _bore_landed := 0
 var _bore_wet := false
-var _player: Node3D
+var _player: Player
+var _tools: Tools
 ## The phase running from slump on ("" before): the active tile count every frame, every tile seen active, and
 ## per phase each sim list's GPU time per active tile (when the count held for the five frames before it was
 ## timed) and the most tiles active at once.
@@ -73,6 +83,7 @@ func _ready() -> void:
 	_terrain = _station.get_node("Terrain")
 	_terrain.persist_edits = false
 	_player = _station.get_node("Player")
+	_tools = main.get_node("Tools")
 	main.get_node("Panel/Box/Timing").timed.connect(func(pass_name: String, ms: float) -> void:
 		_timed.append({"name": pass_name, "ms": ms})
 		var recent := _counts.slice(-5)
@@ -129,6 +140,13 @@ func _route() -> void:
 		return
 	_phase = "sheet"
 	await _sheet(spawn + Vector2i(0, -40))
+	var s4 := spawn + Vector2i(0, -80)
+	_phase = "walk"
+	if not await _walk(s4):
+		return
+	_phase = "jumps"
+	if not await _jumps(s4):
+		return
 	_phase = ""
 	# Let the last timestamps arrive.
 	await _frames(6)
@@ -395,6 +413,118 @@ func _sheet(s3: Vector2i) -> void:
 			wet_cells.size(), risen.size(), risen_all, dirt, far])
 	_report("water spreads and soaks within 3 m", deep >= 20 and absf(total - 2.0) <= 0.02 * 2.0 and risen.size() == risen_all
 			and not risen.is_empty() and dirt and far <= 3.05)
+
+
+## Phase walk at s4: the player walks over a settled pile, pushing it on and standing on it (see the header).
+## False after quitting on a timeout.
+func _walk(s4: Vector2i) -> bool:
+	var box := _box(s4, 24)
+	_stamp(_op(s4, 2, EditLayer.MODE_DEPOSIT, 12.0))
+	var waited := await _settled(s4)
+	var surface := _read("surface")
+	var loose := _read("loose")
+	var v0 := _vol(loose, surface, box)
+	var row0 := _mean_row(loose, surface, box, s4)
+	if not await _teleport(s4 - Vector2i(0, 8)):
+		return false
+	_face(Vector3(0, 0, 1))
+	await get_tree().create_timer(0.5).timeout
+	var pushes0 := _tools.pushes
+	var tamps0 := _tools.tamps
+	var low := INF
+	_press(KEY_W, true)
+	for i in 15:
+		await get_tree().create_timer(0.1).timeout
+		low = minf(low, _feet_clearance())
+	_press(KEY_W, false)
+	await get_tree().create_timer(2.0).timeout
+	var waited2 := await _settled(s4)
+	surface = _read("surface")
+	loose = _read("loose")
+	var v1 := _vol(loose, surface, box)
+	var row1 := _mean_row(loose, surface, box, s4)
+	var pushes := _tools.pushes - pushes0
+	print("walk: pile settled in %.2f s, again in %.2f s after; %d pushes, %d landings counted; %.6f m³ loose over the box, was %.6f (%+.4f %%); mean row %+.4f -> %+.4f cells (%+.4f); lowest feet %+.3f m" % [
+			waited, waited2, pushes, _tools.tamps - tamps0, v1, v0, (v1 / v0 - 1.0) * 100.0, row0, row1, row1 - row0, low])
+	_report("walking pushes forward, conserves, stands on it", waited >= 0.0 and waited2 >= 0.0 and pushes >= 10
+			and _tools.tamps == tamps0 and absf(v1 - v0) <= 0.005 * v0 and row1 - row0 >= 0.1 and low >= -0.3)
+	return true
+
+
+## Phase jumps at s4: four landings on the pile's top fold it, the solid gained accounting for the loose lost
+## (see the header). False after quitting on a timeout.
+func _jumps(s4: Vector2i) -> bool:
+	var box := _box(s4, 24)
+	var surface := _read("surface")
+	var loose := _read("loose")
+	var top := s4
+	for c in box:
+		if _f(surface, c) + _f(loose, c) > _f(surface, top) + _f(loose, top):
+			top = c
+	if not await _teleport(top):
+		return false
+	var waited := await _settled(top)
+	var s0 := _read("surface")
+	var l0 := _read("loose")
+	var tamps0 := _tools.tamps
+	for i in 4:
+		var gap := get_tree().create_timer(1.2)
+		_press(KEY_SPACE, true)
+		await _frames(3)
+		_press(KEY_SPACE, false)
+		if i < 3:
+			await gap.timeout
+	await get_tree().create_timer(2.0).timeout
+	var waited2 := await _settled(top)
+	var s1 := _read("surface")
+	var l1 := _read("loose")
+	var solid_gain := 0.0
+	var loose_lost := 0.0
+	var folded := 0
+	for c in box:
+		var area := _area(_f(s0, c))
+		solid_gain += (_f(s1, c) - _f(s0, c)) * area
+		loose_lost += (_f(l0, c) - _f(l1, c)) * area
+		folded += int(_f(l1, c) == 0.0 and _f(s1, c) > _f(s0, c))
+	var swell := _terrain.materials.swell_factor[0]
+	var tamps := _tools.tamps - tamps0
+	print("jumps: at %s (%.3f m loose), settled in %.2f s, again in %.2f s after; %d tamps; solid gained %.6f m³ · %.2f = %.6f for %.6f m³ loose lost (%+.4f %%); %d cells folded" % [
+			top, _f(l0, top), waited, waited2, tamps, solid_gain, swell, solid_gain * swell, loose_lost,
+			(solid_gain * swell / loose_lost - 1.0) * 100.0, folded])
+	_report("four landings fold the patch, volume accounted", waited >= 0.0 and waited2 >= 0.0 and tamps >= 4
+			and solid_gain > 0.1 and absf(solid_gain * swell - loose_lost) <= 0.01 * loose_lost and folded > 0)
+	return true
+
+
+## The player's feet (1 m under its origin along its up) over surface + loose at their cell, from synchronous
+## reads, in m: negative when they are in the ground.
+func _feet_clearance() -> float:
+	var q := _station.to_local(_player.global_position - _player.up_direction)
+	var c := _terrain.params.cell_of(Cyl.theta_of(q), q.z)
+	return Cyl.height_of(q, _terrain.params.radius) - _f(_read("surface"), c) - _f(_read("loose"), c)
+
+
+## Teleports the player to the centre of cell c and waits for the collider under it (_settled_patch).
+func _teleport(c: Vector2i) -> bool:
+	var p := _terrain.params
+	_terrain.teleport((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5)
+	return await _settled_patch()
+
+
+## Turns the player upright to face station-space direction d (across its up), as Terrain._on_first_live
+## stands it.
+func _face(d: Vector3) -> void:
+	var up := _station.global_basis.inverse() * -_station.down_at(_player.global_position)
+	_player.global_basis = _station.global_basis * Basis(up.cross(-d), up, -d)
+
+
+## Feeds a physical key through Input, as the player's own input code reads it (edit_run's).
+func _press(key: Key, pressed: bool) -> void:
+	var e := InputEventKey.new()
+	e.keycode = key
+	e.physical_keycode = key
+	e.pressed = pressed
+	Input.parse_input_event(e)
 
 
 ## Marks every texel holding sheet water in wet, from a synchronous read.
@@ -668,4 +798,5 @@ func _summary() -> void:
 		all.append_array(_sim_ms[phase])
 		print("  sim   %-5s per active tile %s; active tiles max %d" % [phase, Smoke._stat(_sim_ms[phase], SIM_BUDGET), _active_max[phase]])
 	print("  sim   all   per active tile %s; %d steps" % [Smoke._stat(all, SIM_BUDGET), _terrain.sim.steps])
-	print("  the sheet phase carries the driver's own synchronous reads (a 1 MB water read every 0.5 s)")
+	print("  the sheet phase carries the driver's own synchronous reads (a 1 MB water read every 0.5 s), and so does")
+	print("  the walk phase (a 1 MB surface and a 1 MB loose read every 0.1 s, 15 of each)")
