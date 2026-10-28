@@ -113,6 +113,7 @@ func spawn() -> void:
 		trail.width = trail_width
 		trail.lifetime = trail_time
 		trail.frame = station
+		box.add_to_group(Terrain.GROUND_GROUP)
 		station.add_child(box)
 		box.global_position = station.to_global(_local_spawn_point() + offset)
 		box.global_rotation = station.global_rotation

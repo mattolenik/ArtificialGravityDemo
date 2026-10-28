@@ -6,9 +6,17 @@
 ## reports none, shown as n/a).
 ## Run: godot --path . res://terrain/smoke.tscn [-- --legs=10]. If the window stops being drawn the collider
 ## stops following, the player is held, and the summary shows held frames and shorter legs.
+## With `-- --blackout` the legs are replaced by a check of that hold: after the 2 s hold the render loop is
+## stopped and W held for BLACKOUT s (frames still run, no bake can land), so the player must be held when it
+## leaves the patch, stay exactly where it was held, and be released soon after the loop resumes.
 extends Node
 
 const HOLD := 2.0
+## Seconds of process time the render loop stays stopped in --blackout, and how long after it resumes the
+## release may take, and how long the player then has to show it stands.
+const BLACKOUT := 10.0
+const RELEASE_WITHIN := 3.0
+const SETTLE := 1.0
 const FLIGHT := 5000.0
 ## Flight speed in m/s and height above the macro surface in m.
 const FLIGHT_SPEED := 400.0
@@ -43,15 +51,24 @@ var _held_frames := 0
 var _slow: Array[String] = []
 ## Application focus changes, as "out/in phase t=..s".
 var _focus: Array[String] = []
+## --blackout: the route is on, the phase time and global position of the player at the first hold and the
+## time of the next release (-1 until they happen), and how far it moved from there while held.
+var _blackout := false
+var _held_t := -1.0
+var _held_at := Vector3.ZERO
+var _released_t := -1.0
+var _drift := 0.0
 
 
 func _ready() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--legs="):
 			leg = float(arg.trim_prefix("--legs="))
+		_blackout = _blackout or arg == "--blackout"
 	var main: Node = load("res://main.tscn").instantiate()
 	_station = main.get_node("Station")
 	_terrain = _station.get_node("Terrain")
+	_terrain.persist_edits = false  # a driver never writes edits into the default world
 	_player = _station.get_node("Player")
 	_fly = _station.get_node("FlyCamera")
 	main.get_node("Panel/Box/Timing").timed.connect(_on_timed)
@@ -76,6 +93,9 @@ func _input(event: InputEvent) -> void:
 
 func _route() -> void:
 	await _run("hold", HOLD, KEY_NONE)
+	if _blackout:
+		await _run_blackout()
+		return
 	# The hold let the startup dispatches finish; from here on the detail lists are the window's moves.
 	_listening = true
 	_terrain.window.tiles_generated.connect(_on_tiles)
@@ -89,6 +109,42 @@ func _route() -> void:
 	_phase = ""
 	_summary()
 	get_tree().quit()
+
+
+## Runs W with the render loop stopped for BLACKOUT s, then resumes it, and checks the player was held once it
+## left the patch, did not move while held, was released within RELEASE_WITHIN s of the loop resuming and
+## stands after SETTLE s more. Times are the phase's, from the start of W. Prints the verdict and quits.
+func _run_blackout() -> void:
+	var start := _player.global_position
+	_begin("blackout", _player)
+	_press(KEY_W, true)
+	RenderingServer.render_loop_enabled = false
+	while _stats.blackout.time < BLACKOUT:
+		await get_tree().process_frame
+	RenderingServer.render_loop_enabled = true
+	_press(KEY_W, false)
+	var resumed: float = _stats.blackout.time
+	while _released_t < 0.0 and _stats.blackout.time < resumed + RELEASE_WITHIN:
+		await get_tree().process_frame
+	var settled: float = _stats.blackout.time + SETTLE
+	while _stats.blackout.time < settled:
+		await get_tree().process_frame
+	var standing := _clearance(_player.position)
+	_phase = ""
+	_summary()
+	var held := _held_t >= 0.0
+	var frozen := held and _drift < 1e-3
+	var released := _released_t >= 0.0 and _released_t - resumed <= RELEASE_WITHIN
+	print("---- blackout ----")
+	print("held at t=%.2f s after %.0f m (render loop off from t=0 to %.2f s)" % [_held_t, start.distance_to(_held_at), resumed]
+			if held else "NOT held: body_held(true) never fired")
+	print("frozen: %s (moved %.6f m while held)" % ["ok" if frozen else "FAIL", _drift])
+	print("released at t=%.3f s (%.3f s after the loop resumed)" % [_released_t, _released_t - resumed]
+			if released else "NOT released within %.0f s of the loop resuming" % RELEASE_WITHIN)
+	print("standing: %.2f m above the macro surface %.0f s after" % [standing, SETTLE])
+	var ok := held and frozen and released and standing > -2.0
+	print("BLACKOUT PASS" if ok else "BLACKOUT FAIL")
+	get_tree().quit(0 if ok else 1)
 
 
 ## Holds `key` (none for KEY_NONE) for `seconds` of frame time.
@@ -147,6 +203,8 @@ func _process(delta: float) -> void:
 	if _phase == "flight":
 		_hold_height()
 	_held_frames += int(_holding)
+	if _blackout and _holding and _held_t >= 0.0:
+		_drift = maxf(_drift, _player.global_position.distance_to(_held_at))
 	var s: Dictionary = _stats[_phase]
 	s.time += delta
 	s.cpu.append(delta * 1000.0)
@@ -181,6 +239,15 @@ func _on_timed(pass_name: String, ms: float) -> void:
 func _on_body_held(held: bool) -> void:
 	_holding = held
 	_holds += int(held)
+	if _phase != "blackout":
+		return
+	var t: float = _stats.blackout.time
+	if held and _held_t < 0.0:
+		_held_t = t
+		_held_at = _player.global_position
+	elif not held and _held_t >= 0.0 and _released_t < 0.0:
+		_released_t = t
+		_drift = maxf(_drift, _player.global_position.distance_to(_held_at))
 
 
 func _on_tiles(tiles: Array[Vector2i]) -> void:

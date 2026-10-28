@@ -35,6 +35,10 @@ const ORIGIN_STEP := 1024.0
 const RENDER_LAYER := 2
 ## Seconds between autosaves of the edited tiles that have been read back since the last one.
 const SAVE_INTERVAL := 30.0
+## Bodies in this group are held while no live collider patch covers them (the ground body always is).
+const GROUND_GROUP := "terrain_ground"
+## Meta key of a body's hold state: true while Terrain is holding it.
+const HELD_META := "terrain_held"
 
 var params: WorldParams
 var maps: MacroMaps
@@ -48,9 +52,6 @@ var _center := Vector2i(-1, -1)
 var _live := false
 ## The node stood on the ground at spawn; the viewer may later become the FlyCamera.
 var _body: Node3D
-## Whether Terrain itself is holding _body (it does not release a hold that something else, like the
-## FlyCamera, put on it).
-var _held := false
 ## Set by teleport() while the body waits, held, for a patch at its new place; cleared once stood on one.
 var _teleporting := false
 ## Where the viewer was stood at the spawn site, in station space.
@@ -211,6 +212,8 @@ func _process(delta: float) -> void:
 	if patch.needs_rebuild(p):
 		patch.rebuild(window, Cyl.theta_of(p), p.z)
 	_hold_body(not patch.covers(station.to_local(_body.global_position)))
+	for b: Node3D in get_tree().get_nodes_in_group(GROUND_GROUP):
+		_hold(b, not patch.covers(station.to_local(b.global_position)))
 
 
 func _exit_tree() -> void:
@@ -234,14 +237,21 @@ func _save_edits() -> void:
 	window.edits.unsaved.clear()
 
 
-## Holds _body while there is no ground under it, and lets it go once there is. A body that something else
-## already holds is left alone.
+## Holds _body while there is no ground under it, and lets it go once there is.
 func _hold_body(hold: bool) -> void:
-	if hold == _held or (hold and _body.process_mode == PROCESS_MODE_DISABLED):
-		return
-	_held = hold
-	_body.process_mode = PROCESS_MODE_DISABLED if hold else PROCESS_MODE_INHERIT
-	body_held.emit(hold)
+	if _hold(_body, hold):
+		body_held.emit(hold)
+
+
+## Holds a body (frozen, out of the physics space with its state) or releases it; the state is kept in its
+## meta terrain_held. A body that something else already disabled (the FlyCamera freezing the player) is
+## neither taken nor released. Returns whether anything changed.
+func _hold(body: Node3D, hold: bool) -> bool:
+	if hold == body.get_meta(HELD_META, false) or (hold and body.process_mode == PROCESS_MODE_DISABLED):
+		return false
+	body.set_meta(HELD_META, hold)
+	body.process_mode = PROCESS_MODE_DISABLED if hold else PROCESS_MODE_INHERIT
+	return true
 
 
 ## Moves the ground body to stand on the surface at (theta, z), with no velocity. Over the live patch it
