@@ -1,6 +1,7 @@
-## A fixed bar of white light along the station's axis. The station spins under it, so in the station's
-## frame (the scene) its lit arc sweeps anti-spinward once per rotation: day under the arc, night
-## elsewhere. The bar itself is an unshaded white cylinder. Its light is a line source, so every lit
+## A bar of white light along the station's axis, turning with the station but a little slower, so in
+## the station's frame (the scene) its lit arc drifts anti-spinward once per day_length: day under the
+## arc, night elsewhere, with a long soft terminator between (soft_deg each side of the arc's edge). The
+## bar itself is an unshaded white cylinder. Its light is a line source, so every lit
 ## point is lit from straight overhead; the terrain shaders apply the arc per fragment from the global
 ## shader parameters set here (light_bar.gdshaderinc), fed by a directional light that reaches only the
 ## terrain's render layer, while a second directional light for everything else points down the radial
@@ -9,10 +10,13 @@ class_name LightBar
 extends Node3D
 
 @export var station: Station
-## Width of the lit arc around the axis, degrees.
+## Width of the lit arc around the axis, degrees, measured at half brightness.
 @export_range(0, 360) var arc_deg := 160.0
-## Width of the dawn and dusk bands at the arc's edges, degrees.
-@export_range(0, 90) var soft_deg := 2.0
+## Half-width of the dawn and dusk bands, degrees: full day soft_deg inside the arc's edge, full night
+## soft_deg outside it.
+@export_range(0, 90) var soft_deg := 30.0
+## Seconds of real time for the lit arc to go once around the station: one day and night.
+@export_range(1, 86400, 1, "or_greater") var day_length := 600.0
 ## Radius of the bar, m.
 @export var radius := 20.0
 
@@ -56,8 +60,8 @@ static func day(at_theta: float, bar_theta: float, arc_deg: float, soft_deg: flo
 
 
 func _process(delta: float) -> void:
-	# The bar is fixed in the inertial frame; the station turns spinward under it at omega.
-	theta = wrapf(theta - station.omega().length() * delta, 0.0, TAU)
+	# The bar turns spinward with the station, short of it by one turn per day_length.
+	theta = wrapf(theta - TAU / day_length * delta, 0.0, TAU)
 	RenderingServer.global_shader_parameter_set("light_bar_theta", theta)
 	var cam := get_viewport().get_camera_3d()
 	if cam == null:
