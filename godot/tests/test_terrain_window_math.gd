@@ -39,6 +39,22 @@ func _initialize() -> void:
 	e = f.extent()
 	check(absf(e.x - 3076.0 * p.dtheta()) < 1e-6 and absf(e.y + e.w - (-16000.0 + 31748.0)) < 1e-3 \
 			and absf(e.z - 2048 * p.dtheta()) < 1e-6 and e.w == 2048.0, "far extent %s" % e)
+	# Tile nodes share one frame on the hull at the wanted set's middle grid point; each tile's offset from
+	# it is in window cells, theta the short way round (this set straddles theta = 0, from tile (126, 0)).
+	var nodes: Array[MeshInstance3D] = []
+	for i in 16:
+		var m := MeshInstance3D.new()
+		m.add_child(MeshInstance3D.new())
+		nodes.append(m)
+	Terrain.place_tiles(w, nodes, Vector2i(0, 0))
+	check(nodes[0].position.is_equal_approx(Cyl.position(0.0, -16000.0 + 256.0, 0.0, p.radius)), "tile frame %s" % nodes[0].position)
+	for m in nodes: check(m.transform == nodes[0].transform, "one frame for every tile")
+	# Slot (x, y) holds tile (x, y) for x < 2 and (124 + x, y) for x >= 2: centre cells 64, 192, -192, -64.
+	for i in 16:
+		var want := Vector2i([64, 192, -192, -64][i % 4], -192 + 128 * (i / 4))
+		for g: MeshInstance3D in [nodes[i], nodes[i].get_child(0)]:
+			check(g.get_instance_shader_parameter("tile_offset") == want, "slot %d offset %s, want %s" % [i, g.get_instance_shader_parameter("tile_offset"), want])
+	for m in nodes: m.free()
 	# Collider patch frame: local Y points at the axis, X is spinward, origin on the hull.
 	var patch := ColliderPatch.new()
 	patch.set_frame(0.5 * PI, 300.0, 3200.0)

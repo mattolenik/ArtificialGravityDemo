@@ -86,15 +86,16 @@ static func make_tiles(parent: Node3D, w: TerrainWindow) -> Array[MeshInstance3D
 	mesh.size = Vector2.ONE * TerrainWindow.TILE
 	mesh.subdivide_width = TerrainWindow.TILE - 1
 	mesh.subdivide_depth = TerrainWindow.TILE - 1
-	# The shaders move every vertex; this box holds any tile in its node's frame, a cell of margin each
-	# way. Across, a vertex sits up to R sin(a) from the centre, a = 64.5 cells of angle (79 m for a 1 m
-	# tile on the default world, 637 m for an 8 m one); along, 64.5 cells; up, under h_sea + h_mtn plus
-	# the curvature 2R sin^2(a / 2); down, a dry water vertex tucks 1 m under the hull-level sea floor and a
-	# coarser level sinks a quarter cell.
+	# The shaders move every vertex; every tile is drawn in the frame of the wanted set's middle (see
+	# place_tiles), so this box holds the whole window in it, a cell of margin each way. Across, a vertex
+	# sits up to R sin(a) from the middle, a = half the window plus half a cell of angle (315 m for the 1 m
+	# window on the default world, 2274 m for the 8 m one); along, half the window plus half a cell; up,
+	# under h_sea + h_mtn plus the curvature 2R sin^2(a / 2); down, a dry water vertex tucks 1 m under the
+	# hull-level sea floor and a coarser level sinks a quarter cell.
 	var p := w.params
-	var a := (TerrainWindow.TILE / 2.0 + 0.5) * w.cell * p.dtheta()
+	var a := (w.size / 2.0 + 0.5) * w.cell * p.dtheta()
 	var across := p.radius * sin(a) + w.cell
-	var along := (TerrainWindow.TILE / 2.0 + 1.5) * w.cell
+	var along := (w.size / 2.0 + 1.5) * w.cell
 	var top := p.h_sea + p.h_mtn() + 2.0 * p.radius * sin(a / 2.0) ** 2 + w.cell
 	mesh.custom_aabb = AABB(Vector3(-across, -10, -along), Vector3(2.0 * across, top + 10, 2.0 * along))
 	var ground := _material(preload("res://terrain/shaders/tile.gdshader"), w)
@@ -206,22 +207,35 @@ func _move_window(center: Vector2i) -> void:
 	place_tiles(window, _tiles, center)
 
 
-## Points every node of tiles (from make_tiles) at its tile of w's wanted set around center.
+## Points every node of tiles (from make_tiles) at its tile of w's wanted set around center. All nodes
+## share one transform, the frame on the hull at the wanted set's middle grid point, and each tile's
+## `tile_offset` is its centre's offset from there in window cells (theta the short way round), so tiles
+## that share an edge bend identical numbers in one frame and their edge vertices match bit for bit.
 static func place_tiles(w: TerrainWindow, tiles: Array[MeshInstance3D], center: Vector2i) -> void:
 	var wanted := w.wanted_tiles(center)
+	@warning_ignore("integer_division")
+	var mid := w.wanted_origin(center) * TerrainWindow.TILE + Vector2i.ONE * (w.size / 2)
+	var theta := mid.x * w.cell * w.params.dtheta()
+	var frame := Transform3D(
+			Basis(Vector3(cos(theta), sin(theta), 0), Vector3(-sin(theta), cos(theta), 0), Vector3(0, 0, 1)),
+			Cyl.position(theta, -w.params.length / 2.0 + mid.y * w.cell, 0, w.params.radius))
+	@warning_ignore("integer_division")
+	var half_around := w.tiles_around * TerrainWindow.TILE / 2
 	for n in wanted.size():
 		var t := wanted[n]
 		var s := w.slot_of(t)
 		var tile := tiles[s.y * w.slots + s.x]
+		tile.transform = frame
 		var c := w.tile_center(t)
-		tile.transform = Transform3D(
-				Basis(Vector3(cos(c.x), sin(c.x), 0), Vector3(-sin(c.x), cos(c.x), 0), Vector3(0, 0, 1)),
-				Cyl.position(c.x, c.y, 0, w.params.radius))
+		@warning_ignore("integer_division")
+		var k := t * TerrainWindow.TILE + Vector2i.ONE * (TerrainWindow.TILE / 2) - mid
+		var offset := Vector2i(wrapi(k.x, -half_around, half_around), k.y)
 		@warning_ignore("integer_division")
 		var edge := Vector2i(_edge(n % w.slots, w.slots), _edge(n / w.slots, w.slots))
 		for g: GeometryInstance3D in [tile, tile.get_child(0)]:
 			g.set_instance_shader_parameter("tile_theta", c.x)
 			g.set_instance_shader_parameter("tile_z", c.y)
+			g.set_instance_shader_parameter("tile_offset", offset)
 			g.set_instance_shader_parameter("slot_origin", w.texel_origin(t))
 			g.set_instance_shader_parameter("clamp_edge", edge)
 

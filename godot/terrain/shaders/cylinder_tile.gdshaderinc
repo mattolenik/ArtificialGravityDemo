@@ -1,8 +1,10 @@
 // Shared by tile.gdshader and water.gdshader. The mesh is a 129 x 129 grid with VERTEX.xz in [-64, 64],
-// one unit per window cell (`cell` m), drawn in the tile node's frame: origin on the hull at the tile
-// centre, X spinward, Y toward the axis, Z axial. Vertex k = VERTEX.xz + 64 reads window texel
-// slot_origin + k and is drawn at that cell's centre, half a cell past the grid point, so the +64 edge
-// reads and sits on the next tile's first texel; heights are bent onto the cylinder of radius R. A
+// one unit per window cell (`cell` m), about the tile centre. Every tile of a window is drawn in one
+// frame, the node transform all its tiles share: origin on the hull at the window's middle grid point,
+// X spinward, Y toward the axis, Z axial; tile_offset puts the tile in it. Vertex k = VERTEX.xz + 64
+// reads window texel slot_origin + k and is drawn at that cell's centre, half a cell past the grid point,
+// so the +64 edge reads and sits on the next tile's first texel, at bit for bit the same position;
+// heights are bent onto the cylinder of radius R. A
 // coarser level gives way inside `hole`, where a finer level draws: its water is discarded there, and
 // its ground reaches one of its cells under the finer level's edge, sunk a quarter cell, so no crack
 // opens between the two levels where their heights differ.
@@ -24,6 +26,8 @@ varying vec2 theta_z;
 // Angle and axial position of the tile centre.
 instance uniform float tile_theta;
 instance uniform float tile_z;
+// The tile centre's offset in window cells (theta, z) from the origin of the frame it is drawn in.
+instance uniform ivec2 tile_offset;
 // The tile's first texel in the window.
 instance uniform ivec2 slot_origin;
 // Per axis: -1 on the window's low outer edge, +1 on its high outer edge, 0 inside. Edge tiles clamp to
@@ -46,13 +50,20 @@ ivec2 grid_cell(vec3 v) {
 	return ivec2(round(v.xz)) + 64;
 }
 
-// The centre of the cell at grid point (x, zz), at height h above the hull, in the tile's frame.
+// Grid point (x, zz) of the tile in window cells from the frame's origin. Summed as integers, so tiles
+// sharing an edge feed the bend the very same numbers whatever the compiler does with the float maths.
+vec2 framed(float x, float zz) {
+	return vec2(ivec2(round(vec2(x, zz))) + tile_offset);
+}
+
+// The centre of the cell at grid point (x, zz), at height h above the hull, in the frame.
 // R - r cos(a) is written as h + 2 r sin^2(a / 2) to avoid cancellation in float.
 vec3 bend(float x, float zz, float h) {
-	float a = (x + 0.5) * cell * dtheta;
+	vec2 g = framed(x, zz);
+	float a = (g.x + 0.5) * cell * dtheta;
 	float r = R - h;
 	float s = sin(0.5 * a);
-	return vec3(r * sin(a), h + 2.0 * r * s * s, (zz + 0.5) * cell);
+	return vec3(r * sin(a), h + 2.0 * r * s * s, (g.y + 0.5) * cell);
 }
 
 // Station-local (theta, z) of that cell centre.
@@ -68,8 +79,8 @@ bool in_hole(vec2 p, float margin) {
 	return abs(d.x) < h.x && abs(d.y) < h.y;
 }
 
-// A normal given in the frame of the cell centre at grid point x, rotated into the tile's frame.
+// A normal given in the frame of the cell centre at grid point x, rotated into the frame.
 vec3 unbend_normal(float x, vec3 n) {
-	float a = (x + 0.5) * cell * dtheta;
+	float a = (framed(x, 0.0).x + 0.5) * cell * dtheta;
 	return vec3(n.x * cos(a) - n.y * sin(a), n.x * sin(a) + n.y * cos(a), n.z);
 }
