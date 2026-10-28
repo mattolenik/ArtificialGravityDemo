@@ -285,7 +285,7 @@ func _summary() -> void:
 
 
 ## "cpu mean .. p99 .. max .. gpu mean .. p99 .. max .. ms" for a set of frames.
-func _times(cpu: Array, gpu: Array) -> String:
+static func _times(cpu: Array, gpu: Array) -> String:
 	var s := "CPU mean %.2f p99 %.2f max %.2f (%d over 16)" % [_mean(cpu), _pct(cpu, 0.99), cpu.max(),
 			cpu.filter(func(x: float) -> bool: return x > 16.0).size()]
 	if gpu.max() <= 0.0:
@@ -297,7 +297,7 @@ func _times(cpu: Array, gpu: Array) -> String:
 static func _stat(a: Array[float], budget: float) -> String:
 	if a.is_empty():
 		return "n/a"
-	return "n %d, median %.3f, p90 %.3f, max %.3f ms, %d over %.0f ms" % [a.size(), _pct(a, 0.5), _pct(a, 0.9), a.max(),
+	return "n %d, median %.3f, p90 %.3f, max %.3f ms, %d over %.1f ms" % [a.size(), _pct(a, 0.5), _pct(a, 0.9), a.max(),
 			a.filter(func(x: float) -> bool: return x > budget).size(), budget]
 
 

@@ -393,6 +393,31 @@ Tuning pass, 2026-10-28: the 4 m weight trades bare-rock grain against collider 
 
 `refactor` is `before` with the weights as push constants: identical statistics, but different surface MD5s. With the old constant divisor (1.96875) in place of the runtime sum of the weights, the MD5s match `before` bit for bit, so the only difference is the rounding of the normalisation. The rock max in `after` is 0.4 cm over `before`'s: dropping the 2 m and 1 m octaves renormalises the rest up by 1.96875 / 1.875 = 1.05. At `before`'s absolute amplitudes (the region amplitudes times 1.875 / 1.96875), the rock site reads 14.4 / 60.8 cm. The Vulkan per-tile figure is the larger of two timed lists from one run, and it varies about 2× between runs: a repeat of `after` gave 0.117 ms.
 
+**Edit slice measurements, 2026-10-28, same machine, 1152×648 window, 120 Hz V-Sync.** `godot --rendering-driver vulkan --path . res://terrain/edit_run.tscn` (its summary; the third of three runs, all PASS with 0 error lines). Passes are `capture_timestamp` pairs in ms: edit is the stamp plus the pack, one list per stamp; apply and detail are per tile; walking is the 6 s trench (digging 10 times a second on the move), standing is every other phase. Cells are median / p90 / max with the count over budget in brackets.
+
+| pass | budget | standing | walking |
+|---|---|---|---|
+| edit | 0.5 | 54: 0.117 / 0.227 / 2.325 (2) | 60: 0.081 / 0.163 / 0.210 (0) |
+| apply, per tile | 0.5 | 1: 0.025 (0) | none |
+| bake_edit | 1 (expected under 0.1) | 54: 0.065 / 0.151 / 0.174 (0) | 60: 0.063 / 0.123 / 2.375 (1) |
+| bake | 1 (expected under 0.2) | 7: 0.240 / 0.297 / 0.297 (0) | 7: 0.238 / 0.390 / 0.390 (0) |
+| detail, per tile | 2 | 9: 0.096 / 0.144 / 0.144 (0) | 2: 0.142 / 0.142 / 0.142 (0) |
+
+| `map_data` CPU (budget: 4 ms hitch) | n | median / max |
+|---|---|---|
+| edit bake (65 × 65) | 114 | 0.226 / 0.283 ms |
+| big bake (257 × 257) | 13 | 2.693 / 2.803 ms |
+
+| phase | frame interval mean / p99 / max (over 16 ms) | GPU frame mean / p99 (budget 6 mean) |
+|---|---|---|
+| dig (30 stamps) | 8.33 / 8.33 / 8.33 ms (0) | 3.86 / 6.51 ms |
+| raise (20 stamps) | 8.33 / 8.33 / 8.33 ms (0) | 3.99 / 5.70 ms |
+| trench | 8.33 / 8.33 / 8.33 ms (0) | 3.85 / 6.33 ms |
+
+Behaviour: the player was never held in the dig, the raise or the trench (twice during the scroll's two teleports), no phase went more than a metre under the collider, and the pit survived the scroll bitwise. On Metal (default driver) the run also passes, with every GPU figure n/a; the `map_data` CPU times are edit 0.224 / 0.254 ms and big 2.663 / 2.792 ms, and the frame interval is 8.33 ms mean with a 8.60 ms trench max, 0 over 16 ms.
+
+The medians are well inside every budget: the edit bake is 0.06 ms against 1 ms, the big bake 0.20 to 0.26 ms over three runs (above the 0.2 ms expectation, under the 1 ms budget), detail 0.09 to 0.14 ms per tile (0.49 in one run's two walking lists) and apply 0.025 to 0.035 ms per tile. The misses are single timestamps: every run had one to four edit or bake_edit lists reading 0.5 to 4.7 ms against medians of 0.06 to 0.12 (run 1: edit standing max 2.49, 3 over; run 2: edit standing 4.66 and edit walking 0.90, 4 over; run 3 above), the same one-off spike the plan's earlier windowed runs saw. Walking and standing are reported apart because bakes timed while walking were seen to read much higher on the GPU than bakes timed standing still (a clock or timestamp effect, seen with the old bake shader too); in these three runs the medians match and the spikes land in either state. Nothing was tuned. The GPU frame p99 passes 6 ms in the busiest phases (the mean does not), as it did at 1440p in slice 1.
+
 **Rendering without CPU meshing**
 
 - **Tiles as static grid meshes.** Each tile is a fixed vertex grid. Its vertex shader samples the solid, loose and water textures through `Texture2DRD`, which wraps the compute texture without a copy, displaces radially and maps onto the cylinder in the tile's local frame. Normals come from texture differences. Coarser grids for far tiles give LOD. Every displaced tile needs a `custom_aabb` covering its full displacement range or it gets culled. Integer textures are read with `texelFetch` through `usampler2D`; confirm that an `R32_UINT` texture binds correctly in a material before relying on it, and fall back to 16-bit pairs rather than float bit-casting.

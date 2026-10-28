@@ -17,8 +17,10 @@
 ##    in-flight cases: two zone moves in consecutive frames, and an in-zone edit followed by a zone move in
 ##    the next frame; over the whole run, every big bake's hole lands after an edit bake for its zone
 ##    (decision 8's issue order);
-## 8. prints the edit (stamp plus pack), apply, bake_edit and bake GPU times (Vulkan only: Metal reports
-##    zeros, shown as n/a) and the CPU time of each kind of bake landing, against the budget, not asserted.
+## 8. prints a summary against the budgets, reported and not asserted: per GPU pass (edit, apply per tile,
+##    bake_edit, bake, detail per tile) count, median, p90, max and the count over budget, walking (the
+##    trench) and standing apart (Vulkan only: Metal reports zeros, shown as n/a); the CPU time of each kind
+##    of bake landing; the frame interval and the GPU frame per phase; holds, falls and survived.
 ## Prints PASS and exits 0 when every check holds, else FAIL and 1. persist_edits is off, so nothing is saved.
 ## After editing a .glsl run `godot --headless --path . --import` first (the suite does it).
 ## Run: godot --rendering-driver vulkan --path . res://terrain/edit_run.tscn
@@ -27,8 +29,6 @@ extends Node
 const Smoke := preload("res://terrain/smoke_run.gd")
 const RADIUS := 5.0
 const STEP := 0.25
-## GPU budget per edit and per applied tile, in ms.
-const BUDGET := 0.3
 ## The rim crossing: where the box starts along the axis from the pit centre (past the edit shape's 32 m),
 ## where the push stops (well inside the hole's 22 cells), the push in m/s^2 and the start speed in m/s.
 const RIM_START := 34.0
@@ -39,8 +39,12 @@ const RIM_SPEED := 3.0
 const TRENCH := 6.0
 ## Frame intervals over this many ms are listed for the trench.
 const SLOW := 16.0
-## The GPU time expected of each timed pass, in ms; the split lines count those over the 1 ms collider budget.
-const GPU_EXPECTED := {"edit": BUDGET, "bake_edit": 0.1, "bake": 0.2}
+## The GPU budget of each timed pass in ms (apply and detail per tile, the others per compute list), and the
+## tighter time the two bakes are expected to come in under.
+const BUDGET := {"edit": 0.5, "apply": 0.5, "bake_edit": 1.0, "bake": 1.0, "detail": 2.0}
+const EXPECTED := {"bake_edit": 0.1, "bake": 0.2}
+## A phase whose lowest clearance to the collider, in m, is under this counts as a fall.
+const FELL := -1.0
 
 var _station: Station
 var _terrain: Terrain
@@ -48,18 +52,20 @@ var _player: Player
 var _box: Box
 var _started := false
 var _ok := true
-## Edit and apply GPU times in ms, and how many tiles each apply list pair covered, in order.
-var _edit: Array[float] = []
-var _apply: Array[float] = []
+## Every timed GPU list from the route's start, in order: {name, ms, walking (the trench)}. How many tiles each
+## apply list covered and each detail dispatch generated, in order, to pair with them.
+var _timed: Array[Dictionary] = []
 var _applied: Array[int] = []
-## GPU times in ms of the passes in GPU_EXPECTED, by whether the player was walking (the trench).
-var _gpu := {"edit": {"standing": [] as Array[float], "walking": [] as Array[float]},
-		"bake_edit": {"standing": [] as Array[float], "walking": [] as Array[float]},
-		"bake": {"standing": [] as Array[float], "walking": [] as Array[float]}}
+var _tiles: Array[int] = []
+var _listening := false
+var _survived := false
+## Per phase, the frame intervals and the GPU frame times in ms.
+var _frames := {}
 ## Every bake landing in order: {kind, ms (CPU), frame, zone (the edit shape's, or the big patch's hole), phase}.
 var _landings: Array[Dictionary] = []
-## How many times Terrain held the player.
+## How many times Terrain held the player, and in which phase ("between" outside them: the scroll's teleports).
 var _holds := 0
+var _held_in := {}
 ## The phase being recorded ("" between phases) and, per phase, the lowest clearance to the collider (m,
 ## negative when under it) of the player's origin, the box's centre and the box's lowest corner.
 var _phase := ""
@@ -75,12 +81,8 @@ func _ready() -> void:
 	_terrain.persist_edits = false
 	_player = _station.get_node("Player")
 	main.get_node("Panel/Box/Timing").timed.connect(func(pass_name: String, ms: float) -> void:
-		if pass_name == "edit":
-			_edit.append(ms)
-		elif pass_name == "apply":
-			_apply.append(ms)
-		if _gpu.has(pass_name):
-			_gpu[pass_name]["walking" if _phase == "trench" else "standing"].append(ms))
+		if _listening:
+			_timed.append({"name": pass_name, "ms": ms, "walking": _phase == "trench"}))
 	_terrain.collider_live.connect(_route, CONNECT_ONE_SHOT)
 	add_child(main)
 	for i in 1200:
@@ -100,6 +102,9 @@ func _input(event: InputEvent) -> void:
 func _process(delta: float) -> void:
 	if _phase.is_empty():
 		return
+	var f: Dictionary = _frames.get_or_add(_phase, {"cpu": [], "gpu": []})
+	f.cpu.append(delta * 1000.0)
+	f.gpu.append(RenderingServer.viewport_get_measured_render_time_gpu(get_viewport().get_viewport_rid()))
 	if _phase == "trench" and delta * 1000.0 > SLOW:
 		_slow.append(delta * 1000.0)
 	var low: Dictionary = _low.get_or_add(_phase, {"player": INF, "box": INF, "corner": INF})
@@ -117,15 +122,26 @@ func _route() -> void:
 	var z := _terrain.maps.spawn.y
 	var window := _terrain.window
 	var patch := _terrain.patch
+	# The startup dispatches' timestamps arrive within a few frames; from here on the detail lists are the
+	# windows' moves, which tiles_generated counts.
+	for i in 10:
+		await get_tree().process_frame
 	window.tiles_generated.connect(func(tiles: Array[Vector2i]) -> void:
+		_tiles.append(tiles.size())
 		var n := tiles.filter(func(t: Vector2i) -> bool: return window.edits.blobs.has(t)).size()
 		if n > 0:
 			_applied.append(n))
+	_terrain.far.window.tiles_generated.connect(func(tiles: Array[Vector2i]) -> void: _tiles.append(tiles.size()))
+	_listening = true
 	_terrain.teleport(0.0, z)
 	if not await _settled():
 		return
 
-	_terrain.body_held.connect(func(held: bool) -> void: _holds += int(held))
+	_terrain.body_held.connect(func(held: bool) -> void:
+		_holds += int(held)
+		if held:
+			var at := _phase if not _phase.is_empty() else "between"
+			_held_in[at] = _held_in.get(at, 0) + 1)
 	# Inside the readback flush: CPU only. An edit landing is for the last zone requested (no other edit
 	# bake goes out before it lands); a big landing's hole is the one it was baked with.
 	patch.baked.connect(func(kind: String, ms: float) -> void:
@@ -195,6 +211,7 @@ func _route() -> void:
 	var same := true
 	for k in cells.size():
 		same = same and back[k].bits == dug[k].bits and back[k].mask == 255
+	_survived = same
 	if same:
 		print("survived the scroll: ok")
 	else:
@@ -220,23 +237,7 @@ func _route() -> void:
 	# Let the last timestamps arrive.
 	for i in 6:
 		await get_tree().process_frame
-	print("edit GPU (stamp plus pack): %s" % _times(_edit))
-	var per_tile: Array[float] = []
-	if _apply.size() == _applied.size():
-		for i in _apply.size():
-			per_tile.append(_apply[i] / _applied[i])
-	print("apply GPU per tile: %s (%d lists timed, tiles per list %s)" % [_times(per_tile), _apply.size(), _applied])
-	for pass_name: String in _gpu:
-		for state: String in ["standing", "walking"]:
-			print("%s GPU %s: %s (expected under %.1f ms)" % [pass_name, state, Smoke._stat(_gpu[pass_name][state], 1.0),
-					GPU_EXPECTED[pass_name]])
-	for kind: String in ["edit", "big"]:
-		var ms: Array[float] = []
-		for l in _landings:
-			if l.kind == kind:
-				ms.append(l.ms)
-		print("baked %s CPU (map_data): %s (expected %s)" % [kind, Smoke._stat(ms, 4.0),
-				"under 0.5 ms" if kind == "edit" else "about 2.8 ms"])
+	_summary()
 	print("PASS" if _ok else "FAIL")
 	get_tree().quit(0 if _ok else 1)
 
@@ -436,12 +437,58 @@ func _expect(ok: bool, what: String) -> void:
 		_ok = false
 
 
-## Median, p90 and max of times in ms against BUDGET.
-func _times(a: Array[float]) -> String:
-	if a.is_empty():
-		return "n/a"
-	return "n %d, median %.3f, p90 %.3f, max %.3f ms (budget %.1f ms)" % [a.size(), Smoke._pct(a, 0.5), Smoke._pct(a, 0.9),
-			a.max(), BUDGET]
+## The timing summary, reported against the budgets and never asserted.
+func _summary() -> void:
+	var vp := get_viewport()
+	print("---- edit run ----")
+	print("machine: %s, %s" % [OS.get_processor_name(), RenderingServer.get_video_adapter_name()])
+	print("driver: %s, window %s, viewport %s, display %.0f Hz, vsync mode %d" % [
+			RenderingServer.get_current_rendering_driver_name(), DisplayServer.window_get_size(),
+			vp.get_visible_rect().size, DisplayServer.screen_get_refresh_rate(), DisplayServer.window_get_vsync_mode()])
+	print("GPU passes in ms (Vulkan only; per list, apply and detail per tile; walking = the trench, standing = the rest):")
+	for pass_name: String in BUDGET:
+		var per_tile := pass_name in ["apply", "detail"]
+		var counts: Array[int] = []
+		if per_tile:
+			counts = _applied if pass_name == "apply" else _tiles
+		var lists := _timed.filter(func(t: Dictionary) -> bool: return t.name == pass_name).size()
+		var label := pass_name + ("/tile" if per_tile else "")
+		if per_tile and lists > 0 and lists != counts.size():
+			print("  %-11s per tile n/a (%d lists timed, %d dispatches)" % [label, lists, counts.size()])
+			continue
+		for state: String in ["standing", "walking"]:
+			print("  %-11s %-8s %s%s" % [label, state, Smoke._stat(_series(pass_name, state == "walking", counts), BUDGET[pass_name]),
+					"" if state == "walking" or not EXPECTED.has(pass_name) else " (expected under %.1f)" % EXPECTED[pass_name]])
+	print("bakes timed while walking can read higher on the GPU than standing ones (a clock or timestamp effect, also seen with the old shader); reported apart, not tuned")
+	for kind: String in ["edit", "big"]:
+		var ms: Array[float] = []
+		for l in _landings:
+			if l.kind == kind:
+				ms.append(l.ms)
+		print("baked %s CPU (map_data): %s (expected %s)" % [kind, Smoke._stat(ms, 4.0),
+				"under 0.5 ms" if kind == "edit" else "about 2.8 ms"])
+	print("frames per phase (CPU = frame interval; GPU = viewport render time, budget 6 ms):")
+	for phase in ["dig", "raise", "trench"]:
+		print("  %-7s %s" % [phase, Smoke._times(_frames[phase].cpu, _frames[phase].gpu)])
+	var falls := 0
+	for phase: String in _low:
+		var l: Dictionary = _low[phase]
+		falls += int(minf(minf(l.player, l.box), l.corner) < FELL)
+	print("held %d times (by phase: %s), fell in %d phases (lowest clearance under %.0f m), survived the scroll: %s" % [
+			_holds, _held_in, falls, FELL, _survived])
+
+
+## The GPU times in ms of one pass, walking or standing, each divided by its tile count when it has them.
+func _series(pass_name: String, walking: bool, counts: Array[int]) -> Array[float]:
+	var out: Array[float] = []
+	var i := 0
+	for t in _timed:
+		if t.name != pass_name:
+			continue
+		if t.walking == walking:
+			out.append(t.ms / (counts[i] if not counts.is_empty() else 1))
+		i += 1
+	return out
 
 
 ## Waits until the live patch covers the player and no bake is in flight, then 1 s. False after quitting on
