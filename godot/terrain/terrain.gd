@@ -27,6 +27,9 @@ signal body_held(held: bool)
 ## The station shifts along its axis by whole steps of this many m once the viewer is farther than this
 ## from the global origin.
 const ORIGIN_STEP := 1024.0
+## Render layer mask of every terrain mesh: the LightBar lights the terrain through its own shaders and
+## everything else through a plain directional light, split on this layer.
+const RENDER_LAYER := 2
 
 var params: WorldParams
 var maps: MacroMaps
@@ -111,9 +114,11 @@ static func make_tiles(parent: Node3D, w: TerrainWindow) -> Array[MeshInstance3D
 		var tile := MeshInstance3D.new()
 		tile.mesh = mesh
 		tile.material_override = ground
+		tile.layers = RENDER_LAYER
 		var wet := MeshInstance3D.new()
 		wet.mesh = mesh
 		wet.material_override = water
+		wet.layers = RENDER_LAYER
 		tile.add_child(wet)
 		parent.add_child(tile)
 		tiles.append(tile)

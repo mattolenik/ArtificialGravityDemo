@@ -21,6 +21,9 @@ uniform vec4 hole_far;
 uniform vec4 hole_near;
 
 varying vec2 theta_z;
+
+#include "res://terrain/shaders/light_bar.gdshaderinc"
+
 // The normal's component toward the axis: 1 on flat ground.
 varying float up;
 // Water depth in m, at most 0 on dry ground.
@@ -66,6 +69,7 @@ void vertex() {
 	float r = R - (in_hole(p, 0.0) ? h - 0.25 * macro_cell : max(h, w));
 	VERTEX = vec3(r * sin(theta), -r * cos(theta), z);
 	NORMAL = n.x * spinward + n.y * toward_axis + vec3(0.0, 0.0, n.z);
+	bar_up = (VIEW_MATRIX * vec4(mat3(MODEL_MATRIX) * toward_axis, 0.0)).xyz;
 }
 
 void fragment() {
