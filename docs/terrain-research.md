@@ -414,7 +414,7 @@ Tuning pass, 2026-10-28: the 4 m weight trades bare-rock grain against collider 
 | raise (20 stamps) | 8.33 / 8.33 / 8.33 ms (0) | 3.99 / 5.70 ms |
 | trench | 8.33 / 8.33 / 8.33 ms (0) | 3.85 / 6.33 ms |
 
-The frame interval is quantised to the 8.33 ms V-Sync period, so that column cannot show a hitch under 16 ms; the GPU frame and the `map_data` rows are the hitch evidence. The GPU frame was measured at 1152×648, while the 6 ms budget is a 1440p figure (about 2.9× the pixels): the compute passes do not scale with resolution and the draw does, so this row is not yet evidence for the budget as written.
+The frame interval is quantised to the 8.33 ms V-Sync period, so that column cannot show a hitch under 16 ms; the GPU frame and the `map_data` rows are the hitch evidence. The GPU frame was measured at 1152×648, while the 6 ms budget is a 1440p figure (about 4.9× the pixels): the compute passes do not scale with resolution and the draw does, so this row is not yet evidence for the budget as written.
 
 Behaviour: the player was never held in the dig, the raise or the trench (twice during the scroll's two teleports), no phase went more than a metre under the collider, and the pit survived the scroll bitwise. A tile holding a 20-stamp pit at the spawn (radius 5, 0.25 m a stamp) saves as a 1,122-byte `.edit` (about 188 KB before the pack wrote zeros for unedited cells) and loads back on restart, from the 30 s autosave and from the save on quit alike. On Metal (default driver) the run also passes, with every GPU figure n/a; the `map_data` CPU times are edit 0.224 / 0.254 ms and big 2.663 / 2.792 ms, and the frame interval is 8.33 ms mean with a 8.60 ms trench max, 0 over 16 ms.
 
