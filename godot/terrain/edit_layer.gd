@@ -12,7 +12,7 @@ extends RefCounted
 ## uint32 material | compaction << 8 | saturation << 16 | mask << 24; mask 255 where edited, else 0.
 const CELL_BYTES := 24
 const BLOB_SIZE := TerrainWindow.TILE * TerrainWindow.TILE * CELL_BYTES
-## Tiles one stamp can touch, radius under a tile: the download buffer's slots.
+## Tiles one stamp can touch, radius at most 64 cells (Terrain.edit refuses more): the download buffer's slots.
 const DOWN_SLOTS := 4
 
 ## Wrapped tile -> PackedByteArray of BLOB_SIZE: the tile as last packed.
@@ -163,7 +163,7 @@ func _params(window: TerrainWindow, mode: int, cell: Vector2i, tile: Vector2i, s
 
 
 ## The distinct tiles of the box [cell.x - radius, cell.x + radius] x [cell.y - radius, cell.y + radius],
-## rows clamped to the station and theta wrapped: 1 to 4 for radius under a tile.
+## rows clamped to the station and theta wrapped: 1 to 4 for a radius of at most 64, up to 9 beyond.
 static func stamp_tiles(window: TerrainWindow, cell: Vector2i, radius: int) -> Array[Vector2i]:
 	var span := float(TerrainWindow.TILE)
 	var out: Array[Vector2i] = []

@@ -285,17 +285,22 @@ static func _edge(i: int, slots: int) -> int:
 
 ## Raises (dh > 0) or lowers (dh < 0) the ground in a disc around the cell at (theta, z) by dh m at its
 ## centre with a parabolic falloff to its edge (EditLayer.stamp; decision 7 of the terrain edits plan).
-## radius is in cells, not metres, and under a tile (128): a cell is 1 m along the axis and (R - h) dtheta
+## radius is in cells, not metres, and at most 64 (four tiles): a cell is 1 m along the axis and (R - h) dtheta
 ## across, 1.23 m on the hull and 0.64 m at h_sea + h_mtn with the default WorldParams, so the disc is an
 ## ellipse in metres. Digging cuts the strata down with the surface; raising adds dirt. False, and nothing
 ## changes, before the first patch is live, for a radius out of range, or when the disc is not wholly
 ## inside the 1 m window.
 func edit(theta: float, z: float, radius: float, dh: float) -> bool:
 	var r := ceili(radius)
+	# r >= TILE is refused before stamp_tiles, which loops over every tile of the box.
 	if not _live or r < 0 or r >= TerrainWindow.TILE:
 		return false
 	var cell := params.cell_of(theta, z)
-	for t in EditLayer.stamp_tiles(window, cell, r):
+	var tiles := EditLayer.stamp_tiles(window, cell, r)
+	# From r = 65 the box can span three tiles per axis, more than the pack's slots.
+	if tiles.size() > EditLayer.DOWN_SLOTS:
+		return false
+	for t in tiles:
 		if not window.is_resident(t):
 			return false
 	window.edits.stamp(window, cell, r, dh)

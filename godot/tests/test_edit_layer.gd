@@ -22,6 +22,8 @@ func _initialize() -> void:
 	for t in EditLayer.stamp_tiles(w, Vector2i(10, p.n_z() - 2), 5): check(t.y == w.tiles_along - 1, "last rows clamp")
 	var four := EditLayer.stamp_tiles(w, Vector2i(127, 127), 3)
 	check(four.size() == 4 and four.has(Vector2i(0, 0)) and four.has(Vector2i(1, 1)), "four tiles %s" % [four])
+	# The pack's four slots hold any disc up to radius 64; from 65 the box can span three tiles per axis.
+	check(EditLayer.stamp_tiles(w, Vector2i(192, 192), 64).size() == 4 and EditLayer.stamp_tiles(w, Vector2i(192, 192), 65).size() == 9, "radius 64 and 65")
 	# decode reads back what encode_* wrote in the blob layout.
 	var blob := PackedByteArray(); blob.resize(EditLayer.BLOB_SIZE)
 	var o := EditLayer.cell_offset(5, 7)
