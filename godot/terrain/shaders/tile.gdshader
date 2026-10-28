@@ -2,6 +2,7 @@
 shader_type spatial;
 
 #include "res://terrain/shaders/cylinder_tile.gdshaderinc"
+#include "res://terrain/shaders/light_bar.gdshaderinc"
 
 // Material id / 255 (0 dirt, 1 clay, 2 rock).
 uniform sampler2D material_tex : filter_nearest;
@@ -29,6 +30,7 @@ void vertex() {
 	vec3 n = normalize(vec3(-sx, 1.0, -sz));
 	up = n.y;
 	NORMAL = unbend_normal(VERTEX.x, n);
+	bar_up = (VIEW_MATRIX * vec4(mat3(MODEL_MATRIX) * unbend_normal(VERTEX.x, vec3(0.0, 1.0, 0.0)), 0.0)).xyz;
 	VERTEX = bend(VERTEX.x, VERTEX.z, in_hole(p, 0.0) ? h - 0.25 * cell : h);
 }
 

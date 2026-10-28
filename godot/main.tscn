@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3]
+[gd_scene load_steps=12 format=3]
 
 [ext_resource type="PackedScene" path="res://station.tscn" id="1"]
 [ext_resource type="Script" path="res://emitter.gd" id="2"]
@@ -8,6 +8,7 @@
 [ext_resource type="Script" path="res://terrain/fly_camera.gd" id="6"]
 [ext_resource type="Script" path="res://terrain/timing_overlay.gd" id="7"]
 [ext_resource type="Script" path="res://terrain/click_teleport.gd" id="8"]
+[ext_resource type="Script" path="res://light_bar.gd" id="9"]
 
 [sub_resource type="Environment" id="1"]
 ambient_light_source = 2
@@ -45,11 +46,12 @@ terrain = NodePath("../Terrain")
 player = NodePath("../Player")
 emitter = NodePath("../Emitter")
 
+[node name="LightBar" type="Node3D" parent="Station" node_paths=PackedStringArray("station")]
+script = ExtResource("9")
+station = NodePath("..")
+
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 environment = SubResource("1")
-
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 0.7071, 0.7071, 0, -0.7071, 0.7071, 0, 0, 0)
 
 [node name="Panel" type="CanvasLayer" parent="."]
 

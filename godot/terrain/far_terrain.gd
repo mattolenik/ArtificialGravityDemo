@@ -47,6 +47,7 @@ func setup(main: TerrainWindow) -> void:
 	var whole := MeshInstance3D.new()
 	whole.mesh = mesh
 	whole.material_override = _whole
+	whole.layers = Terrain.RENDER_LAYER
 	add_child(whole)
 
 

@@ -20,3 +20,14 @@ config/features=PackedStringArray("4.7", "Forward Plus")
 3d/default_gravity=0.0
 3d/default_linear_damp=0.0
 3d/default_angular_damp=0.0
+
+[shader_globals]
+
+light_bar_theta={
+"type": "float",
+"value": 0.0
+}
+light_bar_edge={
+"type": "vec2",
+"value": Vector2(-0.342, 0.6428)
+}
