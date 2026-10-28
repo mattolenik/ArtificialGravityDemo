@@ -374,6 +374,12 @@ Parcels, wetting, collapse, the displaced-grid rendering and Godot's own frame c
 
 Frames sit on the 8.33 ms refresh, so the GPU time is the figure that means anything. No budget was missed in this run, but the bake is marginal: its max was 0.69 to 1.12 ms over four 1440p runs and 1.05 and 1.76 ms at the 1152×648 default window. The ground body is held while the collider patch does not cover it, so a run whose window stops being drawn shows held frames and shorter legs rather than a fall.
 
+**Noise octaves, 2026-10-27, same machine, 1152×648 window.** `godot --path . res://terrain/noise_report.tscn -- --label=X`: collider mismatch = |drawn vertex − collider| along rows over the 257 m patch (`NoiseReport.row_mismatch`), p99 / max; views in `user://debug/noise/X_*.png`.
+
+| run | octaves 32, 16, 8, 4, 2, 1 m | rock p99 / max | spawn p99 / max | detail per tile (Vulkan) |
+|---|---|---|---|---|
+| before | 1, .5, .25, .125, .0625, .03125 | 15.3 / 91.5 cm | 1.4 / 9.5 cm | 0.185 ms |
+
 **Rendering without CPU meshing**
 
 - **Tiles as static grid meshes.** Each tile is a fixed vertex grid. Its vertex shader samples the solid, loose and water textures through `Texture2DRD`, which wraps the compute texture without a copy, displaces radially and maps onto the cylinder in the tile's local frame. Normals come from texture differences. Coarser grids for far tiles give LOD. Every displaced tile needs a `custom_aabb` covering its full displacement range or it gets culled. Integer textures are read with `texelFetch` through `usampler2D`; confirm that an `R32_UINT` texture binds correctly in a material before relying on it, and fall back to 16-bit pairs rather than float bit-casting.

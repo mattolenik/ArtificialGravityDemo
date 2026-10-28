@@ -213,7 +213,7 @@ func _summary() -> void:
 	print("origin shifts: %d; held: %d times, %d frames; frames over %.0f ms: %s; focus changes: %s" % [_shifts, _holds,
 			_held_frames, SLOW, _slow, _focus])
 	print("detail lists: %s; tiles per dispatch %s..%s; %s" % [_stat(_detail, 2.0), _tiles.min() if _tiles else "-",
-			_tiles.max() if _tiles else "-", _per_tile()])
+			_tiles.max() if _tiles else "-", _per_tile(_detail, _tiles)])
 	print("bake: %s" % _stat(_bake, 1.0))
 
 
@@ -227,7 +227,7 @@ func _times(cpu: Array, gpu: Array) -> String:
 
 
 ## Count, median, p90 and max of times in ms, and how many are over budget.
-func _stat(a: Array[float], budget: float) -> String:
+static func _stat(a: Array[float], budget: float) -> String:
 	if a.is_empty():
 		return "n/a"
 	return "n %d, median %.3f, p90 %.3f, max %.3f ms, %d over %.0f ms" % [a.size(), _pct(a, 0.5), _pct(a, 0.9), a.max(),
@@ -235,12 +235,12 @@ func _stat(a: Array[float], budget: float) -> String:
 
 
 ## The worst list time per tile, if the lists and the dispatches pair up in order.
-func _per_tile() -> String:
-	if _detail.is_empty() or _detail.size() != _tiles.size():
-		return "per tile n/a (%d lists timed, %d dispatches)" % [_detail.size(), _tiles.size()]
+static func _per_tile(detail: Array[float], tiles: Array[int]) -> String:
+	if detail.is_empty() or detail.size() != tiles.size():
+		return "per tile n/a (%d lists timed, %d dispatches)" % [detail.size(), tiles.size()]
 	var worst := 0.0
-	for i in _detail.size():
-		worst = maxf(worst, _detail[i] / _tiles[i])
+	for i in detail.size():
+		worst = maxf(worst, detail[i] / tiles[i])
 	return "per tile max %.3f ms" % worst
 
 
