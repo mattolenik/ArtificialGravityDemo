@@ -12,6 +12,7 @@ height = 2.0
 
 [node name="Player" type="CharacterBody3D"]
 script = ExtResource("1")
+floor_snap_length = 0.3
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 shape = SubResource("1")
