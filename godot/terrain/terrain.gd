@@ -23,8 +23,8 @@ signal body_held(held: bool)
 @export var world_name := "default"
 ## Window side in 1 m cells, a multiple of TerrainWindow.TILE.
 @export var window_size := 512
-## Whether edited tiles are loaded from and saved to the world's tiles/ directory. Windowed test drivers
-## set it false, so they never write into a real world.
+## Whether edited tiles are saved to the world's tiles/ directory (edits are always loaded). Windowed test
+## drivers set it false, so they never write into a real world.
 @export var persist_edits := true
 
 ## The station shifts along its axis by whole steps of this many m once the viewer is farther than this
@@ -335,7 +335,8 @@ static func _edge(i: int, slots: int) -> int:
 ## across, 1.23 m on the hull and 0.64 m at h_sea + h_mtn with the default WorldParams, so the disc is an
 ## ellipse in metres. Digging cuts the strata down with the surface; raising adds dirt. The collider follows
 ## from the next frame (ColliderPatch.on_edit). False, and nothing changes, before the first patch is live,
-## for a radius out of range, or when the disc is not wholly inside the 1 m window.
+## for a radius out of range, when the disc is wholly off the station's ends, or when it is not wholly inside
+## the 1 m window.
 func edit(theta: float, z: float, radius: float, dh: float) -> bool:
 	var r := ceili(radius)
 	# r >= TILE is refused before stamp_tiles, which loops over every tile of the box.
@@ -343,8 +344,9 @@ func edit(theta: float, z: float, radius: float, dh: float) -> bool:
 		return false
 	var cell := params.cell_of(theta, z)
 	var tiles := EditLayer.stamp_tiles(window, cell, r)
-	# From r = 65 the box can span three tiles per axis, more than the pack's slots.
-	if tiles.size() > EditLayer.DOWN_SLOTS:
+	# Empty: the disc is wholly off the station's ends. From r = 65 the box can span three tiles per axis,
+	# more than the pack's slots.
+	if tiles.is_empty() or tiles.size() > EditLayer.DOWN_SLOTS:
 		return false
 	for t in tiles:
 		if not window.is_resident(t):

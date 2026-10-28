@@ -308,7 +308,7 @@ func _trench() -> void:
 	print("trench: walked %.0f m digging, %d edits refused, %d big bakes (%d zones), %d edit bakes, held %d, lowest player %.2f m; frame intervals over %.0f ms: %s" % [
 			_local(_player).distance_to(start), refused, bigs.size(), holes.size(), trench.size() - bigs.size(),
 			_holds - holds, _low.trench.player, SLOW, _slow])
-	_report("zone moves while walking", _holds == holds and refused == 0 and holes.size() >= 3 and _low.trench.player >= -1.0)
+	_report("zone moves while walking", _holds == holds and refused == 0 and holes.size() >= 3 and _low.trench.player >= 0.5)
 
 
 ## Every big landing of the run whose hole has no edit landing for its zone before it.
