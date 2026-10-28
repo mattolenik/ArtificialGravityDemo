@@ -3,11 +3,13 @@
 
 // The edit layer (EditLayer, decisions 1 to 4 of the terrain edits plan), in three modes:
 // 0 stamp: a disc of `radius` cells around `cell` raised or lowered by dh with a parabolic falloff, in the
-//   live window; strata are cut by min on the way down and dirt is added on the way up; edit_mask set.
+//   live window; strata are cut by min on the way down and dirt is added on the way up; edit_mask set;
+//   loose and water_depth left as they are.
 // 1 pack: tile `tile` of the window copied into slot `slot` of `down`, one blob per tile; unedited cells zero.
 // 2 apply: the blob in `up` copied over tile `tile` where its mask is set.
-// A blob cell (i, j) is six uints at (j * 128 + i) * 6: the five heights' float bits, then
-// material | compaction << 8 | saturation << 16 | mask << 24, each byte round(unorm * 255).
+// A blob cell (i, j) is eight uints at (j * 128 + i) * 8: the five heights' float bits, then
+// material | compaction << 8 | saturation << 16 | mask << 24, each byte round(unorm * 255), then loose's and
+// water_depth's float bits.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -22,6 +24,8 @@ layout(set = 0, binding = 7, r8) uniform restrict image2D w_material;
 layout(set = 0, binding = 8, r8) uniform restrict image2D w_compaction;
 layout(set = 0, binding = 9, r8) uniform restrict image2D w_saturation;
 layout(set = 0, binding = 10, r8) uniform restrict image2D w_mask;
+layout(set = 0, binding = 11, r32f) uniform restrict image2D w_loose;
+layout(set = 0, binding = 12, r32f) uniform restrict image2D w_depth;
 
 layout(push_constant, std430) uniform Params {
 	ivec2 cell;        // stamp centre (theta index wrapped, z index)
@@ -93,14 +97,14 @@ void main() {
 		return;
 	}
 	ivec2 t = (pc.tile % pc.slots) * TILE + g;
-	int i = (g.y * TILE + g.x) * 6;
+	int i = (g.y * TILE + g.x) * 8;
 	if (pc.mode == 1) {
-		int o = pc.slot * TILE * TILE * 6 + i;
+		int o = pc.slot * TILE * TILE * 8 + i;
 		uint mask = byte(imageLoad(w_mask, t).r);
 		// An unedited cell packs as zeros (mask 0, which apply skips), so a tile with a few pits compresses
 		// to kilobytes.
 		if (mask == 0u) {
-			for (int k = 0; k < 6; k++) {
+			for (int k = 0; k < 8; k++) {
 				down[o + k] = 0u;
 			}
 			return;
@@ -112,6 +116,8 @@ void main() {
 		down[o + 4] = floatBitsToUint(imageLoad(w_water, t).r);
 		down[o + 5] = byte(imageLoad(w_material, t).r) | byte(imageLoad(w_compaction, t).r) << 8
 				| byte(imageLoad(w_saturation, t).r) << 16 | mask << 24;
+		down[o + 6] = floatBitsToUint(imageLoad(w_loose, t).r);
+		down[o + 7] = floatBitsToUint(imageLoad(w_depth, t).r);
 		return;
 	}
 	uint w5 = up[i + 5];
@@ -127,4 +133,6 @@ void main() {
 	imageStore(w_compaction, t, vec4(float((w5 >> 8) & 255u) / 255.0));
 	imageStore(w_saturation, t, vec4(float((w5 >> 16) & 255u) / 255.0));
 	imageStore(w_mask, t, vec4(1.0));
+	imageStore(w_loose, t, vec4(uintBitsToFloat(up[i + 6])));
+	imageStore(w_depth, t, vec4(uintBitsToFloat(up[i + 7])));
 }

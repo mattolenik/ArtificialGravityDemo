@@ -1,5 +1,5 @@
 ## The edit layer of a TerrainWindow (the terrain edits plan, decisions 1 to 4): edits are absolute per-cell
-## overrides, kept per edited tile as one dense blob of all eight window fields plus the edit mask, and moved
+## overrides, kept per edited tile as one dense blob of all ten window fields plus the edit mask, and moved
 ## only by edit.glsl. A stamp edits the live window and marks edit_mask; a pack in the same compute list
 ## copies each touched tile into a slot of a download buffer, read back into `blobs` a few frames later; an
 ## apply copies a tile's blob over the detail pass's output whenever the tile enters the window, so an edit
@@ -9,9 +9,13 @@ class_name EditLayer
 extends RefCounted
 
 ## Per cell: five float32 heights (surface, bedrock_top, clay_bottom, clay_top, water_surface), then one
-## uint32 material | compaction << 8 | saturation << 16 | mask << 24; mask 255 where edited, else 0.
-const CELL_BYTES := 24
+## uint32 material | compaction << 8 | saturation << 16 | mask << 24; mask 255 where edited, else 0; then
+## float32 loose and water_depth.
+const CELL_BYTES := 32
 const BLOB_SIZE := TerrainWindow.TILE * TerrainWindow.TILE * CELL_BYTES
+## A version 1 blob's cell: the first 24 bytes of this one, no loose or water_depth.
+const V1_CELL_BYTES := 24
+const V1_BLOB_SIZE := TerrainWindow.TILE * TerrainWindow.TILE * V1_CELL_BYTES
 ## Tiles one stamp can touch, radius at most 64 cells (Terrain.edit refuses more): the download buffer's slots.
 const DOWN_SLOTS := 4
 
@@ -51,7 +55,7 @@ func _setup_rd(window: TerrainWindow) -> void:
 		return
 	_up = _rd.storage_buffer_create(BLOB_SIZE)
 	_down = _rd.storage_buffer_create(BLOB_SIZE * DOWN_SLOTS)
-	# Binding 0 _up, 1 _down, 2.. the window's fields in FIELDS order.
+	# Binding 0 _up, 1 _down, 2..12 the window's fields in FIELDS order.
 	var uniforms: Array[RDUniform] = []
 	for i in 2 + TerrainWindow.FIELDS.size():
 		var u := RDUniform.new()
@@ -178,6 +182,18 @@ static func stamp_tiles(window: TerrainWindow, cell: Vector2i, radius: int) -> A
 	return out
 
 
+## A version 1 blob (V1_BLOB_SIZE) in this layout: each cell's 24 bytes, then loose and water_depth 0.
+## Load time only (WorldIO.load_edits), so it may loop over the cells.
+static func upgrade_v1(blob: PackedByteArray) -> PackedByteArray:
+	var pad := PackedByteArray()
+	pad.resize(CELL_BYTES - V1_CELL_BYTES)
+	var out := PackedByteArray()
+	for o in range(0, blob.size(), V1_CELL_BYTES):
+		out.append_array(blob.slice(o, o + V1_CELL_BYTES))
+		out.append_array(pad)
+	return out
+
+
 ## Byte offset of cell (i, j) of a tile in its blob.
 static func cell_offset(i: int, j: int) -> int:
 	return (j * TerrainWindow.TILE + i) * CELL_BYTES
@@ -189,4 +205,5 @@ static func decode(blob: PackedByteArray, i: int, j: int) -> Dictionary:
 	var w := blob.decode_u32(o + 20)
 	return {"surface": blob.decode_float(o), "bedrock_top": blob.decode_float(o + 4), "clay_bottom": blob.decode_float(o + 8),
 			"clay_top": blob.decode_float(o + 12), "water_surface": blob.decode_float(o + 16),
-			"material": w & 255, "compaction": (w >> 8) & 255, "saturation": (w >> 16) & 255, "mask": w >> 24}
+			"material": w & 255, "compaction": (w >> 8) & 255, "saturation": (w >> 16) & 255, "mask": w >> 24,
+			"loose": blob.decode_float(o + 24), "water_depth": blob.decode_float(o + 28)}

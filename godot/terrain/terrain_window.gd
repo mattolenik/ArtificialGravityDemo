@@ -9,8 +9,11 @@ extends RefCounted
 ## Emitted by move_to with the tiles it dispatched, after queueing the dispatch.
 signal tiles_generated(tiles: Array[Vector2i])
 
-## edit_mask is 1 where an edit overrides the generator (EditLayer); the detail pass writes 0.
-const FIELDS := ["surface", "bedrock_top", "clay_bottom", "clay_top", "water_surface", "material", "compaction", "saturation", "edit_mask"]
+## edit_mask is 1 where an edit overrides the generator (EditLayer); the detail pass writes 0, as it does to
+## loose (m of loose dirt on the surface) and water_depth (m of spilled water on the ground).
+const FIELDS := ["surface", "bedrock_top", "clay_bottom", "clay_top", "water_surface", "material", "compaction", "saturation", "edit_mask", "loose", "water_depth"]
+## The fields held as R32_SFLOAT metres; the rest are R8_UNORM bytes.
+const FLOAT_FIELDS := ["surface", "bedrock_top", "clay_bottom", "clay_top", "water_surface", "loose", "water_depth"]
 const TILE := 128
 ## Heights are R32_SFLOAT metres above the hull, so a texel times HEIGHT_SCALE is metres.
 const HEIGHT_SCALE := 1.0
@@ -85,8 +88,7 @@ func _setup_rd() -> void:
 		| RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT
 	var window_uniforms: Array[RDUniform] = []
 	for i in FIELDS.size():
-		var format := RenderingDevice.DATA_FORMAT_R32_SFLOAT if i < 5 else RenderingDevice.DATA_FORMAT_R8_UNORM
-		var rid := _rd.texture_create(_format(size, size, format, usage), RDTextureView.new())
+		var rid := _rd.texture_create(_format(size, size, field_format(FIELDS[i]), usage), RDTextureView.new())
 		_textures[FIELDS[i]] = rid
 		var u := RDUniform.new()
 		u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
@@ -157,6 +159,10 @@ static func _free_rids(rd: RenderingDevice, rids: Array[RID]) -> void:
 	for rid in rids:
 		if rid.is_valid():
 			rd.free_rid(rid)
+
+
+static func field_format(field: String) -> RenderingDevice.DataFormat:
+	return RenderingDevice.DATA_FORMAT_R32_SFLOAT if field in FLOAT_FIELDS else RenderingDevice.DATA_FORMAT_R8_UNORM
 
 
 func _format(w: int, h: int, format: RenderingDevice.DataFormat, usage: int) -> RDTextureFormat:
@@ -289,6 +295,21 @@ func is_resident(tile: Vector2i) -> bool:
 func resident_tiles() -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	out.assign(_resident.values())
+	return out
+
+
+## The tile resident in slot, Vector2i(-1, -1) when none.
+func tile_at(slot: Vector2i) -> Vector2i:
+	return _resident.get(slot, Vector2i(-1, -1))
+
+
+## The resident tiles a move_to(center) would replace: those not in wanted_tiles(center).
+func evicted_by(center: Vector2i) -> Array[Vector2i]:
+	var wanted := wanted_tiles(center)
+	var out: Array[Vector2i] = []
+	for t: Vector2i in _resident.values():
+		if not wanted.has(t):
+			out.append(t)
 	return out
 
 

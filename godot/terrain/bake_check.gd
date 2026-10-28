@@ -1,7 +1,7 @@
 ## Windowed check of collider_bake.glsl (the terrain edits plan, Task 4). Instantiates main.tscn unchanged and,
 ## once the first collider patch is live at the spawn:
-## 1. compares patch rows 128 and 8 from the GPU with Cyl.bake_row on the same surface heights (the window
-##    texels, the bilinear macro surface outside the window, as the shader reads them);
+## 1. compares patch rows 128 and 8 from the GPU with Cyl.bake_row on the same ground heights (the window's
+##    surface + loose texels, the bilinear macro surface outside the window, as the shader reads them);
 ## 2. bakes a hole 60 cells spinward of the centre and counts its NaN samples against 45 x 45 cells' width;
 ## 3. drops a 1 m box into the hole: Jolt must read NaN as no ground (decision 9);
 ## 4. teleports to the first cliff rim with a drop (debug_window.gd --cliff's rule) and compares row 128
@@ -164,9 +164,11 @@ func _row_error(j: int) -> Dictionary:
 	RenderingServer.call_on_render_thread(func() -> void:
 		var rd := RenderingServer.get_rendering_device()
 		bytes.append(rd.texture_get_data(patch._staging, 0))
-		bytes.append(rd.texture_get_data(w.texture_rid("surface"), 0)))
+		bytes.append(rd.texture_get_data(w.texture_rid("surface"), 0))
+		bytes.append(rd.texture_get_data(w.texture_rid("loose"), 0)))
 	var gpu := bytes[0].to_float32_array()
 	var surface := bytes[1].to_float32_array()
+	var loose := bytes[2].to_float32_array()
 	var c := p.cell_of(patch.center.x, patch.center.y)
 	var row := c.y + j - 128
 	var wanted := {}
@@ -183,7 +185,8 @@ func _row_error(j: int) -> Dictionary:
 		var i := posmod(c.x + k - half, p.n_theta())
 		if row >= 0 and wanted.has(w.tile_of_cell(i, row)):
 			# Tile t sits in slot t mod slots, so cell (i, row) is texel (i, row) mod size.
-			h[k] = surface[posmod(row, w.size) * w.size + posmod(i, w.size)]
+			var texel := posmod(row, w.size) * w.size + posmod(i, w.size)
+			h[k] = surface[texel] + loose[texel]
 		else:
 			h[k] = _terrain.height_at((i + 0.5) * p.dtheta(), -p.length / 2.0 + row + 0.5)
 			macro += 1

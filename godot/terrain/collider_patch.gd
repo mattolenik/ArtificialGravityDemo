@@ -133,7 +133,8 @@ func center_height() -> float:
 
 ## The station-space point `lift` m (along the patch's up) over the baked surface under the station-space
 ## point p, bilinear between the four samples around it; p should be covered by the patch. Where any of the
-## four is NaN (the hole), the same from the edit shape in its own frame.
+## four is NaN (the hole), the same from the edit shape in its own frame. The shapes are baked from surface
+## + loose, so teleport and _on_live stand a body on a pile.
 func surface_point(p: Vector3, lift: float) -> Vector3:
 	var q := transform.affine_inverse() * p
 	var y := _bilinear(_shape.map_data, SAMPLES, q.x + _MID, q.z + _MID)
@@ -325,7 +326,8 @@ func _setup_rd(window: TerrainWindow) -> bool:
 	return true
 
 
-## collider_bake.glsl's set 0: the window's surface, the macro surface, and staging as the output.
+## collider_bake.glsl's set 0: the window's surface, the macro surface, staging as the output, and the
+## window's loose.
 func _uniform_set(window: TerrainWindow, staging: RID) -> RID:
 	var w := RDUniform.new()
 	w.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
@@ -340,5 +342,9 @@ func _uniform_set(window: TerrainWindow, staging: RID) -> RID:
 	o.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
 	o.binding = 2
 	o.add_id(staging)
-	var uniforms: Array[RDUniform] = [w, m, o]
+	var l := RDUniform.new()
+	l.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+	l.binding = 3
+	l.add_id(window.texture_rid("loose"))
+	var uniforms: Array[RDUniform] = [w, m, o, l]
 	return _rd.uniform_set_create(uniforms, _shader, 0)

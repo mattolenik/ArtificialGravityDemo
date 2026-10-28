@@ -5,11 +5,11 @@
 // 65 for the edit patch), in 8 x 8 groups. The patch is the tangent frame at the centre of cell `center` (X
 // spinward, Y toward the axis, Z axial, origin on the hull); output texel (i, j), mid = (n - 1) / 2, is the
 // height above that plane at x = i - mid, z = j - mid m. Row j is the 1 m cell row center.y + j - mid. Its
-// surface samples along theta, at the cell centres center.x + k for |k| <= half_n, come from the window
-// where their tile is resident and from the bilinear macro surface elsewhere. Each maps into the patch
-// frame as (x, y) = ((R - h) sin phi, R - (R - h) cos phi), phi = k dtheta, and y is resampled onto x as
-// Cyl.bake_row does: linear along the polyline of mapped samples, the highest y where it folds back, the
-// end sample past either end.
+// ground samples along theta, at the cell centres center.x + k for |k| <= half_n, come from the window
+// (surface + loose, the ground a body stands on) where their tile is resident and from the bilinear macro
+// surface elsewhere. Each maps into the patch frame as (x, y) = ((R - h) sin phi, R - (R - h) cos phi),
+// phi = k dtheta, and y is resampled onto x as Cyl.bake_row does: linear along the polyline of mapped
+// samples, the highest y where it folds back, the end sample past either end.
 //
 // Which k to scan (decision 10). Heights lie in [0, h_max], so for phi >= 0 a mapped sample's x lies in
 // [(R - h_max) sin phi, R sin phi]. The segment k -> k + 1 covers x >= 0 only if its larger end reaches x,
@@ -28,6 +28,7 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 layout(set = 0, binding = 0, r32f) uniform restrict readonly image2D w_surface;  // the window, m above the hull
 layout(set = 0, binding = 1) uniform sampler2D m_surface;  // the macro surface; texelFetch only
 layout(set = 0, binding = 2, r32f) uniform restrict writeonly image2D o_patch;
+layout(set = 0, binding = 3, r32f) uniform restrict readonly image2D w_loose;  // the window's loose dirt, m
 
 layout(push_constant, std430) uniform Params {
 	ivec2 center;      // centre cell (theta index wrapped, z index)
@@ -65,10 +66,10 @@ bool along;
 int ty;
 int tx0;
 
-// Surface height at cell (center.x + k, j), theta wrapped: the window texel if its tile is resident, else
-// the macro surface bilinear at the cell centre, as MacroMaps.sample. |k| <= half_n < n_theta, so one add or
-// subtract wraps the column. The window holds the slots * TILE cells from its first tile's on, from texel
-// column tx0 on and wrapping at slots * TILE (tile t sits in slot t mod slots, and slots divides
+// Ground height at cell (center.x + k, j), theta wrapped: the window's surface + loose if its tile is
+// resident, else the macro surface bilinear at the cell centre, as MacroMaps.sample. |k| <= half_n < n_theta,
+// so one add or subtract wraps the column. The window holds the slots * TILE cells from its first tile's on,
+// from texel column tx0 on and wrapping at slots * TILE (tile t sits in slot t mod slots, and slots divides
 // tiles_around).
 float surface(int k, int j) {
 	int i = pc.center.x + k;
@@ -79,7 +80,8 @@ float surface(int k, int j) {
 	d += d < 0 ? pc.n_theta : 0;
 	if (along && d < span) {
 		int tx = tx0 + d;
-		return imageLoad(w_surface, ivec2(tx >= span ? tx - span : tx, ty)).r;
+		ivec2 texel = ivec2(tx >= span ? tx - span : tx, ty);
+		return imageLoad(w_surface, texel).r + imageLoad(w_loose, texel).r;
 	}
 	ivec2 size = textureSize(m_surface, 0);
 	vec2 m = (vec2(i, j) + 0.5) / pc.macro_cell - 0.5;

@@ -22,11 +22,11 @@ void vertex() {
 	local_cell = vec2(k);
 	vec2 p = theta_z_of(VERTEX.x, VERTEX.z);
 	theta_z = p;
-	float h = height_of(surface_tex, k);
+	float h = ground_of(k);
 	wet = height_of(water_tex, k) > h + 0.05 ? 1.0 : 0.0;
 	// Central differences: a cell spans (R - h) dtheta cell m across and cell m along.
-	float sx = (height_of(surface_tex, k + ivec2(1, 0)) - height_of(surface_tex, k - ivec2(1, 0))) / (2.0 * (R - h) * dtheta * cell);
-	float sz = (height_of(surface_tex, k + ivec2(0, 1)) - height_of(surface_tex, k - ivec2(0, 1))) / (2.0 * cell);
+	float sx = (ground_of(k + ivec2(1, 0)) - ground_of(k - ivec2(1, 0))) / (2.0 * (R - h) * dtheta * cell);
+	float sz = (ground_of(k + ivec2(0, 1)) - ground_of(k - ivec2(0, 1))) / (2.0 * cell);
 	vec3 n = normalize(vec3(-sx, 1.0, -sz));
 	up = n.y;
 	NORMAL = unbend_normal(VERTEX.x, n);

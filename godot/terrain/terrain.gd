@@ -176,6 +176,7 @@ static func _material(shader: Shader, w: TerrainWindow) -> ShaderMaterial:
 	var m := ShaderMaterial.new()
 	m.shader = shader
 	m.set_shader_parameter("surface_tex", w.texture_rd("surface"))
+	m.set_shader_parameter("loose_tex", w.texture_rd("loose"))
 	m.set_shader_parameter("water_tex", w.texture_rd("water_surface"))
 	m.set_shader_parameter("R", w.params.radius)
 	m.set_shader_parameter("dtheta", w.params.dtheta())
@@ -356,7 +357,8 @@ func edit(theta: float, z: float, radius: float, dh: float) -> bool:
 	return true
 
 
-## Surface height in m at (theta, z), bilinear from the 32 m macro map: approximate, no detail.
+## Surface height in m at (theta, z), bilinear from the 32 m macro map: approximate, no detail, no edits and
+## no loose dirt. In game it only lifts a held body 2 m over the ground before a patch lands.
 func height_at(theta: float, z: float) -> float:
 	return maps.sample(maps.surface, theta, z, params)
 

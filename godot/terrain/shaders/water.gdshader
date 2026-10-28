@@ -12,7 +12,7 @@ varying float depth;
 void vertex() {
 	ivec2 k = grid_cell(VERTEX);
 	theta_z = theta_z_of(VERTEX.x, VERTEX.z);
-	float s = height_of(surface_tex, k);
+	float s = ground_of(k);
 	float w = height_of(water_tex, k);
 	depth = w > 0.0 ? w - s : -1.0;
 	NORMAL = unbend_normal(VERTEX.x, vec3(0.0, 1.0, 0.0));

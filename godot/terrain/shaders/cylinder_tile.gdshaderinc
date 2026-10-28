@@ -10,6 +10,7 @@
 // opens between the two levels where their heights differ.
 
 uniform sampler2D surface_tex : filter_nearest;
+uniform sampler2D loose_tex : filter_nearest;
 uniform sampler2D water_tex : filter_nearest;
 uniform float R;
 uniform float dtheta;  // angle of one 1 m cell around the axis
@@ -43,6 +44,11 @@ ivec2 window_texel(ivec2 k) {
 
 float height_of(sampler2D tex, ivec2 k) {
 	return texelFetch(tex, window_texel(k), 0).r * height_scale;
+}
+
+// The ground at local cell k: the surface with its loose dirt on top.
+float ground_of(ivec2 k) {
+	return height_of(surface_tex, k) + height_of(loose_tex, k);
 }
 
 // Local cell of a vertex of the grid mesh.
