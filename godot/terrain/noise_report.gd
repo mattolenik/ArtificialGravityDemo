@@ -172,7 +172,7 @@ func _mismatch() -> Dictionary:
 		bytes.append(rd.texture_get_data(_terrain.far.window.texture_rid("surface"), 0)))
 	var surface := bytes[0].to_float32_array()
 	var center := _terrain.patch.center
-	var c := Vector2i(posmod(floori(center.x / dtheta), n_theta), floori(center.y + p.length / 2.0))
+	var c := p.cell_of(center.x, center.y)
 	# As ColliderPatch._bake: enough samples to reach past x = 128 m at the highest ground.
 	var half := ceili(asin(minf(129.0 / (R - p.h_sea - p.h_mtn()), 1.0)) / dtheta)
 	var wanted := {}

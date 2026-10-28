@@ -98,7 +98,7 @@ func rebuild(window: TerrainWindow, center_theta: float, center_z: float) -> voi
 		return
 	_pending = true
 	var p := window.params
-	var cell := Vector2i(posmod(floori(center_theta / p.dtheta()), p.n_theta()), floori(center_z + p.length / 2.0))
+	var cell := p.cell_of(center_theta, center_z)
 	RenderingServer.call_on_render_thread(_bake.bind(window, cell))
 
 

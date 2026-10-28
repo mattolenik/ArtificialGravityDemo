@@ -16,6 +16,11 @@ func _initialize() -> void:
 			check(absf(fposmod(Cyl.theta_of(p) - t + PI, TAU) - PI) < 1e-6, "theta %f %f" % [t, h])
 			check(absf(Cyl.height_of(p, R) - h) < 1e-3, "height %f %f" % [t, h])
 			check(is_equal_approx(p.z, -123.0), "z")
+	# theta_of is strictly inside [0, TAU): a hair antispinward of theta = 0 is never TAU.
+	for e in [1e-20, 1e-12, 1e-7]:
+		var t := Cyl.theta_of(Vector3(-e, -1, 0))
+		check(t >= 0.0 and t < TAU, "theta_of(-%.20f) = %.17f" % [e, t])
+	check(Cyl.theta_of(Vector3(0, -1, 0)) == 0.0, "theta_of at theta 0")
 	check(Cyl.position(0.0, 0.0, 0.0, R).is_equal_approx(Vector3(0, -R, 0)), "theta 0 is local -Y")
 	check(Cyl.position(0.5 * PI, 0.0, 0.0, R).is_equal_approx(Vector3(R, 0, 0)), "spinward is +X at the bottom")
 	# Span volume against a numeric integral of (R - h) over the span.

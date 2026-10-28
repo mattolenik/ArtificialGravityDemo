@@ -38,5 +38,12 @@ func _initialize() -> void:
 	check(loaded[1].spawn == m.spawn and loaded[1].rivers[0][3] == 3.0, "load content")
 	check(absf(loaded[1].surface.get_pixel(5, 7).r - 5.0) < 1e-6, "image survived")
 	check(loaded[0].h_sea == 40.0, "params survived")
+	# cell_of: the 1 m cell of (theta, z); theta wraps (TAU and a hair under it both land in a real column), z counts from -L/2.
+	var d := WorldParams.new()
+	check(d.cell_of(0.0, -d.length / 2.0) == Vector2i(0, 0), "cell 0")
+	check(d.cell_of(TAU, 0.0) == Vector2i(0, 16000), "theta = TAU wraps to column 0")
+	check(d.cell_of(TAU - 1e-12, 0.0).x == 16383, "a hair under TAU is the last column")
+	check(d.cell_of(-0.5 * d.dtheta(), 0.0).x == 16383, "negative theta wraps")
+	check(d.cell_of(1.0, 123.7) == Vector2i(2607, 16123), "an ordinary cell %s" % d.cell_of(1.0, 123.7))
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

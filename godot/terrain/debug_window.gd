@@ -23,7 +23,8 @@ func _ready() -> void:
 	var center := _window.tile_of_cell(0, params.n_z() / 2)
 	for arg in OS.get_cmdline_user_args():
 		if arg == "--spawn":
-			center = _window.tile_of_cell(floori(maps.spawn.x / params.dtheta()), floori(maps.spawn.y + params.length / 2.0))
+			var cell := params.cell_of(maps.spawn.x, maps.spawn.y)
+			center = _window.tile_of_cell(cell.x, cell.y)
 		elif arg.begins_with("--at="):
 			var ij := arg.trim_prefix("--at=").split_floats(",")
 			center = _window.tile_of_cell(int(ij[0]), int(ij[1]))

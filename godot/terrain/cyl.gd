@@ -9,9 +9,11 @@ static func position(theta: float, z: float, h: float, R: float) -> Vector3:
 	return Vector3((R - h) * sin(theta), -(R - h) * cos(theta), z)
 
 
-## Angle of p around the axis, in [0, TAU).
+## Angle of p around the axis, 0.0 <= result < TAU. A tiny negative angle makes fposmod round up to
+## TAU; that is returned as 0.0, the same direction.
 static func theta_of(p: Vector3) -> float:
-	return fposmod(atan2(p.x, -p.y), TAU)
+	var t := fposmod(atan2(p.x, -p.y), TAU)
+	return 0.0 if t >= TAU else t
 
 
 ## Height of p above the hull.

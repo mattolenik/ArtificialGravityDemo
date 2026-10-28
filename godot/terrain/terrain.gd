@@ -71,7 +71,7 @@ func _ready() -> void:
 	patch.live.connect(_on_first_live, CONNECT_ONE_SHOT)
 	patch.live.connect(_on_live)
 	var spawn := maps.spawn
-	var cell := Vector2i(floori(spawn.x / params.dtheta()), floori(spawn.y + params.length / 2.0))
+	var cell := params.cell_of(spawn.x, spawn.y)
 	_move_window(window.tile_of_cell(cell.x, cell.y))
 	far.follow(cell)
 	patch.rebuild(window, spawn.x, spawn.y)
@@ -297,5 +297,4 @@ func spawn_position() -> Vector3:
 ## The 1 m cell (theta index, z index) under the viewer.
 func viewer_cell() -> Vector2i:
 	var p := station.to_local(viewer.global_position)
-	# posmod: an angle a hair under TAU can still divide out to n_theta.
-	return Vector2i(posmod(floori(Cyl.theta_of(p) / params.dtheta()), params.n_theta()), floori(p.z + params.length / 2.0))
+	return params.cell_of(Cyl.theta_of(p), p.z)

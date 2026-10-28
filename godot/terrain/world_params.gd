@@ -77,3 +77,10 @@ func h_mtn() -> float:
 ## Angle between neighbouring samples around the sea-level circumference.
 func dtheta() -> float:
 	return TAU / n_theta()
+
+
+## The 1 m cell (theta index, z index) of station-local (theta, z). Theta wraps; the posmod also
+## guards an angle a hair under TAU whose division by dtheta() rounds up to n_theta(). Z counts from
+## -length / 2 and is not clamped.
+func cell_of(theta: float, z: float) -> Vector2i:
+	return Vector2i(posmod(floori(theta / dtheta()), n_theta()), floori(z + length / 2.0))
