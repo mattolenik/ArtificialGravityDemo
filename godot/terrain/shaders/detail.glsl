@@ -41,12 +41,16 @@ layout(push_constant, std430) uniform Params {
 	float bank_distance;
 	float bank_slope_tan;
 	float cliff_min;
-	float pad;             // to 64 bytes: Godot wants push constants in multiples of 16
+	// Detail noise, from WorldParams: bare rock's amplitude is 1 + rock_roughness times its region's; the
+	// relative weights of the 32, 16, 8, 4, 2 and 1 m octaves; the peak in m by region id.
+	float rock_roughness;
+	float octave[6];
+	float region_amp[5];
+	float pad;             // to 112 bytes: Godot wants push constants in multiples of 16
 } pc;
 
 const float CLIFF_BAND = 4.0;  // m: width of a sharpened cliff face
 const float LAKE_CARVE = 8.0;  // m: how far a lake cell's centre is lowered below its level
-const float AMP[5] = float[](1.5, 1.5, 4.0, 8.0, 4.0);  // detail noise amplitude in m by region
 // flow_dir 1..8 -> neighbour offset.
 const ivec2 DIR[8] = ivec2[](ivec2(1, 0), ivec2(1, 1), ivec2(0, 1), ivec2(-1, 1), ivec2(-1, 0), ivec2(-1, -1), ivec2(0, -1), ivec2(1, -1));
 const ivec2 CORNER[4] = ivec2[](ivec2(0, 0), ivec2(0, 1), ivec2(1, 0), ivec2(1, 1));
@@ -179,15 +183,23 @@ float lattice(int i, int j, int octave) {
 }
 
 // Fractal value noise in [-1, 1] at u (1 m cells: theta index, z index), octaves of 32 down to 1 m
-// wavelength, stopping at the window's cell, each weighted by its wavelength. Lattice columns wrap at
-// n_theta / wavelength, so the field is periodic in theta with no seam. Normalised by all six weights,
-// so a coarse window carries the same large octaves as the 1 m one.
+// wavelength, stopping at the window's cell, each weighted by pc.octave (WorldParams.detail_octaves; a
+// zero weight skips its octave). Lattice columns wrap at n_theta / wavelength, so the field is periodic
+// in theta with no seam. Normalised by all six weights, so a coarse window carries the same large
+// octaves as the 1 m one.
 float detail_noise(vec2 u) {
 	float sum = 0.0;
+	float norm = 0.0;
+	for (int o = 0; o < 6; o++) {
+		norm += pc.octave[o];
+	}
 	for (int o = 0; o < 6; o++) {
 		int s = 32 >> o;
 		if (float(s) < pc.cell) {
 			break;
+		}
+		if (pc.octave[o] == 0.0) {
+			continue;
 		}
 		vec2 q = u / float(s);
 		ivec2 k = ivec2(floor(q));
@@ -198,9 +210,9 @@ float detail_noise(vec2 u) {
 		int x1 = wrap(k.x + 1, n);
 		float v = mix(mix(lattice(x0, k.y, o), lattice(x1, k.y, o), f.x),
 				mix(lattice(x0, k.y + 1, o), lattice(x1, k.y + 1, o), f.x), f.y);
-		sum += v * float(s) / 32.0;
+		sum += v * pc.octave[o];
 	}
-	return sum / 1.96875;
+	return sum / max(norm, 1e-6);
 }
 
 // River channels at m (macro texel coordinates). The centreline runs from each river cell's centre to
@@ -250,7 +262,7 @@ float region_amp(Foot p) {
 	vec4 v = corners(m_region, p.t, 0);
 	vec4 a;
 	for (int k = 0; k < 4; k++) {
-		a[k] = AMP[clamp(int(v[k] * 255.0 + 0.5), 0, 4)];
+		a[k] = pc.region_amp[clamp(int(v[k] * 255.0 + 0.5), 0, 4)];
 	}
 	return blend(p, a);
 }
@@ -298,7 +310,7 @@ void main() {
 	float edge, water;
 	rivers(m, p, s, edge, water);
 	float exposed = clamp(1.0 - (s - b), 0.0, 1.0);  // 1 on bare rock, 0 under 1 m of cover
-	float a = region_amp(p) * (1.0 + 2.0 * exposed);
+	float a = region_amp(p) * (1.0 + pc.rock_roughness * exposed);
 	a *= mix(1.0, 0.1, smoothstep(tan(radians(45.0)), tan(radians(55.0)), slope));
 	a *= 1.0 - min(1.0, pc.bank_distance / max(edge, 1e-3));
 	a *= 1.0 - lam;

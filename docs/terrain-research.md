@@ -379,6 +379,11 @@ Frames sit on the 8.33 ms refresh, so the GPU time is the figure that means anyt
 | run | octaves 32, 16, 8, 4, 2, 1 m | rock p99 / max | spawn p99 / max | detail per tile (Vulkan) |
 |---|---|---|---|---|
 | before | 1, .5, .25, .125, .0625, .03125 | 23.0 / 63.2 cm | 1.4 / 9.5 cm | 0.215 ms |
+| refactor | 1, .5, .25, .125, .0625, .03125 | 23.0 / 63.2 cm | 1.4 / 9.5 cm | n/a |
+| no1m | 1, .5, .25, .125, .0625, 0 | 22.1 / 60.2 cm | 1.4 / 9.5 cm | n/a |
+| after | 1, .5, .25, .125, 0, 0 | 15.1 / 63.6 cm | 1.0 / 9.5 cm | 0.258 ms |
+
+`refactor` is `before` with the weights as push constants: identical statistics, but different surface MD5s. With the old constant divisor (1.96875) in place of the runtime sum of the weights, the MD5s match `before` bit for bit, so the only difference is the rounding of the normalisation. The rock max in `after` is 0.4 cm over `before`'s: dropping the 2 m and 1 m octaves renormalises the rest up by 1.96875 / 1.875 = 1.05. At `before`'s absolute amplitudes (the region amplitudes times 1.875 / 1.96875), the rock site reads 14.4 / 60.8 cm. The Vulkan per-tile figure is the larger of two timed lists from one run, and it varies about 2× between runs: a repeat of `after` gave 0.117 ms.
 
 **Rendering without CPU meshing**
 

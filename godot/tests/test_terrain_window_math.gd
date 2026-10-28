@@ -75,5 +75,29 @@ func _initialize() -> void:
 	check(not fresh.covers(Vector3.ZERO), "a patch with no frame covers nothing")
 	fresh.free()
 	patch.free()  # outside the tree, so nothing else frees it; a leaked body prints errors at exit
+	# detail.glsl push constants: 112 bytes, the detail knobs at their std430 offsets, short lists padded.
+	var q := WorldParams.new()
+	q.detail_octaves = PackedFloat32Array([1.0, 0.5, 0.25, 0.125])
+	q.detail_region_amp = PackedFloat32Array([1.0, 2.0, 3.0])
+	q.detail_rock_roughness = 2.5
+	var v := TerrainWindow.new()
+	v.configure(q, 512, 1.0)
+	var b := v._push_constants(Vector2i(3, 4))
+	check(b.size() == 112, "push constant size %d" % b.size())
+	check(b.decode_s32(0) == 3 and b.decode_s32(8) == 384 and b.decode_float(24) == 1.0 and b.decode_float(56) == q.cliff_min, "fixed fields")
+	check(b.decode_float(60) == 2.5, "rock roughness at 60")
+	for o in 6: check(b.decode_float(64 + 4 * o) == (q.detail_octaves[o] if o < 4 else 0.0), "octave %d" % o)
+	for r in 5: check(b.decode_float(88 + 4 * r) == (float(r + 1) if r < 3 else 0.0), "region amp %d" % r)
+	q.detail_octaves = PackedFloat32Array([1, 1, 1, 1, 1, 1, 9.0])
+	check(v._push_constants(Vector2i(3, 4)).decode_float(88) == 1.0, "a seventh octave weight is truncated, not written over region_amp[0]")
+	# A world file from before the detail fields existed loads with their defaults.
+	var old := FileAccess.open("user://old_params.tres", FileAccess.WRITE)
+	old.store_string('[gd_resource type="Resource" script_class="WorldParams" format=3]\n\n[ext_resource type="Script" path="res://terrain/world_params.gd" id="1"]\n\n[resource]\nscript = ExtResource("1")\nseed = 7\n')
+	old.close()
+	var loaded := ResourceLoader.load("user://old_params.tres", "", ResourceLoader.CACHE_MODE_IGNORE) as WorldParams
+	var fresh_params := WorldParams.new()
+	check(loaded != null and loaded.seed == 7 and loaded.detail_octaves == fresh_params.detail_octaves \
+			and loaded.detail_region_amp == fresh_params.detail_region_amp \
+			and loaded.detail_rock_roughness == fresh_params.detail_rock_roughness, "an old world file takes the defaults")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

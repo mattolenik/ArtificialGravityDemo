@@ -5,7 +5,10 @@
 ## dump (key P) and an eye-height and a high view looking spinward under the light bar's noon, as
 ## user://debug/noise/<label>_<site>_{surface,material,eye,high}.png; then prints the detail timing line
 ## (GPU timestamps: Vulkan only, Metal reports zeros) and quits. One-shot readback loops: debug only.
+## --octaves, --amp and --rock override WorldParams.detail_octaves, detail_region_amp and
+## detail_rock_roughness for the run: both windows regenerate and the patch rebakes before the first site.
 ## Run: godot --path . [--rendering-driver vulkan] res://terrain/noise_report.tscn -- [--label=NAME] [--at=THETA,Z]
+##     [--octaves=W32,W16,W8,W4,W2,W1] [--amp=SEA,FLAT,HILL,MOUNTAIN,ISLAND] [--rock=X]
 class_name NoiseReport
 extends Node
 
@@ -14,6 +17,10 @@ const Smoke := preload("res://terrain/smoke_run.gd")
 
 var _label := "run"
 var _at := PackedFloat64Array()
+## Detail knob overrides; empty when not given.
+var _octaves := PackedFloat64Array()
+var _amp := PackedFloat64Array()
+var _rock := PackedFloat64Array()
 var _terrain: Terrain
 var _fly: FlyCamera
 var _light: LightBar
@@ -30,7 +37,13 @@ func _ready() -> void:
 		if arg.begins_with("--label="):
 			_label = arg.trim_prefix("--label=")
 		elif arg.begins_with("--at="):
-			_at = arg.trim_prefix("--at=").split_floats(",")
+			_at = _floats(arg, "--at=", 2)
+		elif arg.begins_with("--octaves="):
+			_octaves = _floats(arg, "--octaves=", 6)
+		elif arg.begins_with("--amp="):
+			_amp = _floats(arg, "--amp=", 5)
+		elif arg.begins_with("--rock="):
+			_rock = _floats(arg, "--rock=", 1)
 	var main: Node = load("res://main.tscn").instantiate()
 	var station := main.get_node("Station")
 	_terrain = station.get_node("Terrain")
@@ -65,6 +78,22 @@ func _route() -> void:
 	_fly.player.visible = false
 	_panel.visible = false
 	_light.day_length = 1e9
+	var p := _terrain.params
+	if _octaves or _amp or _rock:
+		# collider_live fires inside the patch's readback callback, where GPU work runs at once: a bake queued
+		# there reads back zeros. A frame later it runs as Terrain's own rebuilds do.
+		await get_tree().process_frame
+		if _octaves:
+			p.detail_octaves = PackedFloat32Array(Array(_octaves))
+		if _amp:
+			p.detail_region_amp = PackedFloat32Array(Array(_amp))
+		if _rock:
+			p.detail_rock_roughness = _rock[0]
+		_terrain.window.regenerate()
+		_terrain.far.window.regenerate()
+		_terrain.patch.rebuild(_terrain.window, _terrain.patch.center.x, _terrain.patch.center.y)
+		await _terrain.patch.live
+	print("detail octaves %s, region amp %s, rock roughness %s" % [p.detail_octaves, p.detail_region_amp, p.detail_rock_roughness])
 	var maps := _terrain.maps
 	await _visit("spawn", maps.spawn.x, maps.spawn.y)
 	var rock := rock_site(maps, _terrain.params)
@@ -245,6 +274,15 @@ static func rock_site(maps: MacroMaps, params: WorldParams) -> Vector2:
 	var i := bare if bare >= 0 else top
 	@warning_ignore("integer_division")
 	return Vector2((i % w + 0.5) * 32.0 * params.dtheta(), -params.length / 2.0 + (i / w + 0.5) * params.macro_cell)
+
+
+## The n comma-separated numbers after prefix in arg, or none and an error if arg holds anything else.
+static func _floats(arg: String, prefix: String, n: int) -> PackedFloat64Array:
+	var parts := arg.trim_prefix(prefix).split(",")
+	if parts.size() != n or Array(parts).any(func(x: String) -> bool: return not x.is_valid_float()):
+		push_error("%s wants %d comma-separated numbers: ignored" % [arg, n])
+		return PackedFloat64Array()
+	return arg.trim_prefix(prefix).split_floats(",")
 
 
 static func _md5(b: PackedByteArray) -> String:

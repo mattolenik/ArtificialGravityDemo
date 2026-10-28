@@ -269,6 +269,15 @@ func move_to(center: Vector2i) -> void:
 	tiles_generated.emit(dirty)
 
 
+## Regenerates every tile in the window with the params as they now stand (push constants are built at
+## dispatch). Does nothing before the first move_to.
+func regenerate() -> void:
+	if _resident.is_empty():
+		return
+	_resident.clear()
+	move_to(center_tile)
+
+
 func resident_tiles() -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	out.assign(_resident.values())
@@ -291,10 +300,11 @@ func _dispatch(tiles: Array[Vector2i]) -> void:
 	_rd.capture_timestamp("detail_end")
 
 
-## Matches the Params block in detail.glsl (std430, 64 bytes with its padding).
+## Matches the Params block in detail.glsl (std430, 112 bytes with its padding). A detail list shorter
+## than its slot leaves zeros; a longer one is cut to the slot.
 func _push_constants(tile: Vector2i) -> PackedByteArray:
 	var b := PackedByteArray()
-	b.resize(64)
+	b.resize(112)
 	var origin := texel_origin(tile)
 	b.encode_s32(0, tile.x)
 	b.encode_s32(4, tile.y)
@@ -311,4 +321,9 @@ func _push_constants(tile: Vector2i) -> PackedByteArray:
 	b.encode_float(48, params.bank_distance)
 	b.encode_float(52, tan(deg_to_rad(params.bank_slope_deg)))
 	b.encode_float(56, params.cliff_min)
+	b.encode_float(60, params.detail_rock_roughness)
+	for o in mini(params.detail_octaves.size(), 6):
+		b.encode_float(64 + 4 * o, params.detail_octaves[o])
+	for r in mini(params.detail_region_amp.size(), 5):
+		b.encode_float(88 + 4 * r, params.detail_region_amp[r])
 	return b
