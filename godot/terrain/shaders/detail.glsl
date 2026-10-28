@@ -341,7 +341,9 @@ void main() {
 	}
 	cbt = clamp(cbt, bt, h);
 	ctt = clamp(ctt, cbt, h);
-	float material = bt >= h - 0.01 ? 2.0 : (ctt >= h - 0.01 ? 1.0 : 0.0);
+	// Material id: 3 where the face rule lifted bt to the surface although b + nb lies below it (a lifted
+	// bedrock, not a stratum); else 2 where bedrock is bare, 1 where clay is, 0 dirt.
+	float material = (face && b + nb < h - 0.01) ? 3.0 : (bt >= h - 0.01 ? 2.0 : (ctt >= h - 0.01 ? 1.0 : 0.0));
 
 	ivec2 o = pc.origin + local;
 	imageStore(o_surface, o, vec4(h));

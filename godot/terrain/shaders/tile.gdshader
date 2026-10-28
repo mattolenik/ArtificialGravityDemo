@@ -4,10 +4,10 @@ shader_type spatial;
 #include "res://terrain/shaders/cylinder_tile.gdshaderinc"
 #include "res://terrain/shaders/light_bar.gdshaderinc"
 
-// Material id / 255 (0 dirt, 1 clay, 2 rock).
+// Material id / 255 (0 dirt, 1 clay, 2 rock, 3 rock face, coloured as rock).
 uniform sampler2D material_tex : filter_nearest;
 // Albedo by material id, from materials.tres.
-uniform vec4 material_color[3] : source_color;
+uniform vec4 material_color[4] : source_color;
 // Cells around the circumference, to wrap the speckle's cell index at theta = 0.
 uniform int n_theta;
 
@@ -46,7 +46,7 @@ void fragment() {
 		discard;
 	}
 	ivec2 k = ivec2(round(local_cell));
-	int id = clamp(int(round(texelFetch(material_tex, window_texel(k), 0).r * 255.0)), 0, 2);
+	int id = clamp(int(round(texelFetch(material_tex, window_texel(k), 0).r * 255.0)), 0, 3);
 	// A little speckle per window cell, keyed to the global cell so it matches across tiles.
 	ivec2 g = ivec2(int(round(tile_theta / (dtheta * cell))), int(round(tile_z / cell))) - 64 + k;
 	int around = n_theta / int(cell);
