@@ -4,7 +4,7 @@
 // The edit layer (EditLayer, decisions 1 to 4 of the terrain edits plan), in three modes:
 // 0 stamp: a disc of `radius` cells around `cell` raised or lowered by dh with a parabolic falloff, in the
 //   live window; strata are cut by min on the way down and dirt is added on the way up; edit_mask set.
-// 1 pack: tile `tile` of the window copied into slot `slot` of `down`, one blob per tile.
+// 1 pack: tile `tile` of the window copied into slot `slot` of `down`, one blob per tile; unedited cells zero.
 // 2 apply: the blob in `up` copied over tile `tile` where its mask is set.
 // A blob cell (i, j) is six uints at (j * 128 + i) * 6: the five heights' float bits, then
 // material | compaction << 8 | saturation << 16 | mask << 24, each byte round(unorm * 255).
@@ -96,13 +96,22 @@ void main() {
 	int i = (g.y * TILE + g.x) * 6;
 	if (pc.mode == 1) {
 		int o = pc.slot * TILE * TILE * 6 + i;
+		uint mask = byte(imageLoad(w_mask, t).r);
+		// An unedited cell packs as zeros (mask 0, which apply skips), so a tile with a few pits compresses
+		// to kilobytes.
+		if (mask == 0u) {
+			for (int k = 0; k < 6; k++) {
+				down[o + k] = 0u;
+			}
+			return;
+		}
 		down[o] = floatBitsToUint(imageLoad(w_surface, t).r);
 		down[o + 1] = floatBitsToUint(imageLoad(w_bedrock, t).r);
 		down[o + 2] = floatBitsToUint(imageLoad(w_clay_bottom, t).r);
 		down[o + 3] = floatBitsToUint(imageLoad(w_clay_top, t).r);
 		down[o + 4] = floatBitsToUint(imageLoad(w_water, t).r);
 		down[o + 5] = byte(imageLoad(w_material, t).r) | byte(imageLoad(w_compaction, t).r) << 8
-				| byte(imageLoad(w_saturation, t).r) << 16 | byte(imageLoad(w_mask, t).r) << 24;
+				| byte(imageLoad(w_saturation, t).r) << 16 | mask << 24;
 		return;
 	}
 	uint w5 = up[i + 5];

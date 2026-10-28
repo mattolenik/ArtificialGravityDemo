@@ -35,6 +35,12 @@ func _initialize() -> void:
 	patch.set_frame(1.0, 0.0, 3200.0)
 	patch._pending = true
 	check(patch.covers(patch.transform * Vector3(100, 0, 100)) and not patch.covers(patch.transform * Vector3(130, 0, 0)), "covers ignores a pending bake")
+	# A failed edit-bake readback is retried from the next issue_again, not left pending (its error is expected).
+	patch._pending_edit = true
+	Engine.print_error_messages = false
+	patch._landed_edit(PackedByteArray(), 1.0, 0.0, 3200.0)
+	Engine.print_error_messages = true
+	check(not patch._pending_edit and patch._again_edit, "a failed edit readback retries")
 	patch.free(); box.free(); body.free(); terrain.free()
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

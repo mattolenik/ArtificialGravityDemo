@@ -258,10 +258,11 @@ func _bake(window: TerrainWindow, cell: Vector2i, n: int, staging: RID, set: RID
 	_rd.capture_timestamp(stamp + "_end")
 	var theta := (cell.x + 0.5) * p.dtheta()
 	var z := -p.length / 2.0 + cell.y + 0.5
-	# On failure _pending stays set, so the error shows once and the hold keeps the body safe.
 	var err := _rd.texture_get_data_async(staging, 0, landed.bind(theta, z, p.radius))
 	if err != OK:
 		push_error("collider bake readback: %s" % error_string(err))
+		# Handled as a readback that landed empty: the big bake keeps _pending set, the edit bake retries.
+		landed.call(PackedByteArray(), theta, z, p.radius)
 
 
 ## Runs where RenderingDevice callbacks run: the main thread under the default thread model, inside the
@@ -270,7 +271,7 @@ func _bake(window: TerrainWindow, cell: Vector2i, n: int, staging: RID, set: RID
 func _landed(data: PackedByteArray, theta: float, z: float, R: float, at: Vector2i) -> void:
 	if data.size() != SAMPLES * SAMPLES * 4:
 		push_error("collider bake readback: %d bytes, expected %d" % [data.size(), SAMPLES * SAMPLES * 4])
-		return  # _pending stays set, as above
+		return  # _pending stays set, so the error shows once and the hold keeps the body safe
 	var t := Time.get_ticks_usec()
 	_shape.map_data = data.to_float32_array()
 	var ms := (Time.get_ticks_usec() - t) / 1000.0
@@ -285,7 +286,11 @@ func _landed(data: PackedByteArray, theta: float, z: float, R: float, at: Vector
 func _landed_edit(data: PackedByteArray, theta: float, z: float, R: float) -> void:
 	if data.size() != EDIT_SAMPLES * EDIT_SAMPLES * 4:
 		push_error("edit bake readback: %d bytes, expected %d" % [data.size(), EDIT_SAMPLES * EDIT_SAMPLES * 4])
-		return  # _pending_edit stays set, as above
+		# Retried from the next issue_again, not held: the hole for zone may already be out, unbacked for the
+		# two frames until the retry lands (a body over it drops under 5 mm and is pushed out).
+		_pending_edit = false
+		_again_edit = true
+		return
 	var t := Time.get_ticks_usec()
 	(_edit_node.shape as HeightMapShape3D).map_data = data.to_float32_array()
 	var ms := (Time.get_ticks_usec() - t) / 1000.0
