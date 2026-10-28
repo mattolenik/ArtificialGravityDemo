@@ -67,6 +67,7 @@ func _route() -> void:
 	var c := p.cell_of(patch.center.x, patch.center.y)
 	patch.zone = Vector2i(posmod(c.x + 60, p.n_theta()), c.y)
 	patch.has_zone = true
+	patch._issued_zone = patch.zone  # as if its edit bake had been requested: the hole is wanted unbacked here
 	patch.rebuild(_terrain.window, patch.center.x, patch.center.y)
 	if not await _landed():
 		return

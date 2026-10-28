@@ -207,6 +207,7 @@ func _process(delta: float) -> void:
 	_move_window(window.tile_of_cell(cell.x, cell.y))
 	far.follow(cell)
 	var p := station.to_local(viewer.global_position)
+	patch.issue_again(window)
 	if patch.needs_rebuild(p):
 		patch.rebuild(window, Cyl.theta_of(p), p.z)
 	_hold_body(not patch.covers(station.to_local(_body.global_position)))
@@ -322,9 +323,9 @@ static func _edge(i: int, slots: int) -> int:
 ## centre with a parabolic falloff to its edge (EditLayer.stamp; decision 7 of the terrain edits plan).
 ## radius is in cells, not metres, and at most 64 (four tiles): a cell is 1 m along the axis and (R - h) dtheta
 ## across, 1.23 m on the hull and 0.64 m at h_sea + h_mtn with the default WorldParams, so the disc is an
-## ellipse in metres. Digging cuts the strata down with the surface; raising adds dirt. False, and nothing
-## changes, before the first patch is live, for a radius out of range, or when the disc is not wholly
-## inside the 1 m window.
+## ellipse in metres. Digging cuts the strata down with the surface; raising adds dirt. The collider follows
+## from the next frame (ColliderPatch.on_edit). False, and nothing changes, before the first patch is live,
+## for a radius out of range, or when the disc is not wholly inside the 1 m window.
 func edit(theta: float, z: float, radius: float, dh: float) -> bool:
 	var r := ceili(radius)
 	# r >= TILE is refused before stamp_tiles, which loops over every tile of the box.
@@ -339,6 +340,7 @@ func edit(theta: float, z: float, radius: float, dh: float) -> bool:
 		if not window.is_resident(t):
 			return false
 	window.edits.stamp(window, cell, r, dh)
+	patch.on_edit(cell, r)
 	return true
 
 

@@ -40,5 +40,11 @@ func _initialize() -> void:
 	bad.store_32(1); bad.store_32(12); bad.store_buffer(PackedByteArray([1, 2, 3])); bad.close()
 	check(WorldIO.load_edits("test_world").size() == 2, "corrupt tile skipped")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://worlds/test_world/tiles/9_9.edit"))
+	# The edit zone holds a disc that stays HOLE_HALF - ZONE_MARGIN cells from its centre, theta the short way round.
+	check(ColliderPatch.zone_holds(Vector2i(10, 10), Vector2i(10, 10), 5, 16384), "centre")
+	check(ColliderPatch.zone_holds(Vector2i(10, 10), Vector2i(23, 10), 5, 16384), "13 + 5 = 18 holds")
+	check(not ColliderPatch.zone_holds(Vector2i(10, 10), Vector2i(24, 10), 5, 16384), "14 + 5 = 19 moves")
+	check(not ColliderPatch.zone_holds(Vector2i(10, 10), Vector2i(10, 29), 5, 16384), "along z too")
+	check(ColliderPatch.zone_holds(Vector2i(2, 10), Vector2i(16382, 10), 5, 16384), "across the seam the delta is 4")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

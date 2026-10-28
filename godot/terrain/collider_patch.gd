@@ -5,7 +5,12 @@
 ## z = j - 128. The same body carries a second, 65 x 65 heightfield, EditShape, in the tangent frame of its
 ## own centre (edit_frame); while has_zone the big patch has a NaN hole HOLE_HALF cells either way of zone,
 ## which Jolt reads as no ground, so the edit shape is the ground there. A child of Terrain, so its space
-## is station space. Loads headless: the RenderingDevice is touched only from rebuild().
+## is station space. Loads headless: the RenderingDevice is touched only from rebuild() and issue_again().
+##
+## Issue order (decision 8 of the terrain edits plan): on_edit and the readback landings only set and clear
+## flags; issue_again, every frame from Terrain._process, requests the edit bake for zone first and the big
+## bake with its hole only once an edit bake for that zone has been requested. Readbacks land in request
+## order, so the shape for a zone always lands before the hole for it.
 class_name ColliderPatch
 extends StaticBody3D
 
@@ -25,12 +30,15 @@ const _EDIT_MID := 32
 const HOLE_HALF := 22
 ## An edit whose disc stays within HOLE_HALF - ZONE_MARGIN cells of the zone keeps the zone.
 const ZONE_MARGIN := 4
+const NO_HOLE := Vector2i(-1, -1)
 
 ## (theta, z) of the patch centre, a cell centre.
 var center: Vector2
 ## The cell the edit shape is centred on; while has_zone, a big bake punches its hole there.
 var zone: Vector2i
 var has_zone := false
+## The cell the live big patch's hole is centred on, NO_HOLE while it has none.
+var hole_zone := NO_HOLE
 ## The tangent frame at the edit shape's centre, in station space.
 var edit_frame: Transform3D
 
@@ -45,6 +53,14 @@ var _set: RID
 var _staging_edit: RID
 var _set_edit: RID
 var _pending := false
+var _pending_edit := false
+## Bakes asked for and not yet issued: an edit bake for zone, a big bake with the hole at zone.
+var _again_edit := false
+var _again_big := false
+## The zone of the last edit bake requested.
+var _issued_zone := NO_HOLE
+## From the window, at rebuild; on_edit has no window.
+var _n_theta := 0
 ## Set by the first set_frame; until then the patch has no ground.
 var _framed := false
 
@@ -109,7 +125,8 @@ func covers(viewer_local: Vector3) -> bool:
 	return maxf(absf(p.x), absf(p.z)) <= _MID - 4
 
 
-## Height of the surface above the hull at the centre, from the last bake.
+## Height of the surface above the hull at the centre, from the last bake. Only for _on_first_live, before
+## any zone exists: sample _MID is NaN once the hole is within HOLE_HALF cells of the centre.
 func center_height() -> float:
 	return _shape.map_data[_MID * SAMPLES + _MID]
 
@@ -139,19 +156,64 @@ static func _bilinear(d: PackedFloat32Array, n: int, x: float, z: float) -> floa
 	return lerpf(low, high, z - j)
 
 
-## Bakes the patch around the cell centre nearest (theta, z) from the window as it now stands, with the
-## hole at zone while has_zone; the shape and the frame change together when the readback lands, then
-## `live` fires. While a bake is in flight this does nothing: the staging texture is still being read, and
-## Terrain asks again every frame until the landed patch covers the viewer.
+## Bakes the patch around the cell centre nearest (theta, z) from the window as it now stands; the shape and
+## the frame change together when the readback lands, then `live` fires. The hole goes in at zone only once
+## the zone's edit bake has been requested (so that shape lands first); without it, issue_again bakes again
+## with the hole after that request. While a bake is in flight this does nothing: the staging texture is
+## still being read, and Terrain asks again every frame until the landed patch covers the viewer.
 func rebuild(window: TerrainWindow, center_theta: float, center_z: float) -> void:
 	if _pending:
 		return
 	_pending = true
+	_n_theta = window.params.n_theta()
 	var cell := window.params.cell_of(center_theta, center_z)
+	var with_hole := has_zone and _issued_zone == zone
+	_again_big = has_zone and not with_hole
+	# Bound after _bake's (theta, z, R): _landed(data, theta, z, R, at).
+	var landed := _landed.bind(zone if with_hole else NO_HOLE)
 	RenderingServer.call_on_render_thread(func() -> void:
 		# A failed setup leaves _pending set, so the error shows once and no bake is attempted again.
 		if _rd != null or _setup_rd(window):
-			_bake(window, cell, SAMPLES, _staging, _set, "bake", has_zone, _landed))
+			_bake(window, cell, SAMPLES, _staging, _set, "bake", with_hole, landed))
+
+
+## An edit stamped a disc of `radius` cells around cell: asks for an edit bake, and when the disc leaves the
+## zone, moves the zone to cell and asks for a big bake too. Dispatches nothing: issue_again does, from the
+## next Terrain._process, after the stamp's compute list.
+func on_edit(cell: Vector2i, radius: int) -> void:
+	if not (has_zone and zone_holds(zone, cell, radius, _n_theta)):
+		zone = cell
+		has_zone = true
+		_again_big = true
+	_again_edit = true
+
+
+## Whether a disc of `radius` cells around cell stays within HOLE_HALF - ZONE_MARGIN cells of zone along
+## both axes, theta the short way round.
+static func zone_holds(zone: Vector2i, cell: Vector2i, radius: int, n_theta: int) -> bool:
+	@warning_ignore("integer_division")
+	var d_theta := wrapi(cell.x - zone.x, -n_theta / 2, n_theta / 2)
+	var reach := HOLE_HALF - ZONE_MARGIN - radius
+	return absi(d_theta) <= reach and absi(cell.y - zone.y) <= reach
+
+
+## Issues the bakes on_edit and rebuild asked for: first the edit bake for zone, then the big bake at the
+## current centre with the hole at zone, once that zone's edit bake has been requested. One of each kind in
+## flight; the flags keep the rest. Every frame from Terrain._process, before its rebuild check.
+func issue_again(window: TerrainWindow) -> void:
+	# _set_edit is the last thing _setup_rd builds: until it is valid nothing is issued and the flags wait,
+	# so no hole can go out without its shape.
+	if not _set_edit.is_valid():
+		return
+	if _again_edit and not _pending_edit:
+		_again_edit = false
+		_pending_edit = true
+		_issued_zone = zone
+		var cell := zone
+		RenderingServer.call_on_render_thread(func() -> void:
+			_bake(window, cell, EDIT_SAMPLES, _staging_edit, _set_edit, "bake_edit", false, _landed_edit))
+	if _again_big and not _pending and has_zone and _issued_zone == zone:
+		rebuild(window, center.x, center.y)
 
 
 ## Samples either side of the centre that a row of mid samples either side needs, so that its outermost
@@ -205,7 +267,7 @@ func _bake(window: TerrainWindow, cell: Vector2i, n: int, staging: RID, set: RID
 ## Runs where RenderingDevice callbacks run: the main thread under the default thread model, inside the
 ## device's readback flush, where a compute list is discarded and an async readback reads zeros. So this,
 ## and whatever `baked` and `live` reach, does CPU work only and dispatches nothing.
-func _landed(data: PackedByteArray, theta: float, z: float, R: float) -> void:
+func _landed(data: PackedByteArray, theta: float, z: float, R: float, at: Vector2i) -> void:
 	if data.size() != SAMPLES * SAMPLES * 4:
 		push_error("collider bake readback: %d bytes, expected %d" % [data.size(), SAMPLES * SAMPLES * 4])
 		return  # _pending stays set, as above
@@ -213,9 +275,24 @@ func _landed(data: PackedByteArray, theta: float, z: float, R: float) -> void:
 	_shape.map_data = data.to_float32_array()
 	var ms := (Time.get_ticks_usec() - t) / 1000.0
 	set_frame(theta, z, R)
+	hole_zone = at
 	_pending = false
 	baked.emit("big", ms)
 	live.emit(center)
+
+
+## The edit bake's landing, where _landed runs and under the same rule: CPU work only.
+func _landed_edit(data: PackedByteArray, theta: float, z: float, R: float) -> void:
+	if data.size() != EDIT_SAMPLES * EDIT_SAMPLES * 4:
+		push_error("edit bake readback: %d bytes, expected %d" % [data.size(), EDIT_SAMPLES * EDIT_SAMPLES * 4])
+		return  # _pending_edit stays set, as above
+	var t := Time.get_ticks_usec()
+	(_edit_node.shape as HeightMapShape3D).map_data = data.to_float32_array()
+	var ms := (Time.get_ticks_usec() - t) / 1000.0
+	_edit_node.disabled = false
+	set_edit_frame(theta, z, R)
+	_pending_edit = false
+	baked.emit("edit", ms)
 
 
 func _setup_rd(window: TerrainWindow) -> bool:
