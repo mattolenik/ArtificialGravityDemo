@@ -119,6 +119,51 @@ float interp(sampler2D s, Foot p) {
 	return blend(p, corners(s, p.t, 0));
 }
 
+// Catmull-Rom weights of the texels at -1, 0, 1, 2 for a fraction f in [0, 1].
+vec4 catmull_rom(float f) {
+	return 0.5 * vec4(f * (f * (2.0 - f) - 1.0), f * f * (3.0 * f - 5.0) + 2.0, f * (f * (4.0 - 3.0 * f) + 1.0), f * f * (f - 1.0));
+}
+
+// Separable Catmull-Rom over the 16 texels t + (-1..2, -1..2): C1 where the map is smooth, so no 32 m
+// facets. Each pass is held between its two middle texels: that removes the undershoot of 0.074 of a step
+// just before it (a dry trench beside a river bank), keeps the value within the 2 x 2 corners, and makes
+// the value on a cell edge depend only on the texels along it, so neighbouring cells meet there.
+float bicubic(sampler2D s, ivec2 t, vec2 f) {
+	vec4 wx = catmull_rom(f.x);
+	vec4 col;
+	for (int j = 0; j < 4; j++) {
+		vec4 row;
+		for (int i = 0; i < 4; i++) {
+			row[i] = fetch(s, t + ivec2(i - 1, j - 1)).r;
+		}
+		col[j] = clamp(dot(wx, row), min(row.y, row.z), max(row.y, row.z));
+	}
+	return clamp(dot(catmull_rom(f.y), col), min(col.y, col.z), max(col.y, col.z));
+}
+
+// Share of the sharpened bilinear path at fraction f of the footprint at t: per corner, 1 if a cliff rim
+// lies within 2 texels, blended bilinearly. It is 1 wherever any of the 16 bicubic texels is a rim, so
+// rims and their faces keep the bilinear path, and it changes continuously, so the switch leaves no step.
+float near_rim(ivec2 t, vec2 f) {
+	vec4 near = vec4(0.0);
+	for (int j = -2; j <= 3; j++) {
+		for (int i = -2; i <= 3; i++) {
+			if (fetch(m_cliff, t + ivec2(i, j)).r > 0.5) {
+				for (int k = 0; k < 4; k++) {
+					ivec2 d = abs(ivec2(i, j) - CORNER[k]);
+					near[k] = max(d.x, d.y) <= 2 ? 1.0 : near[k];
+				}
+			}
+		}
+	}
+	return blend(Foot(t, f.xyy), near);
+}
+
+// A macro map at p: bicubic, giving way to the sharpened bilinear footprint by `rim` (from near_rim).
+float macro(sampler2D s, Foot p, vec2 f, float rim) {
+	return rim >= 1.0 ? interp(s, p) : mix(bicubic(s, p.t, f), interp(s, p), rim);
+}
+
 uint hash(uint x) {
 	x ^= x >> 16;
 	x *= 0x7feb352du;
@@ -217,10 +262,12 @@ void main() {
 	vec2 u = (vec2(g) + 0.5) * pc.cell;   // cell centre in 1 m cells (theta index, z index)
 	vec2 m = u / pc.macro_cell - 0.5;     // macro texel coordinates, texel centres at integers
 	Foot p = foot(m);
-	float s = interp(m_surface, p);
-	float b = interp(m_bedrock, p);
-	float cb = interp(m_clay_bottom, p);
-	float ct = interp(m_clay_top, p);
+	vec2 f = vec2(m.x, clamp(m.y, 0.0, float(msize.y - 1))) - vec2(p.t);
+	float rim = near_rim(p.t, f);
+	float s = macro(m_surface, p, f, rim);
+	float b = macro(m_bedrock, p, f, rim);
+	float cb = macro(m_clay_bottom, p, f, rim);
+	float ct = macro(m_clay_top, p, f, rim);
 
 	// Macro slope: the plain bilinear surface over half a macro cell either side, with the true width of
 	// a theta cell at height s. Smooth at 32 m, so the noise fades across a whole jump, not in a rim.
