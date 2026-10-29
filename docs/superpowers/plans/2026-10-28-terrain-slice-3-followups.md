@@ -39,6 +39,7 @@ Stamps:
 - A tamp `Op` with `limit` left at 0 divides by zero in the shader and raises the cell to `h_max`; guard `limit > 0` or clamp the divisor (`edit.glsl`).
 - The bore's centre read `texel(pc.cell, tc)` skips the θ wrap, safe only because `cell_of` wraps; use `at(ivec2(0))` (`edit.glsl`).
 - The bore counter counts `dh`, not the float32-stored cut: a +0.024 % bias, about 1.3e-3 m³ per 10 m bore (`edit.glsl`).
+- The scoop's solid cut has the same float32 bias (about -0.04 % per scoop near 410 m, growing with height).
 - `disc_cells` runs for every stamp, raise (121 iterations per debug dig) and push (every frame while walking) included; compute it only for bore, deposit and spill (`edit_layer.gd`).
 - `_counted` has no `data.size() == 8` guard; `pack_tiles_sync` stalls once per slot rather than once per list (`edit_layer.gd`).
 
@@ -49,7 +50,9 @@ Auger and controls:
 - `place` accepts a placement under the player (the cylinder spawns through the capsule); needs a 1.5 m minimum distance (`tools.gd`).
 - The cell-centre formula is duplicated in `auger.gd`, `tools.gd` and `tool_run.gd`; add `WorldParams.cell_center(c)`.
 - The shovel's held scoop is not saved across a restart; a scoop on a cell under sheet water leaves the water in place (`tools.gd`, `edit.glsl`).
-
+- A wet scoop leaves the cell's moisture behind and the dump is dry.
+- A scoop or dump does not test the standing auger's obstacle, so a dump can drop loose into its shaft.
+- A scoop whose counter readback never lands (only on a broken device, which already logs an ERROR) leaves `T` stuck pending.
 Player:
 - `floor_snap_length` is now 0.3 (was 0.1) so a 15 m/s runner stays on 35° to 40° descents (a 0.1 snap left a pile's shoulder); a feel change the user may tune (`player.tscn`).
 - The walk phase's clearance check samples cell-centre heights 0.1 s apart (±0.35 m on a 35° slope); interpolate bilinearly if it flakes (`tool_run.gd`).

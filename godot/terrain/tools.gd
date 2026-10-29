@@ -171,7 +171,7 @@ func _process(_delta: float) -> void:
 	if _scoop_result <= 1e-6:
 		print("Nothing to scoop here")
 	else:
-		held = _scoop_result
+		held += _scoop_result
 	_scoop_result = -1.0
 	_show_held()
 
