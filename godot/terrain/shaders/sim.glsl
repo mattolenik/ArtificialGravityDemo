@@ -23,8 +23,13 @@
 // rounding and the settling tail does not leak. A flux toward a cell in an inactive tile, a blocked cell
 // (the obstacle), or a cell off the window or the station is never written: the material stays where it is.
 // A reservoir cell (static water_surface over the ground) sends no sheet water and absorbs what reaches it
-// or was spilled on it, counted in stats[slots * slots] in units of 1e-6 m^3. Pore water moves and soaks in
-// whole quanta of capacity / 255 m of depth, which the saturation byte holds exactly.
+// or was spilled on it, counted in stats[slots * slots] in units of 1e-6 m^3. A cell whose ground lies under
+// the lowest level among its reservoir neighbours joins them: its water_surface becomes that level (static
+// and bottomless, the level never moving), one cell a step, the neighbour's tile active or not; its sheet is
+// absorbed the step after. The lowest level, so a sloped river never floods its bank downstream at an
+// upstream level. The flux pass carries the level as a negative entry toward one reservoir neighbour, which
+// that neighbour ignores. Pore water moves and soaks in whole quanta of capacity / 255 m of depth, which
+// the saturation byte holds exactly.
 //
 // The neighbour rule (decision 3): an applied cell that moved more than move_eps (or changed its saturation)
 // sets bit 0 of its slot in `stats`, and one on a tile edge or corner also sets bit 1 of the slot of every
@@ -170,10 +175,13 @@ void flux(ivec2 c, ivec2 t) {
 	float pore[4] = float[4](0.0, 0.0, 0.0, 0.0);
 	uint given = 0u;
 	uint q = byte(sat);
+	// The lowest level among the reservoir neighbours (1e30: none) and the direction of one at it.
+	float level = 1e30;
+	int level_k = -1;
 	for (int k = 0; k < 4; k++) {
 		ivec2 n = neighbour(c, k);
 		ivec2 tn;
-		if (!texel(n, tn) || !tile_active(tn) || blocked(n)) {
+		if (!texel(n, tn) || blocked(n)) {
 			continue;
 		}
 		float s_n = imageLoad(w_surface, tn).r;
@@ -181,7 +189,15 @@ void flux(ivec2 c, ivec2 t) {
 		uint mat_n = byte(imageLoad(w_material, tn).r);
 		float h_n = s_n + l_n;
 		float ws_n = imageLoad(w_water, tn).r;
-		float w_n = reservoir(ws_n, h_n) ? ws_n : h_n + imageLoad(w_depth, tn).r;
+		bool res_n = reservoir(ws_n, h_n);
+		if (res_n && ws_n < level) {
+			level = ws_n;
+			level_k = k;
+		}
+		if (!tile_active(tn)) {
+			continue;
+		}
+		float w_n = res_n ? ws_n : h_n + imageLoad(w_depth, tn).r;
 		// The edge distance: the mean of the two widths across, 1 m along.
 		float w = k % 2 == 0 ? 0.5 * ((pc.R - s) + (pc.R - s_n)) * pc.dtheta : 1.0;
 		float ex = (H - h_n) - tr * w;
@@ -232,7 +248,13 @@ void flux(ivec2 c, ivec2 t) {
 	}
 	imageStore(flux_loose, t, vec4(out_l[0], out_l[1], out_l[2], out_l[3]) * a);
 	imageStore(flux_loose_d, t, vec4(out_d[0], out_d[1], out_d[2], out_d[3]) * a);
-	imageStore(flux_water, t, vec4(out_w[0], out_w[1], out_w[2], out_w[3]) * a);
+	vec4 ow = vec4(out_w[0], out_w[1], out_w[2], out_w[3]) * a;
+	if (!res && level_k >= 0 && H + 1e-3 < level) {
+		// Joining the reservoirs: the level rides toward one of them in place of any send (the sheet here is
+		// absorbed once this is one).
+		ow = mix(ow, vec4(-level), equal(ivec4(0, 1, 2, 3), ivec4(level_k)));
+	}
+	imageStore(flux_water, t, ow);
 	imageStore(flux_pore, t, vec4(pore[0], pore[1], pore[2], pore[3]) / 255.0);
 }
 
@@ -256,6 +278,9 @@ void apply(ivec2 c, ivec2 t, ivec2 g) {
 	bool res = reservoir(imageLoad(w_water, t).r, s + L);
 	vec4 own = imageLoad(flux_loose, t) + imageLoad(flux_loose_d, t);
 	vec4 own_w = imageLoad(flux_water, t);
+	// A negative entry is the level this cell joins (the flux pass's rule), not a send.
+	float level = -min(min(own_w.x, own_w.y), min(own_w.z, own_w.w));
+	own_w = max(own_w, vec4(0.0));
 	uvec4 own_p = uvec4(round(imageLoad(flux_pore, t) * 255.0));
 	float in_l = 0.0;
 	float in_w = 0.0;
@@ -270,7 +295,8 @@ void apply(ivec2 c, ivec2 t, ivec2 g) {
 			continue;
 		}
 		in_l += pick(imageLoad(flux_loose, tn), j);
-		in_w += pick(imageLoad(flux_water, tn), j);
+		// A neighbour's level entry toward this reservoir is not an inflow.
+		in_w += max(pick(imageLoad(flux_water, tn), j), 0.0);
 		in_p += int(byte(pick(imageLoad(flux_pore, tn), j)));
 	}
 	float d_kept = d;
@@ -295,15 +321,19 @@ void apply(ivec2 c, ivec2 t, ivec2 g) {
 			d2 -= qm;
 		}
 	}
+	bool joins = level > 0.0 && !res;
+	if (joins) {
+		imageStore(w_water, t, vec4(level));
+	}
 	// Every change, however small, is stored: conservation.
-	if (l2 != L || d2 != d || q2 != int(q)) {
+	if (l2 != L || d2 != d || q2 != int(q) || joins) {
 		imageStore(w_loose, t, vec4(l2));
 		imageStore(w_depth, t, vec4(d2));
 		imageStore(w_saturation, t, vec4(float(q2) / 255.0));
 		imageStore(w_mask, t, vec4(1.0));
 	}
-	// The activity gate only.
-	if (abs(l2 - L) > pc.move_eps || abs(d2 - d) > pc.move_eps || q2 != int(q)) {
+	// The activity gate only; a cell that joined counts, its neighbours may follow next step.
+	if (abs(l2 - L) > pc.move_eps || abs(d2 - d) > pc.move_eps || q2 != int(q) || joins) {
 		atomicOr(stats[slot_word(t)], 1u);
 		for (int k = 0; k < 4; k++) {
 			wake(c, g, DIR4[k]);

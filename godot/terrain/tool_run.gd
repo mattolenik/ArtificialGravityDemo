@@ -69,9 +69,16 @@
 ##    10 s: its mode reads pump, at least 8 m³ pumped, and the cells holding sheet water as it stops stand on
 ##    average no higher than the spoil disc (it ran downhill; once settled, the sheet has soaked in or run into
 ##    the lake). Picked up and settled (at most 15 s): the window's sheet, pore and absorbed water add up to
-##    what was pumped within 2 %, water_surface bitwise unchanged, every cell whose saturation rose dirt-topped
+##    what was pumped within 2 %, the levels kept (the shore's cells under the lake's level join it), every cell
+##    whose saturation rose dirt-topped
 ##    and within 3.05 m of a cell that was wet or a reservoir. A water read every 0.5 s marks the wet cells, as
 ##    in sheet.
+## lake: a bore at the shore cell S, the first dry cell outward from the pump's lake cell A along its column
+##    (found now: the pump phase let the shore's cells under the level join the lake), its five-cell plus cut
+##    in one stamp to 0.5 m under the lake's level (the level of the wet cell before S): settled (at
+##    most 15 s), every dry cell of the plus has joined the lake (a reservoir at that level, bitwise), the
+##    levels are kept over the window (a water_surface changes only by joining a reservoir beside it, from
+##    under its level) and the window's water budget (sheet, pore, absorbed) moved under 0.01 m³.
 ## rock: at NoiseReport.rock_site, first 1 m³ spilled on the lowest all-rock spoil disc within 3 cells of the
 ##    player's cell + (0, 4) pools in that rock hollow: after 3 s the saturation is bitwise unchanged, nothing
 ##    absorbed, the window's sheet 1 m³ within 2 %. Then a scoop on a disc of bare rock (every cell at its
@@ -113,7 +120,7 @@ const Smoke := preload("res://terrain/smoke_run.gd")
 const BUDGET := {"edit": 0.5, "pack": 0.5, "apply": 0.5, "bake_edit": 1.0, "bake": 1.0, "detail": 2.0}
 const SIM_BUDGET := 0.25
 ## The phases the summary reports frame by frame.
-const PHASES: Array[String] = ["slump", "sheet", "walk", "jumps", "bore", "pump", "scroll"]
+const PHASES: Array[String] = ["slump", "sheet", "walk", "jumps", "bore", "pump", "lake", "scroll"]
 ## The edge neighbours in sim.glsl's order, then the diagonal ones, which loose slumps to as well.
 const DIR4: Array[Vector2i] = [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]
 const DIAG: Array[Vector2i] = [Vector2i(1, 1), Vector2i(-1, 1), Vector2i(-1, -1), Vector2i(1, -1)]
@@ -131,6 +138,10 @@ var _timed: Array[Dictionary] = []
 var _bored := 0.0
 var _bore_landed := 0
 var _bore_wet := false
+## The pump phase's lake cell (three cells into the water from its shore), for the lake phase.
+var _lake_cell := TerrainSim.NO_CELL
+## Cells of the window whose water_surface changed in the last _levels_kept.
+var _joined := 0
 var _player: Player
 var _tools: Tools
 ## The phase running ("stamps" first, "" once done): the active tile count every frame, every tile seen active,
@@ -321,6 +332,9 @@ func _route() -> void:
 		return
 	_phase = "pump"
 	if not await _pump():
+		return
+	_phase = "lake"
+	if not await _lake_fill():
 		return
 	_phase = "rock"
 	if not await _rock(spawn):
@@ -967,9 +981,12 @@ func _pump() -> bool:
 	if a == TerrainSim.NO_CELL:
 		_report("pumped water runs downhill, soaks dirt within 3 m, lake unchanged (no lake with a dirt bank)", false)
 		return true
+	_lake_cell = a
 	var surface := _read("surface")
 	var sat0 := _read("saturation")
 	var ws0 := _read("water_surface")
+	var surface0 := surface
+	var loose0 := _read("loose")
 	var sheet0 := _sum(_read("water_depth"), surface)
 	var absorbed0 := _terrain.sim.absorbed
 	var wet := PackedByteArray()
@@ -1037,15 +1054,92 @@ func _pump() -> bool:
 	for c in risen:
 		dirt = dirt and (_f(loose, c) > 0.01 or _b(material, c) == 0)
 		far = maxf(far, _nearest(c, near, surface))
-	var lake_kept := _read("water_surface") == ws0
+	var lake_kept := _levels_kept(ws0, _read("water_surface"), surface0, loose0, surface, loose)
 	print("pump: at %s, spoil at %s; mode %s, %d ticks, pumped %.6f m³; settled in %.2f s; sheet %+.6f, pore %+.6f, absorbed %+.6f m³: %.6f for %.6f (%+.3f %%)" % [
 			a, spoil, mode, ticks, pumped, waited, sheet, pore, absorbed, total, pumped, _residual("pump", total, pumped)])
-	print("pump: %d cells wet or reservoir by A, %d saturation rose (%d in the window), all dirt-topped: %s, farthest from a wet or reservoir cell %.3f m; water_surface unchanged: %s; %d cells held sheet water as the pump stopped, mean ground %.3f m, the spoil disc's %.3f m" % [
-			near.size(), risen.size(), risen_all, dirt, far, lake_kept, held, held_ground, spoil_ground])
+	print("pump: %d cells wet or reservoir by A, %d saturation rose (%d in the window), all dirt-topped: %s, farthest from a wet or reservoir cell %.3f m; levels kept: %s (%d cells joined the lake); %d cells held sheet water as the pump stopped, mean ground %.3f m, the spoil disc's %.3f m" % [
+			near.size(), risen.size(), risen_all, dirt, far, lake_kept, _joined, held, held_ground, spoil_ground])
 	_report("pumped water runs downhill, soaks dirt within 3 m, lake unchanged", mode == "pump" and pumped >= 8.0
 			and absf(total - pumped) <= 0.02 * pumped and lake_kept and not risen.is_empty() and risen.size() == risen_all
 			and dirt and far <= 3.05 and held > 0 and held_ground <= spoil_ground)
 	return true
+
+
+## lake: a bore at the shore cell S, the first dry cell outward from the pump's lake cell A along its column,
+## found now (the pump phase let the shore's cells under the level join the lake), its five-cell plus cut in
+## one stamp to 0.5 m under the lake's level (the level of the wet cell before S): settled (at most
+## 15 s), every dry cell of the plus has joined the lake (a reservoir at that level, bitwise), the levels are
+## kept over the window (_levels_kept) and the window's water budget (sheet, pore and absorbed) moved under
+## 0.01 m³: no water is made or lost.
+func _lake_fill() -> bool:
+	var a := _lake_cell
+	if a == TerrainSim.NO_CELL:
+		_report("a hole at the shore joins the lake at its level (no lake with a dirt bank)", false)
+		return true
+	var surface := _read("surface")
+	var loose := _read("loose")
+	var ws0 := _read("water_surface")
+	var s := a
+	while s.y < a.y + 64 and _f(ws0, s) > _f(surface, s) + _f(loose, s) + 1e-3:
+		s += Vector2i(0, 1)
+	var level := _f(ws0, s + Vector2i(0, -1))
+	var dry: Array[Vector2i] = []
+	var cut := 0.0
+	for c in _disc(s, 1):
+		if _f(ws0, c) > _f(surface, c) + _f(loose, c) + 1e-3:
+			continue
+		dry.append(c)
+		cut = maxf(cut, _f(surface, c) + _f(loose, c) - level + 0.5)
+	var water0 := _water()
+	var absorbed0 := _terrain.sim.absorbed
+	_stamp(_op(s, 1, EditLayer.MODE_BORE, cut))
+	# A bore changes no field _settled compares, so let its flag land and activate the tile first.
+	await _frames(6)
+	var waited := await _settled(s, 15.0)
+	var surface1 := _read("surface")
+	var loose1 := _read("loose")
+	var ws1 := _read("water_surface")
+	var joined := 0
+	for c in dry:
+		if _f(ws1, c) == level and level > _f(surface1, c) + _f(loose1, c) + 1e-3:
+			joined += 1
+	var kept := _levels_kept(ws0, ws1, surface, loose, surface1, loose1)
+	var moved := _water() - water0 + (_terrain.sim.absorbed - absorbed0)
+	print("lake: a bore of %.3f m at the shore %s (level %.3f m; %d dry cells of the plus) settled in %.2f s; %d of them joined the lake at its level, %d cells of the window joined a reservoir, levels kept: %s; the water budget moved %+.6f m³" % [
+			cut, s, level, dry.size(), waited, joined, _joined, kept, moved])
+	_report("a hole at the shore joins the lake at its level", waited >= 0.0 and not dry.is_empty() and joined == dry.size() and kept and absf(moved) <= 0.01)
+	return true
+
+
+## Whether the reservoirs' levels are kept between two water_surface reads: a cell's level changes only by
+## joining them, from no reservoir (by its ground before, s0 + l0) to one (by its ground after) at the level
+## of a reservoir beside it (the texture is the window's torus, so texel neighbours are cell neighbours).
+## Counts the changed cells in _joined.
+func _levels_kept(ws0: PackedByteArray, ws1: PackedByteArray, s0: PackedByteArray, l0: PackedByteArray,
+		s1: PackedByteArray, l1: PackedByteArray) -> bool:
+	var n := TerrainWindow.TILE * _terrain.window.slots
+	var a := ws0.to_float32_array()
+	var b := ws1.to_float32_array()
+	var g0 := s0.to_float32_array()
+	var m0 := l0.to_float32_array()
+	var g1 := s1.to_float32_array()
+	var m1 := l1.to_float32_array()
+	var ok := true
+	_joined = 0
+	for k in b.size():
+		if a[k] == b[k]:
+			continue
+		_joined += 1
+		var x := k % n
+		@warning_ignore("integer_division")
+		var y := k / n
+		var beside := false
+		for o in DIR4:
+			var kk := posmod(y + o.y, n) * n + posmod(x + o.x, n)
+			beside = beside or (b[kk] == b[k] and b[kk] > g1[kk] + m1[kk] + 1e-3)
+		if a[k] > g0[k] + m0[k] + 1e-3 or b[k] <= g1[k] + m1[k] + 1e-3 or not beside:
+			ok = false
+	return ok
 
 
 ## For the five lakes nearest the spawn, nearest first: the player is teleported 6 m past the lake's +z rim
