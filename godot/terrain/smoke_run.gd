@@ -61,6 +61,7 @@ var _drift := 0.0
 
 
 func _ready() -> void:
+	Offscreen.apply()
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--legs="):
 			leg = float(arg.trim_prefix("--legs="))

@@ -171,6 +171,7 @@ var _steps := 0
 
 
 func _ready() -> void:
+	Offscreen.apply()
 	_fresh_world()
 	if await _open_main():
 		_route()

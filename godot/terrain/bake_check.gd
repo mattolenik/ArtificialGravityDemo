@@ -28,6 +28,7 @@ var _bake: Array[float] = []
 
 
 func _ready() -> void:
+	Offscreen.apply()
 	var main: Node = load("res://main.tscn").instantiate()
 	_station = main.get_node("Station")
 	_terrain = _station.get_node("Terrain")
