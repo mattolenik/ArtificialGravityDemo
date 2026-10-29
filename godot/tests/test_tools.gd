@@ -32,9 +32,9 @@ func _initialize() -> void:
 	check(Auger.stop_reason_for(20.0, 10.0, 0.0, true) == "", "a pump never stops")
 	check(Auger.spoil_cell_of(Vector2i(16382, 7), Vector2i(1, 0), 7, 16384) == Vector2i(5, 7), "spoil cell wraps")
 	check(Auger.spoil_cell_of(Vector2i(10, 9), Vector2i(0, -1), 7, 16384) == Vector2i(10, 2), "spoil cell along the axis")
-	# The shovel: a quarter cubic metre a scoop over the five-cell plus, within 3 m; its stamp passes the disc's
-	# cell count as stamp_op does, so each cell takes its share.
-	check(t.scoop_volume == 0.25 and t.scoop_radius == 1 and t.shovel_reach == 3.0, "shovel numbers")
+	# The shovel: two and a half cubic metres a scoop over the five-cell plus, within 3 m; its stamp passes the
+	# disc's cell count as stamp_op does, so each cell takes its share.
+	check(t.scoop_volume == 2.5 and t.scoop_radius == 1 and t.shovel_reach == 3.0, "shovel numbers")
 	check(EditLayer.MODE_SCOOP == 8, "scoop mode")
 	var op := EditLayer.Op.new()
 	op.cell = Vector2i(7, 40); op.radius = t.scoop_radius; op.mode = EditLayer.MODE_SCOOP; op.amount = t.scoop_volume
@@ -42,7 +42,7 @@ func _initialize() -> void:
 	var w := TerrainWindow.new()
 	w.configure(WorldParams.new(), 512, 1.0)
 	var pc := EditLayer.new()._params(w, op, Vector2i.ZERO, EditLayer.disc_cells(op.radius))
-	check(pc.decode_s32(32) == 8 and pc.decode_s32(40) == 5 and pc.decode_float(64) == 0.25, "scoop push constants")
+	check(pc.decode_s32(32) == 8 and pc.decode_s32(40) == 5 and pc.decode_float(64) == 2.5, "scoop push constants")
 	# Holding T: the first scoop fires on the press when the shovel is empty; holding dirt, a press shorter than
 	# scoop_hold_delay dumps and a longer one starts scooping; then one scoop every scoop_interval.
 	check(t.scoop_hold_delay == 0.25 and t.scoop_interval == 0.25, "hold numbers")

@@ -41,7 +41,8 @@
 ##    tamps, the solid gained over the box above 0.1 m³ and, times the swell, the loose lost within 1 %, and
 ##    at least one cell folded (no loose, surface risen).
 ## shovel (k = 4, S8, the player 4 cells spinward of it), through Tools.scoop and dump aimed at cells:
-## 1. a 3 m³ deposit of radius 2 settles; a scoop at S8 holds scoop_volume within 1 %, the loose over the box
+## 1. a 20 m³ deposit of radius 2 settles (a cone 3 m wide at the base, deep enough under the plus for a
+##    scoop to take loose only); a scoop at S8 holds scoop_volume within 1 %, the loose over the box
 ##    of 12 dropped by what it holds within 0.1 % and the surface is bitwise unchanged (loose first);
 ## 2. dumped at S8 + (0, 6), the shovel is empty and the loose over the box is back within 0.1 %;
 ## 3. a scoop of the bare ground at B = S8 - (0, 6) holds scoop_volume within 1 %, the annulus cut over the box
@@ -696,7 +697,7 @@ func _shovel(s8: Vector2i) -> bool:
 	var scoops0 := _tools.scoops
 	var dumps0 := _tools.dumps
 	var box := _box(s8, 12)
-	_stamp(_op(s8, 2, EditLayer.MODE_DEPOSIT, 3.0))
+	_stamp(_op(s8, 2, EditLayer.MODE_DEPOSIT, 20.0))
 	var waited := await _settled(s8)
 	var s0 := _read("surface")
 	var l0 := _vol(_read("loose"), s0, box)
@@ -705,7 +706,7 @@ func _shovel(s8: Vector2i) -> bool:
 	var edit_ms := _timed.slice(timed0).filter(func(e: Dictionary) -> bool: return e.name == "edit").map(func(e: Dictionary) -> float: return e.ms)
 	var s1 := _read("surface")
 	var l1 := _vol(_read("loose"), s1, box)
-	print("shovel: a 3 m³ pile at %s settled in %.2f s; the scoop holds %.6f m³ (%+.4f %% of %.2f), the loose over the box of 12 dropped %.6f m³ (%+.4f %% of it), surface unchanged: %s; its edit list %s ms" % [
+	print("shovel: a 20 m³ pile at %s settled in %.2f s; the scoop holds %.6f m³ (%+.4f %% of %.2f), the loose over the box of 12 dropped %.6f m³ (%+.4f %% of it), surface unchanged: %s; its edit list %s ms" % [
 			s8, waited, held, (held / t.scoop_volume - 1.0) * 100.0, t.scoop_volume, l0 - l1, _residual("scoop loose", l0 - l1, held),
 			s1 == s0, edit_ms])
 	_report("scoop takes loose first", waited >= 0.0 and absf(held - t.scoop_volume) <= 0.01 * t.scoop_volume
