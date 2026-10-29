@@ -112,7 +112,8 @@ bool blocked(ivec2 c) {
 	return d.x * d.x + d.y * d.y <= pc.obstacle_radius * pc.obstacle_radius;
 }
 
-// Marks the slot of texel t active (TerrainSim reads and clears the stats every frame).
+// Marks the slot of texel t active (TerrainSim reads and clears the stats in a frame that ran a sim list or
+// follows a stamp or an apply since the last readback).
 void flag(ivec2 t) {
 	atomicOr(stats[(t.y / TILE) * pc.slots + t.x / TILE], 1u);
 }

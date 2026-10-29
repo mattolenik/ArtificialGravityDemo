@@ -257,9 +257,10 @@ func _process(delta: float) -> void:
 		_hold(b, not patch.covers(station.to_local(b.global_position)))
 
 
-## Packs the active tiles synchronously first, so a quit mid-slump keeps the pile (with persist_edits).
+## With persist_edits, packs the active tiles synchronously first, so a quit mid-slump keeps the pile; without,
+## nothing is saved, so the synchronous readback is skipped.
 func _exit_tree() -> void:
-	if window != null:
+	if persist_edits and window != null:
 		window.edits.pack_tiles_sync(window, sim.active_tiles())
 	_save_edits()
 

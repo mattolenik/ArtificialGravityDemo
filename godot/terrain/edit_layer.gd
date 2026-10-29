@@ -6,7 +6,10 @@
 ## survives the window scrolling away and back. Blobs move as whole PackedByteArrays, never looped here.
 ## Limit (decision 4): a stamped tile evicted and re-entered before its readback lands gets its old blob.
 ## Slice 3 adds the tool stamps (stamp_op: bore, deposit, push, tamp, spill), a bore counter read back after
-## each counted stamp, and a stats buffer of one activity flag per window slot for TerrainSim.
+## each counted stamp, and a stats buffer of one activity flag per window slot for TerrainSim. The apply flags
+## every entering tile that holds loose or water (a pile mid-slump resumes), so at every start each tile with a
+## pile goes active for settle_time, is re-packed into `unsaved` and re-saved byte-identical at the next
+## autosave or exit: expected writes, not a leak.
 class_name EditLayer
 extends RefCounted
 

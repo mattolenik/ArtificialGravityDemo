@@ -77,10 +77,14 @@ static func stop_reason_for(depth: float, bore_depth: float, volume: float, wet:
 
 
 ## Deposits what has landed, stops on a landing's word, then makes the bore tick that is due (refused, and
-## counted as such, while its tiles are out of the window).
+## counted as such, while its tiles are out of the window). Neither deposits nor ticks while the renderer is
+## stalled; a pause of _process skips the ticks it missed rather than bunching them.
 func _process(_delta: float) -> void:
 	var t := terrain.tool_params
-	if _pending > 0.0:
+	var now := Time.get_ticks_msec()
+	# No GPU chatter at a stalled renderer (ruling 14): a deposit and a tick are both timed edit lists.
+	var stalled := terrain.sim.stalled()
+	if _pending > 0.0 and not stalled:
 		var amount := _pending if _pending_wet else _pending * terrain.materials.swell_factor[0]
 		if terrain.stamp_tool(_op(spoil_cell(), t.spoil_radius, EditLayer.MODE_SPILL if _pending_wet else EditLayer.MODE_DEPOSIT, amount)):
 			if _pending_wet:
@@ -92,9 +96,12 @@ func _process(_delta: float) -> void:
 		running = false
 		print("Auger stopped: " + stop_reason)
 		stopped.emit(stop_reason)
-	if not running or Time.get_ticks_msec() < _next_tick or (mode == "bore" and depth >= t.bore_depth - DEPTH_EPS):
+	if stalled:
+		_next_tick = now
 		return
-	_next_tick += roundi(1000.0 / t.bore_rate)
+	if not running or now < _next_tick or (mode == "bore" and depth >= t.bore_depth - DEPTH_EPS):
+		return
+	_next_tick = maxi(_next_tick + roundi(1000.0 / t.bore_rate), now)
 	var op := _op(cell, t.bore_radius, EditLayer.MODE_BORE, t.bore_step)
 	op.limit = t.pump_rate / t.bore_rate
 	op.counted = _counted

@@ -67,13 +67,20 @@ func _unhandled_input(event: InputEvent) -> void:
 
 ## Places an auger at the cell of station-local (theta, z), its spoil disc toward side, and stands it on the
 ## collider there (the macro surface where no patch covers it). Null, with a line printed, while an auger is
-## placed or where its bore or spoil disc could not be stamped.
+## placed, within bore_radius + 1 cells of the player's cell (the shaft would stand through the player), or
+## where its bore or spoil disc could not be stamped.
 func place(theta: float, z: float, side: Vector2i) -> Auger:
 	var t := terrain.tool_params
 	var p := terrain.params
 	var c := p.cell_of(theta, z)
 	if auger != null:
 		print("One auger at a time: pick it up first")
+		return null
+	var me := player_cell()
+	@warning_ignore("integer_division")
+	var d := Vector2i(posmod(c.x - me.x + p.n_theta() / 2, p.n_theta()) - p.n_theta() / 2, c.y - me.y)
+	if d.length_squared() <= (t.bore_radius + 1) * (t.bore_radius + 1):
+		print("Too close to place the auger")
 		return null
 	if not (terrain.can_stamp(c, t.bore_radius) and terrain.can_stamp(Auger.spoil_cell_of(c, side, t.spoil_offset, p.n_theta()), t.spoil_radius)):
 		print("The auger cannot bore there")

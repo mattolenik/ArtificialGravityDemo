@@ -185,7 +185,7 @@ func step(window: TerrainWindow, delta: float) -> Array[Vector2i]:
 
 
 ## Whether the renderer has stalled: a stats readback has gone unanswered for over STALL_FRAMES process
-## frames, which happens only while no frame is drawn (the feet do not stamp then, Tools).
+## frames, which happens only while no frame is drawn (the feet do not stamp then, Tools, nor does the auger).
 func stalled() -> bool:
 	return _waiting_since >= 0 and Engine.get_process_frames() - _waiting_since > STALL_FRAMES
 
