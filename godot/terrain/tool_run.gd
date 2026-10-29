@@ -44,8 +44,9 @@
 ##    within 0.5 %, the shaft is 10 m down and bare, no loose within 2 cells of A (decision 6), the pile at
 ##    repose, no tick refused; the edit-shape landings at most 5 a second over the bore and at most one zone
 ##    move (printed and asserted).
-## box: a 1 m box dropped 2 m over the pile's top rests on it after 3 s, its lowest corner on the collider and
-##    its bottom at surface + loose.
+## box: a 1 m box dropped 2 m over the pile's top comes to rest within 8 s (a cube cannot balance on the apex,
+##    so it may roll down), its lowest corner on the collider and at surface + loose of the cell where it
+##    rests, inside the pile's box of 24.
 ## pickup: the auger picked up, the shaft stays bare for 1 s; a 2 m³ column on the cell beside the shaft's
 ##    rim slumps into the open hole, the box's loose growing by 2 m³.
 ## pause: an auger at A + (0, 20), a second one refused; with the player 600 m spinward its ticks are refused
@@ -66,8 +67,9 @@ const Smoke := preload("res://terrain/smoke_run.gd")
 ## The GPU budget of the edit and pack lists in ms, and of the sim list per active tile.
 const BUDGET := {"edit": 0.5, "pack": 0.5}
 const SIM_BUDGET := 0.25
-## The edge neighbours in sim.glsl's order.
+## The edge neighbours in sim.glsl's order, then the diagonal ones, which loose slumps to as well.
 const DIR4: Array[Vector2i] = [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]
+const DIAG: Array[Vector2i] = [Vector2i(1, 1), Vector2i(-1, 1), Vector2i(-1, -1), Vector2i(1, -1)]
 
 var _station: Station
 var _terrain: Terrain
@@ -570,13 +572,17 @@ func _bore(a: Vector2i) -> bool:
 		if _f(loose, c) > _f(loose, rim_at):
 			rim_at = c
 	var rim := _f(loose, rim_at)
+	# The pile's reach: how near A's centre the nearest cell holding over 1 cm of loose lies, in m.
+	var piled_cells: Array[Vector2i] = []
+	piled_cells.assign(box.filter(func(c: Vector2i) -> bool: return _f(loose, c) > 0.01))
+	var reach := _nearest(a, piled_cells, s1)
 	var steep := _steepest(box, shaft)
 	var repose := tan(deg_to_rad(_terrain.materials.repose_dry[0])) * 1.02
 	print("bore: stopped (%s) after %.2f s, %d ticks, depth %.4f m, %d refused; settled in %.2f s; counter %.6f m³, annulus %.6f m³ (%+.4f %%)" % [
 			reason, wall, auger.ticks, auger.depth, auger.refused, waited, auger.removed, removed, (auger.removed / removed - 1.0) * 100.0])
-	print("bore: loose %.6f m³ over the box for %.6f · %.2f = %.6f (%+.4f %%), deposited %.6f (%+.4f %%); shaft drops %s m, bare: %s; loose within 2 cells max %.6f m at A %+d, %+d; steepest %.4f, repose · 1.02 %.4f" % [
+	print("bore: loose %.6f m³ over the box for %.6f · %.2f = %.6f (%+.4f %%), deposited %.6f (%+.4f %%); shaft drops %s m, bare: %s; loose within 2 cells max %.6f m at A %+d, %+d, the nearest over 1 cm %.2f m from A; steepest %.4f, repose · 1.02 %.4f" % [
 			piled, removed, swell, removed * swell, (piled / (removed * swell) - 1.0) * 100.0, auger.deposited,
-			(piled / auger.deposited - 1.0) * 100.0, drops, bare, rim, rim_at.x - a.x, rim_at.y - a.y, steep, repose])
+			(piled / auger.deposited - 1.0) * 100.0, drops, bare, rim, rim_at.x - a.x, rim_at.y - a.y, reach, steep, repose])
 	var rate := _edit_bakes / wall
 	print("bore: %d edit-shape landings in %.2f s: %.2f a second; %d zone moves (the zone was at %s, A is %s)" % [
 			_edit_bakes, wall, rate, _zone_moves, zone0, a])
@@ -600,7 +606,8 @@ func _on_baked(kind: String, _ms: float) -> void:
 		_last_zone = _terrain.patch._issued_zone
 
 
-## Phase box: a 1 m box dropped 2 m over the pile's top comes to rest on it (see the header).
+## Phase box: a 1 m box dropped 2 m over the pile's top comes to rest on the collider where it ends up, by the
+## pile (see the header).
 func _box_drop(a: Vector2i) -> void:
 	var loose := _read("loose")
 	var top := a
@@ -615,17 +622,38 @@ func _box_drop(a: Vector2i) -> void:
 	var at := _center(top)
 	box.global_transform = _station.global_transform * Transform3D(patch.transform.basis,
 			patch.surface_point(Cyl.position(at.x, at.y, 0.0, _terrain.params.radius), 2.0))
-	await get_tree().create_timer(3.0).timeout
+	# Still: under 0.05 m/s for 0.25 s on end, from 0.5 s on (it starts at rest in the air); at most 8 s.
+	var start := Time.get_ticks_msec()
+	var still_since := -1
+	while Time.get_ticks_msec() - start < 8000:
+		await get_tree().process_frame
+		var now := Time.get_ticks_msec()
+		if now - start < 500 or box.linear_velocity.length() >= 0.05:
+			still_since = -1
+		elif still_since < 0:
+			still_since = now
+		elif now - still_since >= 250:
+			break
+	var waited := (Time.get_ticks_msec() - start) / 1000.0
 	var q := _station.to_local(box.global_position)
 	var c := _terrain.params.cell_of(Cyl.theta_of(q), q.z)
-	var bottom := Cyl.height_of(q, _terrain.params.radius) - 0.5
+	# Its bottom: its lowest corner's height, which is centre - 0.5 for a level box; it may rest tilted against
+	# the pile's foot. The tilt is from the nearest of its axes to the local up.
+	var bottom := INF
+	for i in 8:
+		var corner := Vector3(i & 1, (i >> 1) & 1, (i >> 2) & 1) - Vector3.ONE * 0.5
+		bottom = minf(bottom, Cyl.height_of(_station.to_local(box.global_transform * corner), _terrain.params.radius))
+	var up := -_station.down_at(box.global_position)
+	var b := box.global_basis.orthonormalized()
+	var tilt := rad_to_deg(acos(minf(maxf(maxf(absf(b.x.dot(up)), absf(b.y.dot(up))), absf(b.z.dot(up))), 1.0)))
 	loose = _read("loose")
 	var ground := _f(_read("surface"), c) + _f(loose, c)
 	var corner := _corner_clearance(box)
 	var speed := box.linear_velocity.length()
-	print("box: dropped over %s, rests at %s (%.3f m loose): %.4f m/s, lowest corner %+.4f m over the collider, bottom %+.4f m over surface + loose" % [
-			top, c, _f(loose, c), speed, corner, bottom - ground])
-	_report("box rests on the pile", speed < 0.05 and corner >= -0.05 and corner <= 0.1 and absf(bottom - ground) <= 0.1)
+	print("box: dropped over %s (%.3f m loose), after %.2f s at %s, top %+d, %+d (%.3f m loose): %.4f m/s, tilted %.1f°, lowest corner %+.4f m over the collider, bottom %+.4f m over surface + loose" % [
+			top, _f(loose, top), waited, c, c.x - top.x, c.y - top.y, _f(loose, c), speed, tilt, corner, bottom - ground])
+	_report("box comes to rest on the collider by the pile", speed < 0.05 and corner >= -0.05 and corner <= 0.1
+			and absf(bottom - ground) <= 0.1 and _box(a, 24).has(c))
 	box.queue_free()
 
 
@@ -957,8 +985,9 @@ func _area(s: float) -> float:
 	return (_terrain.params.radius - s) * _terrain.params.dtheta()
 
 
-## The steepest (H_c − H_n) / w from a cell of cells holding over 1 cm of loose to an edge neighbour not in
-## blocked, H = surface + loose and w sim.glsl's edge distance (the mean width across, 1 m along).
+## The steepest (H_c − H_n) / w from a cell of cells holding over 1 cm of loose to an edge or diagonal
+## neighbour not in blocked, H = surface + loose and w sim.glsl's edge distance (the mean width across, 1 m
+## along, sqrt(across² + 1) diagonally).
 func _steepest(cells: Array[Vector2i], blocked: Array[Vector2i]) -> float:
 	var p := _terrain.params
 	var loose := _read("loose")
@@ -967,11 +996,12 @@ func _steepest(cells: Array[Vector2i], blocked: Array[Vector2i]) -> float:
 	for c in cells:
 		if _f(loose, c) <= 0.01:
 			continue
-		for d in DIR4:
+		for d in DIR4 + DIAG:
 			var n := Vector2i(posmod(c.x + d.x, p.n_theta()), c.y + d.y)
 			if blocked.has(n):
 				continue
-			var w := 1.0 if d.x == 0 else 0.5 * ((p.radius - _f(surface, c)) + (p.radius - _f(surface, n))) * p.dtheta()
+			var across := 0.5 * ((p.radius - _f(surface, c)) + (p.radius - _f(surface, n))) * p.dtheta()
+			var w := 1.0 if d.x == 0 else sqrt(across * across + d.y * d.y)
 			worst = maxf(worst, (_f(surface, c) + _f(loose, c) - _f(surface, n) - _f(loose, n)) / w)
 	return worst
 
