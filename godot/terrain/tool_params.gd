@@ -28,6 +28,10 @@ extends Resource
 @export var scoop_radius := 1
 ## How far from the player the crosshair may scoop or dump, in m.
 @export var shovel_reach := 3.0
+## Seconds T must stay down, while the shovel holds dirt, before it scoops more (a shorter press dumps).
+@export var scoop_hold_delay := 0.25
+## Seconds between scoops while T is held.
+@export var scoop_interval := 0.25
 ## The feet's disc radius in cells (1: a five-cell plus).
 @export var foot_radius := 1
 ## The share of each footprint cell's loose a push moves to the cell ahead.

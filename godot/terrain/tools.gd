@@ -3,10 +3,11 @@
 ## ground; every stamp goes through Terrain.stamp_tool, from Player's signals on the main thread after
 ## move_and_slide, one stamp per signal. The auger: E places one where the crosshair hits the ground within
 ## place_reach, its spoil on the far side from the player, and E within pickup_distance of it picks it up;
-## one at a time, and E does nothing while the fly camera is the viewer (it climbs on E). The shovel: T scoops
-## scoop_volume where the crosshair hits the ground within shovel_reach (loose first, then solid dirt and clay
-## with the swell), and T again dumps what it holds there as loose dirt; the held scoop shows on the HUD line
-## and is not saved.
+## one at a time, and E does nothing while the fly camera is the viewer (it climbs on E). The shovel: T held
+## scoops scoop_volume every scoop_interval where the crosshair hits the ground within shovel_reach (loose
+## first, then solid dirt and clay with the swell), the scoops adding up in the hand; a tap of T dumps what it
+## holds there as loose dirt. Holding dirt, a press shorter than scoop_hold_delay is the tap and a longer one
+## scoops on; empty, the first scoop fires on the press. The held dirt shows on the HUD line and is not saved.
 class_name Tools
 extends Node
 
@@ -30,6 +31,11 @@ var dumps := 0
 ## Whether a scoop's counter is in flight, and its landing's m³ (-1 until it lands; _process consumes it).
 var _scoop_pending := false
 var _scoop_result := -1.0
+## T's press: down, when it went down (ms), whether a scoop fired during it, and the last scoop's time (ms).
+var _t_down := false
+var _t_down_at := 0
+var _t_scooped := false
+var _t_scoop_at := 0
 
 
 func _ready() -> void:
@@ -60,13 +66,12 @@ func _on_landed(speed: float) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	var key := event as InputEventKey
-	if key == null or not key.pressed or key.echo or terrain.viewer != player:
+	if key == null or key.echo or terrain.viewer != player:
 		return
 	if key.keycode == KEY_T:
-		if not terrain.sim.stalled():
-			shovel()
+		_on_t(key.pressed)
 		return
-	if key.keycode != KEY_E:
+	if not key.pressed or key.keycode != KEY_E:
 		return
 	var at := terrain.station.to_local(player.global_position)
 	if auger != null:
@@ -123,14 +128,26 @@ func pickup() -> void:
 	auger = null
 
 
-## T: dumps what the shovel holds, else scoops; nothing while a scoop's counter is in flight.
-func shovel() -> void:
-	if _scoop_pending:
+## T down starts a press (_process scoops during it); T up ends it, and a press that scooped nothing while
+## the shovel holds dirt is the tap that dumps. Nothing while the renderer is stalled.
+func _on_t(pressed: bool) -> void:
+	if pressed:
+		_t_down = true
+		_t_down_at = Time.get_ticks_msec()
+		_t_scooped = false
 		return
-	if held > 0.0:
+	var tap := _t_down and not _t_scooped
+	_t_down = false
+	if tap and held > 0.0 and not _scoop_pending and not terrain.sim.stalled():
 		dump()
-	else:
-		scoop()
+
+
+## Whether a held T scoops now: at once while the shovel is empty, after scoop_hold_delay s of the press while
+## it holds dirt (a shorter press is the dump tap), and then every scoop_interval s since the last scoop.
+static func hold_scoops(held_m3: float, press_s: float, scooped: bool, since_scoop_s: float, t: ToolParams) -> bool:
+	if scooped:
+		return since_scoop_s >= t.scoop_interval
+	return held_m3 <= 0.0 or press_s >= t.scoop_hold_delay
 
 
 ## Scoops scoop_volume at cell, or where the crosshair hits within shovel_reach when none is given; its counter
@@ -163,17 +180,31 @@ func _scooped(volume: float, _wet: bool) -> void:
 	_scoop_result = volume
 
 
-## Takes up a landed scoop: what it took is held, or a scoop that found only rock says so.
+## Takes up a landed scoop (what it took is held, or a scoop that found only rock says so), then scoops again
+## while T is held and the last scoop has landed. A refused scoop, a scoop that found rock, or the viewer
+## leaving the player ends the press's scooping, so a hold on the sky or on rock does not print every interval.
 func _process(_delta: float) -> void:
-	if _scoop_result < 0.0:
+	if _scoop_result >= 0.0:
+		_scoop_pending = false
+		if _scoop_result <= 1e-6:
+			print("Nothing to scoop here")
+			_t_down = false
+		else:
+			held += _scoop_result
+		_scoop_result = -1.0
+		_show_held()
+	if terrain.viewer != player:
+		_t_down = false
+	if not _t_down or _scoop_pending or terrain.sim.stalled():
 		return
-	_scoop_pending = false
-	if _scoop_result <= 1e-6:
-		print("Nothing to scoop here")
-	else:
-		held += _scoop_result
-	_scoop_result = -1.0
-	_show_held()
+	var now := Time.get_ticks_msec()
+	if not hold_scoops(held, (now - _t_down_at) / 1000.0, _t_scooped, (now - _t_scoop_at) / 1000.0, terrain.tool_params):
+		return
+	scoop()
+	_t_scooped = true
+	_t_scoop_at = now
+	if not _scoop_pending:
+		_t_down = false
 
 
 func _show_held() -> void:
