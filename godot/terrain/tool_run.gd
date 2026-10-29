@@ -68,15 +68,27 @@
 ##    player's cell + (0, 4) pools in that rock hollow: after 3 s the saturation is bitwise unchanged, nothing
 ##    absorbed, the window's sheet 1 m³ within 2 %. Then an auger 3 cells spinward of the player stops at rock
 ##    before 10 m, its counter matching the annulus, every shaft cell at its bedrock_top; then back to the spawn.
+## Persistence (Task 8), back at the spawn:
+## scroll (k = 3, S6): a 20 m³ deposit of radius 2, 0.3 s on still slumping (a tile active), is read over the
+##    box of 24; the player goes 600 m spinward (S6's tile evicted, packed as it leaves) and back: the pile's
+##    volume is kept within 0.1 % at once (its blob re-applied) and within 0.5 % once settled, at repose; the
+##    window's water (sheet plus pore water, the sheet phase's puddle among it), read before and after over the
+##    same wanted set, within 2 %.
+## restart (S7 = spawn_cell + (-6, 0)): an auger bores there, its spoil side (-1, 0); 8 s on, mid-bore, the
+##    terrain restarts in-process (_restart): the edited tiles load from the world copy, no auger stands, and
+##    stood at S7 the hole's surface is within two bore steps, the loose over the box of 24 within 0.3 m³ + 1 %
+##    (one tick's spoil at most) and the window's water within 2 % of what they were before.
 ## A shot tilts the camera down under the light bar's noon, waits 6 frames, saves the screenshot and levels the
 ## camera, then runs the P dump (debug_window_dump.gd) and checks its loose volume against the driver's over the
 ## window within 1 %.
 ## Then prints the GPU times of the edit (stamp), pack and sim lists against their budget, reported and not
 ## asserted (Vulkan only: Metal reports zeros, shown as n/a), and PASS and exits 0 when every check holds,
-## else FAIL and 1; persist_edits is off, so nothing is saved. Last, a small deposit makes a tile active and
-## the run quits at once, so Terrain._exit_tree packs it synchronously during the engine's quit (the path an
-## in-process restart does not take); the line printed then says whether its blob landed, and an ERROR line
-## fails the run when it did not.
+## else FAIL and 1. The driver runs on WORLD, a copy of the default world (params.tres and maps.res copied when
+## missing, its tiles/ emptied at every start) with persist_edits on, so the default world's saved edits are
+## neither loaded nor written, and the restart has its own tiles to load. Last, a small deposit makes a tile
+## active and the run quits at once, so Terrain._exit_tree packs it synchronously during the engine's quit (the
+## path an in-process restart does not take); the line printed then says whether its blob landed, and an ERROR
+## line fails the run when it did not.
 ## After editing a .glsl run `godot --headless --path . --import` first (the suite does it).
 ## Run: godot --rendering-driver vulkan --path . res://terrain/tool_run.tscn
 extends Node
@@ -88,10 +100,13 @@ const SIM_BUDGET := 0.25
 ## The edge neighbours in sim.glsl's order, then the diagonal ones, which loose slumps to as well.
 const DIR4: Array[Vector2i] = [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]
 const DIAG: Array[Vector2i] = [Vector2i(1, 1), Vector2i(-1, 1), Vector2i(-1, -1), Vector2i(1, -1)]
+## The world the driver runs on, under user://worlds/.
+const WORLD := "tool_run"
 
+## The instance of main.tscn, and its nodes the driver uses (_open_main binds them, again after _restart).
+var _main: Node
 var _station: Station
 var _terrain: Terrain
-var _started := false
 var _ok := true
 ## Every timed GPU list in order: {name, ms}.
 var _timed: Array[Dictionary] = []
@@ -113,28 +128,66 @@ var _active_max := {}
 var _edit_bakes := 0
 var _zone_moves := 0
 var _last_zone := Vector2i.ZERO
+## The sim steps of the terrains _restart freed.
+var _steps := 0
 
 
 func _ready() -> void:
-	var main: Node = load("res://main.tscn").instantiate()
-	_station = main.get_node("Station")
+	_fresh_world()
+	if await _open_main():
+		_route()
+
+
+## Copies the default world's params.tres and maps.res into WORLD when missing and removes every file under its
+## tiles/; the default world is only read.
+func _fresh_world() -> void:
+	var dir := "user://worlds/%s/" % WORLD
+	DirAccess.make_dir_recursive_absolute(dir + "tiles")
+	for file: String in ["params.tres", "maps.res"]:
+		if not FileAccess.file_exists(dir + file) and DirAccess.copy_absolute("user://worlds/default/" + file, dir + file) != OK:
+			push_error("Copying the default world's %s into %s failed." % [file, dir])
+	for file in DirAccess.get_files_at(dir + "tiles"):
+		DirAccess.remove_absolute(dir + "tiles/" + file)
+
+
+## Instantiates main.tscn on WORLD with persist_edits on, binds the driver to its nodes and its overlay's timed,
+## adds it and waits for its first collider patch, then a frame (collider_live fires inside the patch's readback
+## landing, where no GPU work may be issued). False after quitting when the patch is not live in 1200 frames.
+func _open_main() -> bool:
+	_main = load("res://main.tscn").instantiate()
+	_station = _main.get_node("Station")
 	_terrain = _station.get_node("Terrain")
-	_terrain.persist_edits = false
+	_terrain.world_name = WORLD
+	_terrain.persist_edits = true
 	_player = _station.get_node("Player")
-	_tools = main.get_node("Tools")
-	main.get_node("Panel/Box/Timing").timed.connect(func(pass_name: String, ms: float) -> void:
-		_timed.append({"name": pass_name, "ms": ms})
-		var recent := _counts.slice(-5)
-		if pass_name == "sim" and not _phase.is_empty() and recent.size() == 5 and recent.min() == recent.max() and recent[0] > 0:
-			_per_tile(_phase).append(ms / recent[0]))
-	_terrain.collider_live.connect(_route, CONNECT_ONE_SHOT)
-	add_child(main)
+	_tools = _main.get_node("Tools")
+	_main.get_node("Panel/Box/Timing").timed.connect(_on_timed)
+	var live := [false]
+	_terrain.collider_live.connect(func() -> void: live[0] = true, CONNECT_ONE_SHOT)
+	add_child(_main)
 	for i in 1200:
-		if _started:
-			return
 		await get_tree().process_frame
-	push_error("The first collider patch did not go live in 1200 frames.")
-	get_tree().quit(1)
+		if live[0]:
+			await get_tree().process_frame
+			return true
+	return _quit("The first collider patch did not go live in 1200 frames.")
+
+
+## The in-process restart: frees main.tscn (Terrain._exit_tree packs its active tiles and saves the edits) and,
+## two frames on, opens it again (_open_main). False after quitting on a timeout.
+func _restart() -> bool:
+	_steps += _terrain.sim.steps
+	_main.queue_free()
+	await _frames(2)
+	return await _open_main()
+
+
+## A timed GPU list, and for a sim list its time per active tile when the count held for the five frames before.
+func _on_timed(pass_name: String, ms: float) -> void:
+	_timed.append({"name": pass_name, "ms": ms})
+	var recent := _counts.slice(-5)
+	if pass_name == "sim" and not _phase.is_empty() and recent.size() == 5 and recent.min() == recent.max() and recent[0] > 0:
+		_per_tile(_phase).append(ms / recent[0])
 
 
 ## The route is scripted: a stray click must not capture the mouse, nor mouse movement turn the player.
@@ -144,7 +197,8 @@ func _input(event: InputEvent) -> void:
 
 
 func _process(_delta: float) -> void:
-	if _phase.is_empty():
+	# Within _restart, _terrain is freed until _open_main binds the next one.
+	if _phase.is_empty() or not is_instance_valid(_terrain):
 		return
 	var active := _terrain.sim.active_tiles()
 	_counts.append(active.size())
@@ -162,9 +216,6 @@ func _per_tile(phase: String) -> Array[float]:
 
 
 func _route() -> void:
-	_started = true
-	# collider_live fires inside the patch's readback landing, where no GPU work may be issued.
-	await get_tree().process_frame
 	var p := _terrain.params
 	var spawn := p.cell_of(_terrain.maps.spawn.x, _terrain.maps.spawn.y)
 	await _stamps(spawn + Vector2i(0, 40))
@@ -204,6 +255,12 @@ func _route() -> void:
 		return
 	_phase = "rock"
 	if not await _rock(spawn):
+		return
+	_phase = "scroll"
+	if not await _scroll(spawn + Vector2i(0, 120), spawn):
+		return
+	_phase = "restart"
+	if not await _restart_mid_bore(spawn + Vector2i(-6, 0)):
 		return
 	_phase = ""
 	# Let the last timestamps arrive.
@@ -951,6 +1008,77 @@ func _rock(spawn: Vector2i) -> bool:
 	return await _teleport(spawn)
 
 
+## Phase scroll at s6, from the spawn: a pile mid-slump is packed as the window scrolls away from it and
+## re-applied when it comes back, and the window's water is kept (see the header). False after quitting on a
+## timeout.
+func _scroll(s6: Vector2i, spawn: Vector2i) -> bool:
+	var window := _terrain.window
+	var box := _box(s6, 24)
+	_stamp(_op(s6, 2, EditLayer.MODE_DEPOSIT, 20.0))
+	await get_tree().create_timer(0.3).timeout
+	var slumping := _terrain.sim.active_tiles()
+	var l0 := _vol(_read("loose"), _read("surface"), box)
+	var w0 := _water()
+	var away := spawn + Vector2i(roundi(600.0 / (_terrain.params.radius * _terrain.params.dtheta())), 0)
+	if not await _teleport(away):
+		return false
+	var tile := window.tile_of_cell(s6.x, s6.y)
+	var evicted := not window.is_resident(tile)
+	if not await _teleport(spawn):
+		return false
+	var l1 := _vol(_read("loose"), _read("surface"), box)
+	var w1 := _water()
+	var waited := await _settled(s6)
+	var l2 := _vol(_read("loose"), _read("surface"), box)
+	var steep := _steepest(box, [])
+	var repose := tan(deg_to_rad(_terrain.materials.repose_dry[0])) * 1.02
+	print("scroll: active 0.3 s after a 20 m³ deposit at %s: %s; %.6f m³ over the box; 600 m away at %s, %s evicted: %s; back: %.6f m³ at once (%+.4f %%), settled in %.2f s %.6f m³ (%+.4f %%), steepest %.4f, repose · 1.02 %.4f" % [
+			s6, slumping, l0, away, tile, evicted, l1, (l1 / l0 - 1.0) * 100.0, waited, l2, (l2 / l0 - 1.0) * 100.0, steep, repose])
+	print("scroll: the window's water %.6f m³ before, %.6f m³ back (%+.4f %%)" % [w0, w1, (w1 / w0 - 1.0) * 100.0])
+	_report("pile survives a scroll mid-slump", not slumping.is_empty() and evicted and absf(l1 - l0) <= 1e-3 * l0
+			and waited >= 0.0 and absf(l2 - l0) <= 0.005 * l0 and steep <= repose and w0 > 0.0 and absf(w1 - w0) <= 0.02 * w0)
+	return true
+
+
+## Phase restart at s7: an auger stopped mid-bore by an in-process restart (_restart) leaves its hole and pile,
+## and the window keeps its water, from the tiles saved at the exit; no auger stands after (see the header).
+## False after quitting on a timeout.
+func _restart_mid_bore(s7: Vector2i) -> bool:
+	var step := _terrain.tool_params.bore_step
+	var box := _box(s7, 24)
+	var ground := _f(_read("surface"), s7)
+	var at := _center(s7)
+	var auger := _tools.place(at.x, at.y, Vector2i(-1, 0))
+	if auger == null:
+		return _quit("The auger was not placed at %s." % s7)
+	var spoil := auger.spoil_cell()
+	await get_tree().create_timer(8.0).timeout
+	var depth0 := auger.depth
+	var surface := _read("surface")
+	var hole0 := _f(surface, s7)
+	var l0 := _vol(_read("loose"), surface, box)
+	var w0 := _water()
+	var center0 := _terrain.window.center_tile
+	if not await _restart():
+		return false
+	var blobs := _terrain.window.edits.blobs.size()
+	var gone := _tools.auger == null
+	if not await _teleport(s7):
+		return false
+	surface = _read("surface")
+	var hole1 := _f(surface, s7)
+	var l1 := _vol(_read("loose"), surface, box)
+	var w1 := _water()
+	var waited := await _settled(spoil)
+	print("restart: auger at %s, %.4f m bored after 8 s; after the restart %d blobs loaded, no auger: %s; the hole %.4f m deep, was %.4f (%+.4f m, two steps %.4f); %.6f m³ loose over the box, was %.6f (%+.6f m³, allowed %.6f); window %s, was %s" % [
+			s7, depth0, blobs, gone, ground - hole1, ground - hole0, hole0 - hole1, 2.0 * step, l1, l0, l1 - l0, 0.3 + 0.01 * l0,
+			_terrain.window.center_tile, center0])
+	print("restart: the window's water %.6f m³ after, %.6f m³ before (%+.4f %%); settled in %.2f s" % [w1, w0, (w1 / w0 - 1.0) * 100.0, waited])
+	_report("restart mid-bore keeps the hole, the pile and the puddle", blobs >= 3 and gone and absf(hole1 - hole0) <= 2.0 * step
+			and absf(l1 - l0) <= 0.3 + 0.01 * l0 and w0 > 0.0 and absf(w1 - w0) <= 0.02 * w0 and waited >= 0.0)
+	return true
+
+
 ## Waits for auger's stopped signal, at most limit s: its reason, "" on a timeout.
 func _stopped(auger: Auger, limit: float) -> String:
 	var reason: Array[String] = [""]
@@ -1265,6 +1393,16 @@ func _pore(sat0: PackedByteArray, sat1: PackedByteArray, material: PackedByteArr
 	return v
 
 
+## The window's water in m³: its sheet plus its pore water (_pore from dry ground; the detail pass leaves
+## saturation 0).
+func _water() -> float:
+	var surface := _read("surface")
+	var sat := _read("saturation")
+	var dry := PackedByteArray()
+	dry.resize(sat.size())
+	return _sum(_read("water_depth"), surface) + _pore(dry, sat, _read("material"), _read("loose"), surface)
+
+
 ## The volume between surfaces s0 and s1 over cells, each cell the annulus Σ 0.5 · Δθ · (s0 − s1) ·
 ## (2 · (R − s0) + (s0 − s1)), the bore counter's product form.
 func _removed(s0: PackedByteArray, s1: PackedByteArray, cells: Array[Vector2i]) -> float:
@@ -1314,6 +1452,6 @@ func _summary() -> void:
 	for phase: String in _sim_ms:
 		all.append_array(_sim_ms[phase])
 		print("  sim   %-5s per active tile %s; active tiles max %d" % [phase, Smoke._stat(_sim_ms[phase], SIM_BUDGET), _active_max[phase]])
-	print("  sim   all   per active tile %s; %d steps" % [Smoke._stat(all, SIM_BUDGET), _terrain.sim.steps])
+	print("  sim   all   per active tile %s; %d steps" % [Smoke._stat(all, SIM_BUDGET), _steps + _terrain.sim.steps])
 	print("  the sheet and pump phases carry the driver's own synchronous reads (a 1 MB water read every 0.5 s), and so does")
 	print("  the walk phase (a 1 MB surface and a 1 MB loose read every 0.1 s, 15 of each)")
