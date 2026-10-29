@@ -41,8 +41,10 @@ const SAVE_INTERVAL := 30.0
 const GROUND_GROUP := "terrain_ground"
 ## Meta key of a body's hold state: true while Terrain is holding it.
 const HELD_META := "terrain_held"
-## Frames after a tool stamp within which its tile's activity flag lands (the stats readback's latency).
-const RETOUCH_FRAMES := 3
+## Frames after a tool stamp within which its tile's activity flag must land, or the stamp is forgotten. The
+## stats readback took at most 3 measured; twice that, so a flag landing a few frames late does not stop the
+## collider following a pile.
+const RETOUCH_FRAMES := 6
 
 var params: WorldParams
 var maps: MacroMaps
