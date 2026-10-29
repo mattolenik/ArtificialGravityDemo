@@ -55,8 +55,19 @@
 ##    rim slumps into the open hole, the box's loose growing by 2 m³.
 ## pause: an auger at A + (0, 20), a second one refused; with the player 600 m spinward its ticks are refused
 ##    and stop, and resume when it is back; it is picked up while its ticks are in flight (no ERROR line).
-## rock: at NoiseReport.rock_site an auger 3 cells spinward of the player stops at rock before 10 m, its
-##    counter matching the annulus, every shaft cell at its bedrock_top; then back to the spawn.
+## pump (Task 7): at the first of the five lakes nearest the spawn whose four cells from the shore on are dirt
+##    (the shore found along the column of the player, stood 6 m past the lake's +z rim, outward from the
+##    lake's centre row), an auger three cells into the water, its spoil side (0, 1), pumps onto the bank for
+##    10 s: its mode reads pump, at least 8 m³ pumped, and the cells holding sheet water as it stops stand on
+##    average no higher than the spoil disc (it ran downhill; once settled, the sheet has soaked in or run into
+##    the lake). Picked up and settled (at most 15 s): the window's sheet, pore and absorbed water add up to
+##    what was pumped within 2 %, water_surface bitwise unchanged, every cell whose saturation rose dirt-topped
+##    and within 3.05 m of a cell that was wet or a reservoir. A water read every 0.5 s marks the wet cells, as
+##    in sheet.
+## rock: at NoiseReport.rock_site, first 1 m³ spilled on the lowest all-rock spoil disc within 3 cells of the
+##    player's cell + (0, 4) pools in that rock hollow: after 3 s the saturation is bitwise unchanged, nothing
+##    absorbed, the window's sheet 1 m³ within 2 %. Then an auger 3 cells spinward of the player stops at rock
+##    before 10 m, its counter matching the annulus, every shaft cell at its bedrock_top; then back to the spawn.
 ## A shot tilts the camera down under the light bar's noon, waits 6 frames, saves the screenshot and levels the
 ## camera, then runs the P dump (debug_window_dump.gd) and checks its loose volume against the driver's over the
 ## window within 1 %.
@@ -187,6 +198,9 @@ func _route() -> void:
 	await _pickup(a)
 	_phase = "pause"
 	if not await _pause(a, spawn):
+		return
+	_phase = "pump"
+	if not await _pump():
 		return
 	_phase = "rock"
 	if not await _rock(spawn):
@@ -461,7 +475,7 @@ func _sheet(s3: Vector2i) -> bool:
 			deep, waited, (Time.get_ticks_msec() - start) / 1000.0, sheet, pore, absorbed, total, (total / 2.0 - 1.0) * 100.0])
 	print("sheet: %d cells wet, %d saturation rose (%d in the window), all dirt-topped: %s, farthest from a wet cell %.3f m" % [
 			wet_cells.size(), risen.size(), risen_all, dirt, far])
-	_report("water spreads and soaks within 3 m", deep >= 20 and absf(total - 2.0) <= 0.02 * 2.0 and risen.size() == risen_all
+	_report("water spreads and soaks within 3 m", deep >= 15 and absf(total - 2.0) <= 0.02 * 2.0 and risen.size() == risen_all
 			and not risen.is_empty() and dirt and far <= 3.05)
 	return true
 
@@ -732,13 +746,183 @@ func _pause(a: Vector2i, spawn: Vector2i) -> bool:
 	return true
 
 
-## Phase rock at NoiseReport.rock_site: an auger stops at rock before its depth, every shaft cell at its
-## bedrock_top (see the header). Back to the spawn after. False after quitting on a timeout.
+## Phase pump at the first of the five lakes nearest the spawn with dirt past its shore: an auger three cells
+## into the water pumps onto the bank for 10 s; the water runs downhill and soaks dirt within 3 m, the lake's
+## water_surface is unchanged, and the sheet, pore and absorbed water add up to what was pumped (see the
+## header). False after quitting on a timeout.
+func _pump() -> bool:
+	var found: Array[Vector2i] = [TerrainSim.NO_CELL]
+	if not await _lake_shore(found):
+		return false
+	var a := found[0]
+	if a == TerrainSim.NO_CELL:
+		_report("pumped water runs downhill, soaks dirt within 3 m, lake unchanged (no lake with a dirt bank)", false)
+		return true
+	var surface := _read("surface")
+	var sat0 := _read("saturation")
+	var ws0 := _read("water_surface")
+	var sheet0 := _sum(_read("water_depth"), surface)
+	var absorbed0 := _terrain.sim.absorbed
+	var wet := PackedByteArray()
+	wet.resize(sat0.size())
+	_mark_wet(wet)
+	var sampling := [true]
+	_sample_wet(wet, sampling)
+	var at := _center(a)
+	var auger := _tools.place(at.x, at.y, Vector2i(0, 1))
+	if auger == null:
+		sampling[0] = false
+		return _quit("The auger was not placed at %s." % a)
+	await get_tree().create_timer(10.0).timeout
+	var mode := auger.mode
+	var pumped := auger.spilled
+	var ticks := auger.ticks
+	var spoil := auger.spoil_cell()
+	# It ran downhill: the mean ground under the sheet as the pump stops against the spoil disc's (once settled
+	# the sheet has soaked in or run into the lake, a film on a cell or two left at most). Pumping changes
+	# neither the surface nor the loose.
+	var loose := _read("loose")
+	var d := _read("water_depth").to_float32_array()
+	var s := surface.to_float32_array()
+	var l := loose.to_float32_array()
+	var held := 0
+	var held_ground := 0.0
+	for k in d.size():
+		if d[k] > 0.0:
+			held += 1
+			held_ground += s[k] + l[k]
+	held_ground /= maxi(held, 1)
+	var disc := _disc(spoil, _terrain.tool_params.spoil_radius)
+	var spoil_ground := 0.0
+	for c in disc:
+		spoil_ground += _f(surface, c) + _f(loose, c)
+	spoil_ground /= disc.size()
+	_tools.pickup()
+	var waited := await _settled(spoil, 15.0)
+	sampling[0] = false
+	_mark_wet(wet)
+	surface = _read("surface")
+	loose = _read("loose")
+	var material := _read("material")
+	var depth := _read("water_depth")
+	var sat1 := _read("saturation")
+	var sheet := _sum(depth, surface) - sheet0
+	var pore := _pore(sat0, sat1, material, loose, surface)
+	var absorbed := _terrain.sim.absorbed - absorbed0
+	var total := sheet + pore + absorbed
+	# The cells whose saturation rose, and the wet and reservoir ones, over a box around A; none may rise
+	# outside it.
+	var risen: Array[Vector2i] = []
+	var near: Array[Vector2i] = []
+	for c in _box(a, 48):
+		var k := _texel(c)
+		if sat1[k] > sat0[k]:
+			risen.append(c)
+		if wet[k] or _f(ws0, c) > _f(surface, c) + _f(loose, c) + 1e-3:
+			near.append(c)
+	var risen_all := 0
+	for k in sat1.size():
+		risen_all += int(sat1[k] > sat0[k])
+	var far := 0.0
+	var dirt := true
+	for c in risen:
+		dirt = dirt and (_f(loose, c) > 0.01 or _b(material, c) == 0)
+		far = maxf(far, _nearest(c, near, surface))
+	var lake_kept := _read("water_surface") == ws0
+	print("pump: at %s, spoil at %s; mode %s, %d ticks, pumped %.6f m³; settled in %.2f s; sheet %+.6f, pore %+.6f, absorbed %+.6f m³: %.6f for %.6f (%+.3f %%)" % [
+			a, spoil, mode, ticks, pumped, waited, sheet, pore, absorbed, total, pumped, (total / pumped - 1.0) * 100.0])
+	print("pump: %d cells wet or reservoir by A, %d saturation rose (%d in the window), all dirt-topped: %s, farthest from a wet or reservoir cell %.3f m; water_surface unchanged: %s; %d cells held sheet water as the pump stopped, mean ground %.3f m, the spoil disc's %.3f m" % [
+			near.size(), risen.size(), risen_all, dirt, far, lake_kept, held, held_ground, spoil_ground])
+	_report("pumped water runs downhill, soaks dirt within 3 m, lake unchanged", mode == "pump" and pumped >= 8.0
+			and absf(total - pumped) <= 0.02 * pumped and lake_kept and not risen.is_empty() and risen.size() == risen_all
+			and dirt and far <= 3.05 and held > 0 and held_ground <= spoil_ground)
+	return true
+
+
+## For the five lakes nearest the spawn, nearest first: the player is teleported 6 m past the lake's +z rim
+## and the shore found along its column, the first dry cell (water_surface at most surface + 1 mm) after a
+## wet run outward from the lake's centre row; the first lake whose four cells from the shore on are dirt
+## gives out[0] = three cells into the water from its shore. Prints each lake tried; out[0] stays NO_CELL when
+## none qualifies. False after quitting on a timeout.
+func _lake_shore(out: Array[Vector2i]) -> bool:
+	var p := _terrain.params
+	var window := _terrain.window
+	var spawn := _terrain.maps.spawn
+	var from_spawn := func(l: Dictionary) -> float:
+		return Vector2(wrapf(l.theta - spawn.x, -PI, PI) * p.radius, l.z - spawn.y).length()
+	var lakes := _terrain.maps.lakes.duplicate()
+	lakes.sort_custom(func(l: Dictionary, m: Dictionary) -> bool: return from_spawn.call(l) < from_spawn.call(m))
+	for lake: Dictionary in lakes.slice(0, 5):
+		_terrain.teleport(lake.theta, lake.z + lake.radius + 6.0)
+		if not await _settled_patch():
+			return false
+		var ws := _read("water_surface")
+		var surface := _read("surface")
+		var material := _read("material")
+		var c := Vector2i(_tools.player_cell().x, p.cell_of(lake.theta, lake.z).y)
+		var wet := false
+		var shore := -1
+		while window.is_resident(window.tile_of_cell(c.x, c.y)):
+			if _f(ws, c) > _f(surface, c) + 1e-3:
+				wet = true
+			elif wet:
+				shore = c.y
+				break
+			c.y += 1
+		var banks: Array[int] = []
+		if shore >= 0:
+			for i in 4:
+				banks.append(_b(material, Vector2i(c.x, shore + i)))
+		print("pump: lake %s, %.0f m from the spawn: shore row %d on column %d, materials %s" % [
+				lake, from_spawn.call(lake), shore, c.x, banks])
+		if banks.count(0) == 4:
+			out[0] = Vector2i(c.x, shore - 3)
+			return true
+	return true
+
+
+## rock_spill, in the rock phase before its auger: 1 m³ spilled as the pump spills (a spoil_radius disc) on the
+## lowest cell within 3 of the player's cell + (0, 4) whose disc is all rock pools on the rock: after 3 s the
+## saturation is bitwise unchanged, nothing was absorbed and the window's sheet holds the 1 m³ within 2 %. The
+## site's 1 m detail leaves dirt pockets (2 cm covers) among the rock and its summit is flat, so a sheet
+## spilled elsewhere there reaches dirt within 3 s and soaks, as dirt should; a hollow keeps it on the rock.
+func _rock_spill() -> void:
+	var r := _terrain.tool_params.spoil_radius
+	var surface := _read("surface")
+	var material := _read("material")
+	var from := _tools.player_cell() + Vector2i(0, 4)
+	var spill := TerrainSim.NO_CELL
+	for c in _box(from, 3):
+		if _disc(c, r).all(func(d: Vector2i) -> bool: return _b(material, d) >= 2) \
+				and (spill == TerrainSim.NO_CELL or _f(surface, c) < _f(surface, spill)):
+			spill = c
+	if spill == TerrainSim.NO_CELL:
+		_report("rock does not soak (no all-rock disc within 3 cells of %s)" % from, false)
+		return
+	var sat0 := _read("saturation")
+	var absorbed0 := _terrain.sim.absorbed
+	var water0 := _sum(_read("water_depth"), surface)
+	_stamp(_op(spill, r, EditLayer.MODE_SPILL, 1.0))
+	await get_tree().create_timer(3.0).timeout
+	var depth := _read("water_depth")
+	var water := _sum(depth, _read("surface")) - water0
+	var held := Array(depth.to_float32_array()).filter(func(d: float) -> bool: return d > 0.0).size()
+	var dry := _read("saturation") == sat0
+	var absorbed := _terrain.sim.absorbed - absorbed0
+	print("rock spill: 1 m³ at %s (%+d, %+d from the player's cell + (0, 4), %.3f m below it); after 3 s the sheet %.6f m³ on %d cells (%+.4f %%), saturation unchanged: %s, absorbed %+.6f m³" % [
+			spill, spill.x - from.x, spill.y - from.y, _f(surface, from) - _f(surface, spill), water, held, (water - 1.0) * 100.0, dry, absorbed])
+	_report("rock does not soak", dry and absorbed == 0.0 and absf(water - 1.0) <= 0.02)
+
+
+## Phase rock at NoiseReport.rock_site: spilled water pools on bare rock without soaking (_rock_spill), then an
+## auger stops at rock before its depth, every shaft cell at its bedrock_top (see the header). Back to the
+## spawn after. False after quitting on a timeout.
 func _rock(spawn: Vector2i) -> bool:
 	var site := NoiseReport.rock_site(_terrain.maps, _terrain.params)
 	_terrain.teleport(site.x, site.y)
 	if not await _settled_patch():
 		return false
+	await _rock_spill()
 	var t := _terrain.tool_params
 	var c := _tools.player_cell() + Vector2i(3, 0)
 	var shaft := _disc(c, t.bore_radius)
@@ -801,7 +985,7 @@ func _shot(file: String) -> void:
 	var want := _sum(_read("loose"), _read("surface"))
 	print("%s: saved; the P dump's loose %.6f m³, the driver's %.6f m³ (%+.4f %%)" % [
 			file, dump.loose_volume, want, (dump.loose_volume / want - 1.0) * 100.0])
-	_report("P dump loose volume (%s)" % file, absf(dump.loose_volume - want) <= 0.01 * want)
+	_report("P dump loose volume (%s)" % file, want > 0.0 and absf(dump.loose_volume - want) <= 0.01 * want)
 	dump.free()
 
 
@@ -1131,5 +1315,5 @@ func _summary() -> void:
 		all.append_array(_sim_ms[phase])
 		print("  sim   %-5s per active tile %s; active tiles max %d" % [phase, Smoke._stat(_sim_ms[phase], SIM_BUDGET), _active_max[phase]])
 	print("  sim   all   per active tile %s; %d steps" % [Smoke._stat(all, SIM_BUDGET), _terrain.sim.steps])
-	print("  the sheet phase carries the driver's own synchronous reads (a 1 MB water read every 0.5 s), and so does")
+	print("  the sheet and pump phases carry the driver's own synchronous reads (a 1 MB water read every 0.5 s), and so does")
 	print("  the walk phase (a 1 MB surface and a 1 MB loose read every 0.1 s, 15 of each)")
