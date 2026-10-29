@@ -334,6 +334,15 @@ func _deferred() -> void:
 	var at := _terrain.viewer_cell()
 	var a := Vector2i(posmod(at.x - 40, n), at.y)
 	var b := Vector2i(posmod(at.x - 20, n), at.y)
+	# The forced edits need a quiet collider: until the trench's tiles settle, the player's last pushes are
+	# re-touched while their tile is active (Terrain._retouch), and the last of those touches may still be
+	# waiting in the throttle, or its bake in flight, a few frames after.
+	var patch := _terrain.patch
+	for i in 600:
+		if not (_terrain.sim.has_active() or _terrain._touch_radius >= 0 or patch._pending or patch._pending_edit
+				or patch._again_edit or patch._again_big):
+			break
+		await get_tree().process_frame
 	_phase = "deferred"
 	var both_moves := await _forced(a, b, false)
 	var big_idle := await _forced(b, at, true)

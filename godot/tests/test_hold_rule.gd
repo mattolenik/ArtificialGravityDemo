@@ -63,6 +63,23 @@ func _initialize() -> void:
 	check(not patch._again_big and patch.zone == Vector2i(100, 100), "a zone move waits for the zone interval")
 	terrain._flush_collider(11.01)
 	check(patch._again_big and patch._again_edit and patch.zone == Vector2i(140, 100), "the zone moves after a second")
+	# The re-touch follows the last tool stamp only while its own tile is active: none before the tile shows
+	# active, forgotten when it never does within RETOUCH_FRAMES frames of the stamp (it changed nothing) or
+	# once it has left the active set (the pile settled).
+	terrain._touch_radius = -1
+	terrain._last_tool = Vector2i(200, 100); terrain._last_reach = 2; terrain._last_frame = 50; terrain._last_active = false
+	terrain._retouch(false, 50 + Terrain.RETOUCH_FRAMES)
+	check(terrain._last_reach == 2 and terrain._touch_radius == -1, "no re-touch while the readback may still be on its way")
+	terrain._retouch(false, 51 + Terrain.RETOUCH_FRAMES)
+	check(terrain._last_reach == -1, "a stamp whose tile never became active is forgotten")
+	terrain._retouch(true, 60)
+	check(terrain._touch_radius == -1, "nothing to re-touch once forgotten")
+	terrain._last_reach = 2; terrain._last_frame = 70; terrain._last_active = false
+	terrain._retouch(true, 72)
+	check(terrain._touch_cell == Vector2i(200, 100) and terrain._touch_radius == 2, "re-touched while its tile is active")
+	terrain._touch_radius = -1
+	terrain._retouch(false, 73)
+	check(terrain._last_reach == -1 and terrain._touch_radius == -1, "forgotten once its tile settles")
 	patch.free(); box.free(); body.free(); terrain.free()
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

@@ -41,6 +41,8 @@ const SAVE_INTERVAL := 30.0
 const GROUND_GROUP := "terrain_ground"
 ## Meta key of a body's hold state: true while Terrain is holding it.
 const HELD_META := "terrain_held"
+## Frames after a tool stamp within which its tile's activity flag lands (the stats readback's latency).
+const RETOUCH_FRAMES := 3
 
 var params: WorldParams
 var maps: MacroMaps
@@ -68,9 +70,12 @@ var _since_save := 0.0
 ## _obstacle; none while the radius is negative.
 var _obstacle := Vector2i(-1, -1)
 var _obstacle_radius := -1
-## The last tool stamp's centre and reach; the reach is -1 until the first.
+## The last tool stamp's centre and reach, re-touched while its tile is active (_retouch); the reach is -1
+## while there is none. The process frame it was made in, and whether its tile has been active since.
 var _last_tool := Vector2i(-1, -1)
 var _last_reach := -1
+var _last_frame := 0
+var _last_active := false
 ## The one collider touch waiting for _flush_collider (last touch wins); none while the radius is -1.
 var _touch_cell := Vector2i(-1, -1)
 var _touch_radius := -1
@@ -237,9 +242,7 @@ func _process(delta: float) -> void:
 	var settled := sim.step(window, delta)
 	if not settled.is_empty():
 		window.edits.pack_tiles(window, settled)
-	# A slumping pile, or a push that moved loose, reaches the collider through the last tool stamp's place.
-	if sim.has_active() and _last_reach >= 0:
-		_collider_touch(_last_tool, _last_reach)
+	_retouch(sim.is_active(window.tile_of_cell(_last_tool.x, _last_tool.y)), Engine.get_process_frames())
 	_flush_collider(Time.get_ticks_msec() / 1000.0)
 	var p := station.to_local(viewer.global_position)
 	patch.issue_again(window)
@@ -416,7 +419,7 @@ func can_stamp(cell: Vector2i, reach: int) -> bool:
 ## Runs a tool stamp (EditLayer.stamp_op) with the obstacle set_obstacle gave, unless can_stamp refuses it
 ## (false, nothing changes). Every mode but the push touches the collider there (_collider_touch, decision
 ## 10: a push may move nothing, and sixty a second would keep the edit shape rebaking; the simulation
-## re-touches the last stamp's place while tiles are active).
+## re-touches the last stamp's place while its tile is active, _retouch).
 func stamp_tool(op: EditLayer.Op) -> bool:
 	if not can_stamp(op.cell, op.reach()):
 		return false
@@ -425,6 +428,8 @@ func stamp_tool(op: EditLayer.Op) -> bool:
 	window.edits.stamp_op(window, op)
 	_last_tool = op.cell
 	_last_reach = op.reach()
+	_last_frame = Engine.get_process_frames()
+	_last_active = false
 	if op.mode != EditLayer.MODE_PUSH:
 		_collider_touch(op.cell, op.reach())
 	return true
@@ -440,6 +445,21 @@ func set_obstacle(cell: Vector2i, radius: int) -> void:
 	_obstacle_radius = radius
 	sim.obstacle = cell
 	sim.obstacle_radius = radius
+
+
+## A slumping pile, or a push that moved loose, reaches the collider through the last tool stamp's place:
+## re-touched every frame while that place's tile is active (active, from the simulation's flags). Forgotten
+## once the tile leaves the active set (the pile settled), or when it has not become active RETOUCH_FRAMES
+## frames after the stamp (the stamp changed nothing, a push or tamp over bare ground), so a stale stamp
+## never steers the zone while some other tile is active.
+func _retouch(active: bool, frame: int) -> void:
+	if _last_reach < 0:
+		return
+	if active:
+		_last_active = true
+		_collider_touch(_last_tool, _last_reach)
+	elif _last_active or frame - _last_frame > RETOUCH_FRAMES:
+		_last_reach = -1
 
 
 ## Records a change of `radius` cells around cell for the collider; _flush_collider passes it on. One touch
