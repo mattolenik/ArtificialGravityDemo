@@ -342,10 +342,14 @@ func _route() -> void:
 	_phase = "scroll"
 	if not await _scroll(spawn + Vector2i(0, 120), spawn):
 		return
+	# Nothing but the teleports buried the player: the unbury rule (Tools._physics_process) never fired outside
+	# _settled_patch (the restart makes a new Tools, so the count is checked again after it).
+	_expect(_tools.lifts == 0, "no lift of the player before the restart (%d)" % _tools.lifts)
 	_phase = "restart"
 	if not await _restart_mid_bore(spawn + Vector2i(-6, 0)):
 		return
 	_phase = ""
+	_expect(_tools.lifts == 0, "no lift of the player in the restart phase (%d)" % _tools.lifts)
 	# Let the last timestamps arrive.
 	await _frames(6)
 	_summary()
@@ -1552,6 +1556,9 @@ func _settled_patch() -> bool:
 			get_tree().quit(1)
 			return false
 	await get_tree().create_timer(1.0).timeout
+	# A far teleport stands the body on the first patch covering it, baked before its tiles were generated, and
+	# the unbury rule lifts it when the real bake lands (the slice 3 follow-ups): those lifts are not counted.
+	_tools.lifts = 0
 	return true
 
 

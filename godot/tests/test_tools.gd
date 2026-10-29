@@ -43,13 +43,10 @@ func _initialize() -> void:
 	w.configure(WorldParams.new(), 512, 1.0)
 	var pc := EditLayer.new()._params(w, op, Vector2i.ZERO, EditLayer.disc_cells(op.radius))
 	check(pc.decode_s32(32) == 8 and pc.decode_s32(40) == 5 and pc.decode_float(64) == 2.5, "scoop push constants")
-	# Holding T: the first scoop fires on the press when the shovel is empty; holding dirt, a press shorter than
-	# scoop_hold_delay dumps and a longer one starts scooping; then one scoop every scoop_interval.
-	check(t.scoop_hold_delay == 0.25 and t.scoop_interval == 0.25, "hold numbers")
-	check(Tools.hold_scoops(0.0, 0.0, false, 0.0, t), "empty: a scoop on the press")
-	check(not Tools.hold_scoops(0.5, 0.1, false, 0.0, t), "holding dirt: a short press is not a scoop")
-	check(Tools.hold_scoops(0.5, 0.3, false, 0.0, t), "holding dirt: the hold delay starts scooping")
-	check(not Tools.hold_scoops(0.5, 1.0, true, 0.1, t), "between scoops")
-	check(Tools.hold_scoops(0.5, 1.0, true, 0.25, t), "the interval fires the next scoop")
+	# T held scoops every scoop_interval. A dump keeps the player out of the pile's repose cone: 2.5 m³ of dry
+	# dirt (repose 35°) settles into a cone 1.505 m in radius, 25 m³ into one of 3.243 m.
+	check(t.scoop_interval == 0.25, "hold interval")
+	check(absf(Tools.pile_radius(2.5, 35.0) - 1.5051) < 1e-3 and absf(Tools.pile_radius(25.0, 35.0) - 3.2426) < 1e-3, "pile radius")
+	check(Tools.PILE_MARGIN == 0.5 and Tools.BURIED == 0.1 and Tools.STAND == 0.05, "clearance numbers")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

@@ -316,6 +316,11 @@ func teleport(theta: float, z: float) -> void:
 	_body.global_position = station.global_transform * p
 
 
+## Whether a teleported body is held 2 m over the macro surface, waiting for a patch to stand on.
+func teleporting() -> bool:
+	return _teleporting
+
+
 ## Stands a teleported body on the patch that has just landed under it.
 func _on_live(_center: Vector2) -> void:
 	if not _teleporting:

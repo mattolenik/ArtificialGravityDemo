@@ -50,6 +50,7 @@ Auger and controls:
 - `E` reads `keycode` while the fly camera and `DebugEdit` read physical keys; use `physical_keycode` (`tools.gd`).
 - `place` accepts a placement under the player (the cylinder spawns through the capsule); needs a 1.5 m minimum distance (`tools.gd`).
 - The cell-centre formula is duplicated in `auger.gd`, `tools.gd` and `tool_run.gd`; add `WorldParams.cell_center(c)`.
+- **A far teleport stands the body on stale heights.** `Terrain.teleport` past the live patch holds the body 2 m over the macro surface and `_on_live` stands it on the first patch that covers it, which may have been baked before the window's tiles there were generated: when the real bake lands the ground is metres higher (1.9 and 2.1 m at the tool run's seam and end teleports) and the body is inside it. Since 2026-10-29 the shovel's unbury rule (`Tools._physics_process`) stands it on the ground then; standing it only once its tiles are generated is the proper fix.
 - The shovel's held scoop is not saved across a restart; a scoop on a cell under sheet water leaves the water in place (`tools.gd`, `edit.glsl`).
 - A wet scoop leaves the cell's moisture behind and the dump is dry.
 - A scoop or dump does not test the standing auger's obstacle, so a dump can drop loose into its shaft.
