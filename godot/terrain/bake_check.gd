@@ -64,11 +64,6 @@ func _route() -> void:
 			e128.err, e8.err, e128.macro, e8.macro, 2 * ColliderPatch.half_n(128, p) + 1])
 	_expect(e128.err < ROW_TOLERANCE and e8.err < ROW_TOLERANCE, "rows")
 
-	# The player's landing at the spawn tamps the ground under it, which moves the zone and its hole there
-	# (Tools, slice 3); let that land first, or it takes the test's hole away during the drop.
-	await get_tree().create_timer(2.0).timeout
-	if not await _landed():
-		return
 	var c := p.cell_of(patch.center.x, patch.center.y)
 	patch.zone = Vector2i(posmod(c.x + 60, p.n_theta()), c.y)
 	patch.has_zone = true

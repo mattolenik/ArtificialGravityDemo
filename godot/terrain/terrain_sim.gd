@@ -3,10 +3,10 @@
 ## running sheet water down its surface, soaking it into the column and wetting dirt beside it, and letting
 ## the water carry loose. Activity is flagged by the GPU per window slot in the edit layer's stats buffer
 ## (stamps, the edit layer's apply of a blob holding loose or water, and every simulated cell that moved),
-## read back every frame, and bookkept here per tile in seconds of quiet: a tile quiet for settle_time is
-## handed back by step for Terrain to pack and leaves the active set. The active mask is 64 bits, so the
-## window is at most 1024 cells (8 x 8 slots). settle and the bookkeeping are CPU only (headless-safe); setup
-## and step are the RenderingDevice entry points.
+## read back after every frame that ran a list, a stamp or an apply, and bookkept here per tile in seconds of
+## quiet: a tile quiet for settle_time is handed back by step for Terrain to pack and leaves the active set.
+## The active mask is 64 bits, so the window is at most 1024 cells (8 x 8 slots). settle and the bookkeeping
+## are CPU only (headless-safe); setup and step are the RenderingDevice entry points.
 class_name TerrainSim
 extends RefCounted
 
@@ -15,6 +15,9 @@ const STEP := 1.0 / 60.0
 const MAX_STEPS := 2
 const MAX_ACTIVE := 16
 const NO_CELL := Vector2i(-1, -1)
+## Process frames a stats readback may go unanswered before the renderer counts as stalled (stalled()): one
+## lands within 3 while frames are drawn, and none while they are not (the window not drawn).
+const STALL_FRAMES := 10
 
 var params: ToolParams
 var materials: MaterialSet
@@ -38,6 +41,9 @@ var _generation := 0
 var _changed := PackedInt32Array()
 ## Seconds not yet stepped, at most MAX_STEPS steps' worth.
 var _accum := 0.0
+## The process frame of the oldest stats readback not yet landed (-1: none), and of the latest asked.
+var _waiting_since := -1
+var _asked := -1
 ## The window (setup's, then the one settle last saw), for activate's residency test.
 var _window: TerrainWindow
 var _rd: RenderingDevice
@@ -151,8 +157,10 @@ func settle(window: TerrainWindow, delta: float, flags: PackedInt32Array) -> Arr
 
 ## One frame: settle on the flags that landed since the last call, then the whole steps due (at most
 ## MAX_STEPS; an idle stretch banks none), each one compute list of a flux dispatch per active tile, a
-## barrier and an apply dispatch per active tile; then, active or not, a readback of the stats and a clear.
-## Returns the tiles that settled, for Terrain to pack after the lists.
+## barrier and an apply dispatch per active tile; then a readback of the stats and a clear, when a list ran
+## or a stamp or an apply may have set a flag since the last one (window.edits.stats_pending): an idle
+## readback every frame would queue up unanswered while no frame is drawn. Returns the tiles that settled,
+## for Terrain to pack after the lists.
 func step(window: TerrainWindow, delta: float) -> Array[Vector2i]:
 	var settled := settle(window, delta, _flags)
 	_flags.fill(0)
@@ -169,8 +177,17 @@ func step(window: TerrainWindow, delta: float) -> Array[Vector2i]:
 				blocks.append(_params(window, t, mode, soak))
 		lists.append(blocks)
 		steps += 1
+	if lists.is_empty() and not window.edits.stats_pending:
+		return settled
+	window.edits.stats_pending = false
 	RenderingServer.call_on_render_thread(_step_rd.bind(lists, _generation))
 	return settled
+
+
+## Whether the renderer has stalled: a stats readback has gone unanswered for over STALL_FRAMES process
+## frames, which happens only while no frame is drawn (the feet do not stamp then, Tools).
+func stalled() -> bool:
+	return _waiting_since >= 0 and Engine.get_process_frames() - _waiting_since > STALL_FRAMES
 
 
 func _step_rd(lists: Array[Array], generation: int) -> void:
@@ -193,16 +210,23 @@ func _step_rd(lists: Array[Array], generation: int) -> void:
 		_rd.compute_list_end()
 		_rd.capture_timestamp("sim_end")
 	# After the lists, so the stats hold their flags; the request copies the buffer before the clear runs.
-	var err := _rd.buffer_get_data_async(_stats, _on_stats.bind(generation), 0, _stats_size)
+	var frame := Engine.get_process_frames()
+	var err := _rd.buffer_get_data_async(_stats, _on_stats.bind(generation, frame), 0, _stats_size)
 	if err != OK:
 		push_error("sim stats readback: %s" % error_string(err))
+	else:
+		_asked = frame
+		if _waiting_since < 0:
+			_waiting_since = frame
 	_rd.buffer_clear(_stats, 0, _stats_size)
 
 
 ## Runs inside the device's readback flush, storing only: adds the absorbed water, and ORs in the flags of
 ## every slot whose tile has not changed since the readback was requested at `generation` (a slot that
-## changed since names another tile). ORed, so a second landing in one flush keeps the first's flags.
-func _on_stats(data: PackedByteArray, generation: int) -> void:
+## changed since names another tile). ORed, so a second landing in one flush keeps the first's flags. `asked`
+## is the process frame of the request: any request still waiting was made after it.
+func _on_stats(data: PackedByteArray, generation: int, asked := -1) -> void:
+	_waiting_since = -1 if asked == _asked else asked + 1
 	if data.size() < 4:
 		return
 	absorbed += data.decode_u32(data.size() - 4) * 1e-6

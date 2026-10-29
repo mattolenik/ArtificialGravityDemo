@@ -24,10 +24,12 @@ func _ready() -> void:
 	player.landed.connect(_on_landed)
 
 
-## A push along the floor velocity v (global), quantised to an axis, from push_min_speed up.
+## A push along the floor velocity v (global), quantised to an axis, from push_min_speed up. The feet do
+## not stamp while the renderer is stalled (TerrainSim.stalled: the window not drawn), when every stamp's
+## timed list would pile into one GPU frame that never turns over.
 func _on_stepped(v: Vector3) -> void:
 	var t := terrain.tool_params
-	if v.length() < t.push_min_speed:
+	if v.length() < t.push_min_speed or terrain.sim.stalled():
 		return
 	var op := _foot(EditLayer.MODE_PUSH, t.push_share, t.push_max)
 	var theta := Cyl.theta_of(terrain.station.to_local(player.global_position))
@@ -38,7 +40,7 @@ func _on_stepped(v: Vector3) -> void:
 ## A tamp under the feet for a landing at speed (m/s, downward) from tamp_land_speed up.
 func _on_landed(speed: float) -> void:
 	var t := terrain.tool_params
-	if speed < t.tamp_land_speed:
+	if speed < t.tamp_land_speed or terrain.sim.stalled():
 		return
 	tamps += int(terrain.stamp_tool(_foot(EditLayer.MODE_TAMP, t.tamp_step, terrain.materials.swell_factor[0])))
 

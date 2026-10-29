@@ -60,6 +60,9 @@ class Op extends RefCounted:
 var blobs := {}
 ## The tiles in blobs that were packed since Terrain last saved them (a set: tile -> true).
 var unsaved := {}
+## Set when a stamp or an apply ran since TerrainSim last asked for the stats: the buffer may hold activity
+## flags not yet read back (TerrainSim.step reads and clears it).
+var stats_pending := false
 
 var _rd: RenderingDevice
 var _shader: RID
@@ -162,6 +165,7 @@ func stamp_op(window: TerrainWindow, op: Op) -> void:
 	for k in tiles.size():
 		blocks.append(_tile_params(window, MODE_PACK, tiles[k], k))
 	RenderingServer.call_on_render_thread(_stamp_rd.bind(tiles, blocks, box_groups(op.reach()), op.counted))
+	stats_pending = true
 
 
 func _stamp_rd(tiles: Array[Vector2i], blocks: Array[PackedByteArray], groups: int, counted: Callable) -> void:
@@ -271,6 +275,8 @@ func apply_entering(window: TerrainWindow, tiles: Array[Vector2i]) -> void:
 	var edited := tiles.filter(func(t: Vector2i) -> bool: return blobs.has(t))
 	if edited.is_empty():
 		return
+	# An entering cell holding loose or water flags its slot, so a pile mid-slump resumes.
+	stats_pending = true
 	_rd.capture_timestamp("apply_begin")
 	for t: Vector2i in edited:
 		_rd.buffer_update(_up, 0, BLOB_SIZE, blobs[t])
