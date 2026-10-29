@@ -61,7 +61,9 @@ void fragment() {
 	ivec2 g = ivec2(int(round(tile_theta / (dtheta * cell))), int(round(tile_z / cell))) - 64 + k;
 	int around = n_theta / int(cell);
 	g.x = (g.x + around) % around;
-	ALBEDO = material_color[id].rgb * (pile ? 0.75 : 1.0) * mix(1.0, 0.6, sat_v) * mix(0.55, 1.0, smoothstep(0.5, 1.0, up))
+	// Wet dirt darkens fully (40 %) by half saturation: a spill's soak tops out near 0.4, so its halo still reads.
+	float damp = min(sat_v * 2.0, 1.0);
+	ALBEDO = material_color[id].rgb * (pile ? 0.75 : 1.0) * mix(1.0, 0.6, damp) * mix(0.55, 1.0, smoothstep(0.5, 1.0, up))
 			* mix(1.0, 0.7, wet) * (1.0 + (pile ? 0.3 : 0.08) * (hash(g) - 0.5));
 	ROUGHNESS = pile ? 1.0 : 0.95;
 }
