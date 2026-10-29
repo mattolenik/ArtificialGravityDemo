@@ -14,8 +14,7 @@
 ##    the strata;
 ## 6. pack_tiles of six resident tiles, S1's first: two lists, the second reusing slot 0; every blob lands,
 ##    and S1's tile holds the window's loose.
-## slump (k = 2, S2; Task 3): from here on the sim lists' GPU time per active tile and the active tile count
-## are recorded every frame.
+## slump (k = 2, S2; Task 3):
 ## 1. a wall (an obstacle of radius 1 at S2 + (0, 3)), then a 30 m³ deposit of radius 1 (a 5.6 m column),
 ##    left to settle: the loose volume over the box of 24 is 30 m³, the steepest slope from a loose cell to a
 ##    neighbour it may flow into is at repose (dry, 35°), the pile reached S2 - (0, 3) on its open side and
@@ -74,16 +73,20 @@
 ##    volume is kept within 0.1 % at once (its blob re-applied) and within 0.5 % once settled, at repose; the
 ##    window's water (sheet plus pore water, the sheet phase's puddle among it), read before and after over the
 ##    same wanted set, within 2 %.
-## restart (S7 = spawn_cell + (-6, 0)): an auger bores there, its spoil side (-1, 0); 8 s on, mid-bore, the
-##    terrain restarts in-process (_restart): the edited tiles load from the world copy, no auger stands, and
+## restart (S7 = spawn_cell + (-6, 0)): an auger bores there, its spoil side (-1, 0); 8 s on, mid-bore (the hole
+##    over two bore steps deep, the auger short of its depth), the terrain restarts in-process (_restart): the edited tiles load from the world copy, no auger stands, and
 ##    stood at S7 the hole's surface is within two bore steps, the loose over the box of 24 within 0.3 m³ + 1 %
 ##    (one tick's spoil at most) and the window's water within 2 % of what they were before.
 ## A shot tilts the camera down under the light bar's noon, waits 6 frames, saves the screenshot and levels the
 ## camera, then runs the P dump (debug_window_dump.gd) and checks its loose volume against the driver's over the
 ## window within 1 %.
-## Then prints the GPU times of the edit (stamp), pack and sim lists against their budget, reported and not
-## asserted (Vulkan only: Metal reports zeros, shown as n/a), and PASS and exits 0 when every check holds,
-## else FAIL and 1. The driver runs on WORLD, a copy of the default world (params.tres and maps.res copied when
+## Then prints a summary, reported and not asserted (GPU times are Vulkan only: Metal reports zeros, shown as
+## n/a), over the lists timed and the frames run from the stamps to the restart: each GPU pass's times against
+## its budget (sim per active tile, a frame's lists summed; apply and detail per tile; the others per list);
+## per phase the active tiles, the edit-shape landings and zone moves, the frame intervals and GPU frame
+## times, and the driver's own synchronous reads (stalls of its making); the bore's active tile count every 2 s;
+## and every conservation residual in %. Then PASS and exits 0 when every check holds, else FAIL and 1.
+## The driver runs on WORLD, a copy of the default world (params.tres and maps.res copied when
 ## missing, its tiles/ emptied at every start) with persist_edits on, so the default world's saved edits are
 ## neither loaded nor written, and the restart has its own tiles to load. Last, a small deposit makes a tile
 ## active and the run quits at once, so Terrain._exit_tree packs it synchronously during the engine's quit (the
@@ -94,9 +97,12 @@
 extends Node
 
 const Smoke := preload("res://terrain/smoke_run.gd")
-## The GPU budget of the edit and pack lists in ms, and of the sim list per active tile.
-const BUDGET := {"edit": 0.5, "pack": 0.5}
+## The GPU budget of each timed pass in ms (apply and detail per tile, the others per list: a pack list holds
+## 1 to 4 tiles, so its time bounds the per-tile one), and of the sim lists per active tile per frame.
+const BUDGET := {"edit": 0.5, "pack": 0.5, "apply": 0.5, "bake_edit": 1.0, "bake": 1.0, "detail": 2.0}
 const SIM_BUDGET := 0.25
+## The phases the summary reports frame by frame.
+const PHASES: Array[String] = ["slump", "sheet", "walk", "jumps", "bore", "pump", "scroll"]
 ## The edge neighbours in sim.glsl's order, then the diagonal ones, which loose slumps to as well.
 const DIR4: Array[Vector2i] = [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]
 const DIAG: Array[Vector2i] = [Vector2i(1, 1), Vector2i(-1, 1), Vector2i(-1, -1), Vector2i(1, -1)]
@@ -116,18 +122,28 @@ var _bore_landed := 0
 var _bore_wet := false
 var _player: Player
 var _tools: Tools
-## The phase running from slump on ("" before): the active tile count every frame, every tile seen active, and
-## per phase each sim list's GPU time per active tile (when the count held for the five frames before it was
-## timed) and the most tiles active at once.
+## The phase running ("stamps" first, "" once done): the active tile count every frame, every tile seen active,
+## per phase the sim lists' GPU time per active tile, a frame's lists summed (when the count held for the five
+## frames before they were timed), and per phase _stat_of's figures.
 var _phase := ""
 var _counts: Array[int] = []
 var _seen := {}
 var _sim_ms := {}
-var _active_max := {}
-## The edit-shape landings and zone moves counted while the bore phase records them, and the last zone seen.
+var _stats := {}
+## Whether the summary's bookkeeping runs: from ten frames into the route (the startup lists are timed by then)
+## to _restart. The sim lists timed since the last frame, summed.
+var _listening := false
+var _sim_frame := 0.0
+## The tiles of each apply and detail list in order, to pair with their times (edit_run's rule).
+var _apply_tiles: Array[int] = []
+var _detail_tiles: Array[int] = []
+## The edit-shape landings and the zone moves among them over the run, and the last zone landed.
 var _edit_bakes := 0
 var _zone_moves := 0
 var _last_zone := Vector2i.ZERO
+## The active tile count every 2 s of the bore, and every conservation residual in % by check, in order.
+var _bore_trace: Array[int] = []
+var _residuals := {}
 ## The sim steps of the terrains _restart freed.
 var _steps := 0
 
@@ -148,6 +164,8 @@ func _fresh_world() -> void:
 			push_error("Copying the default world's %s into %s failed." % [file, dir])
 	for file in DirAccess.get_files_at(dir + "tiles"):
 		DirAccess.remove_absolute(dir + "tiles/" + file)
+	if not DirAccess.get_files_at(dir + "tiles").is_empty():
+		push_error("Emptying %stiles failed." % dir)
 
 
 ## Instantiates main.tscn on WORLD with persist_edits on, binds the driver to its nodes and its overlay's timed,
@@ -165,6 +183,7 @@ func _open_main() -> bool:
 	var live := [false]
 	_terrain.collider_live.connect(func() -> void: live[0] = true, CONNECT_ONE_SHOT)
 	add_child(_main)
+	_terrain.patch.baked.connect(_on_baked.bind(_terrain.patch))
 	for i in 1200:
 		await get_tree().process_frame
 		if live[0]:
@@ -174,20 +193,24 @@ func _open_main() -> bool:
 
 
 ## The in-process restart: frees main.tscn (Terrain._exit_tree packs its active tiles and saves the edits) and,
-## two frames on, opens it again (_open_main). False after quitting on a timeout.
+## two frames on, opens it again (_open_main). The summary's bookkeeping stops here. False after quitting on a
+## timeout.
 func _restart() -> bool:
+	_listening = false
 	_steps += _terrain.sim.steps
 	_main.queue_free()
 	await _frames(2)
 	return await _open_main()
 
 
-## A timed GPU list, and for a sim list its time per active tile when the count held for the five frames before.
+## A timed GPU list while listening; the overlay reads one frame's lists at a time, so the sim ones since the
+## last _process are one frame's.
 func _on_timed(pass_name: String, ms: float) -> void:
+	if not _listening:
+		return
 	_timed.append({"name": pass_name, "ms": ms})
-	var recent := _counts.slice(-5)
-	if pass_name == "sim" and not _phase.is_empty() and recent.size() == 5 and recent.min() == recent.max() and recent[0] > 0:
-		_per_tile(_phase).append(ms / recent[0])
+	if pass_name == "sim":
+		_sim_frame += ms
 
 
 ## The route is scripted: a stray click must not capture the mouse, nor mouse movement turn the player.
@@ -196,15 +219,36 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
-func _process(_delta: float) -> void:
-	# Within _restart, _terrain is freed until _open_main binds the next one.
-	if _phase.is_empty() or not is_instance_valid(_terrain):
+## The summary's bookkeeping, a few scalars a frame. It runs before the overlay's _process (tree order), so the
+## sim lists timed since the last one are the overlay's last read.
+func _process(delta: float) -> void:
+	if not _listening:
 		return
 	var active := _terrain.sim.active_tiles()
+	# The frame's sim lists per active tile, when the count held for the five frames before (they are timed
+	# two or three frames after they ran).
+	var recent := _counts.slice(-5)
+	if _sim_frame > 0.0 and recent.size() == 5 and recent.min() == recent.max() and recent[0] > 0:
+		_per_tile(_phase).append(_sim_frame / recent[0])
+	_sim_frame = 0.0
 	_counts.append(active.size())
-	_active_max[_phase] = maxi(_active_max.get(_phase, 0), active.size())
 	for t in active:
 		_seen[t] = true
+	var s := _stat_of(_phase)
+	s.time += delta
+	s.active += active.size()
+	s.busy += int(not active.is_empty())
+	s.max = maxi(s.max, active.size())
+	s.cpu.append(delta * 1000.0)
+	s.gpu.append(RenderingServer.viewport_get_measured_render_time_gpu(get_viewport().get_viewport_rid()))
+
+
+## The figures of phase: seconds, active tile counts summed over its frames, frames with any active tile, the
+## most at once, each frame's interval and GPU frame time in ms, the driver's synchronous reads, and the
+## edit-shape landings and zone moves.
+func _stat_of(phase: String) -> Dictionary:
+	return _stats.get_or_add(phase, {"time": 0.0, "active": 0, "busy": 0, "max": 0, "cpu": [], "gpu": [], "reads": 0,
+			"bakes": 0, "moves": 0})
 
 
 ## The sim times per active tile recorded in phase.
@@ -218,6 +262,17 @@ func _per_tile(phase: String) -> Array[float]:
 func _route() -> void:
 	var p := _terrain.params
 	var spawn := p.cell_of(_terrain.maps.spawn.x, _terrain.maps.spawn.y)
+	# The startup lists are timed within a few frames; from here on every list and window move is the route's.
+	await _frames(10)
+	var window := _terrain.window
+	window.tiles_generated.connect(func(tiles: Array[Vector2i]) -> void:
+		_detail_tiles.append(tiles.size())
+		var n := tiles.filter(func(t: Vector2i) -> bool: return window.edits.blobs.has(t)).size()
+		if n > 0:
+			_apply_tiles.append(n))
+	_terrain.far.window.tiles_generated.connect(func(tiles: Array[Vector2i]) -> void: _detail_tiles.append(tiles.size()))
+	_phase = "stamps"
+	_listening = true
 	await _stamps(spawn + Vector2i(0, 40))
 	_phase = "slump"
 	await _slump(spawn + Vector2i(0, 80))
@@ -287,7 +342,7 @@ func _stamps(s1: Vector2i) -> void:
 	for c in _disc(s1, t.spoil_radius):
 		fresh = fresh and _b(compaction, c) == 0 and _b(mask, c) == 255
 	print("deposit: %.6f m³ loose over the box for 1.5 m³ (%+.4f %%), disc fresh and masked: %s" % [
-			deposited, (deposited / 1.5 - 1.0) * 100.0, fresh])
+			deposited, _residual("deposit", deposited, 1.5), fresh])
 	_report("deposit conserves", absf(deposited - 1.5) <= 1.5e-3 and fresh)
 
 	var row0 := _mean_row(loose, surface, box, s1)
@@ -299,7 +354,7 @@ func _stamps(s1: Vector2i) -> void:
 	var pushed := _vol(loose, surface, box)
 	var row1 := _mean_row(loose, surface, box, s1)
 	print("push: %.6f m³ loose over the box, was %.6f (%+.3f ppm); mean row %+.4f -> %+.4f cells" % [
-			pushed, deposited, (pushed / deposited - 1.0) * 1e6, row0, row1])
+			pushed, deposited, _residual("push", pushed, deposited) * 1e4, row0, row1])
 	_report("push moves forward, conserves", absf(pushed - deposited) <= 1e-4 * deposited and row1 - row0 >= 0.05)
 
 	var tamp_disc := _disc(s1, 2)
@@ -331,7 +386,7 @@ func _stamps(s1: Vector2i) -> void:
 		gain += (_f(surface4, c) - _f(surface, c)) * _area(_f(surface, c))
 	var want := disc_loose / swell
 	print("tamp: %d loose cells, compaction bytes after three %s; after four folded: %s, solid gained %.6f m³ for %.6f m³ loose / %.2f = %.6f (%+.4f %%)" % [
-			tamped.size(), bytes, folded, gain, disc_loose, swell, want, (gain / want - 1.0) * 100.0])
+			tamped.size(), bytes, folded, gain, disc_loose, swell, want, _residual("tamp", gain, want)])
 	_report("tamp folds with the swell", at_three and folded and absf(gain - want) <= 1e-3 * want)
 
 	var sat0 := _read("saturation")
@@ -341,7 +396,7 @@ func _stamps(s1: Vector2i) -> void:
 	surface = _read("surface")
 	var sheet := _sum(_read("water_depth"), surface) - water0
 	var pore := _pore(sat0, _read("saturation"), _read("material"), _read("loose"), surface)
-	print("spill: sheet %+.6f m³, pore %+.6f m³ for 0.5 m³ (%+.4f %%)" % [sheet, pore, ((sheet + pore) / 0.5 - 1.0) * 100.0])
+	print("spill: sheet %+.6f m³, pore %+.6f m³ for 0.5 m³ (%+.4f %%)" % [sheet, pore, _residual("spill", sheet + pore, 0.5)])
 	_report("spill conserves", absf(sheet + pore - 0.5) <= 0.02 * 0.5)
 
 	var b := s1 + Vector2i(0, 20)
@@ -369,7 +424,7 @@ func _stamps(s1: Vector2i) -> void:
 		dropped = dropped and absf(_f(s0, c) - s - 1.0) <= 1e-3
 		strata = strata and _f(clay_top, c) <= s and _f(clay_bottom, c) <= s and _b(material, c) == top
 	print("bore: %d of 30 ticks landed, counter %.6f m³, annulus %.6f m³ (%+.4f %%), wet %s; drops %s m, strata and material by the rule: %s" % [
-			_bore_landed, _bored, removed, (_bored / removed - 1.0) * 100.0, _bore_wet, drops, strata])
+			_bore_landed, _bored, removed, _residual("bore ticks", _bored, removed), _bore_wet, drops, strata])
 	_report("bore counts what it cut", _bore_landed == 30 and absf(_bored - removed) <= 1e-3 * removed and not _bore_wet
 			and dropped and strata)
 
@@ -418,7 +473,7 @@ func _slump(s2: Vector2i) -> void:
 	var wall_max: float = walled.map(func(c: Vector2i) -> float: return _f(loose, c)).max()
 	var tile := _terrain.window.tile_of_cell(s2.x, s2.y)
 	print("slump: settled and packed in %.2f s; %.6f m³ over the box for 30 m³ (%+.4f %%); steepest %.4f, repose · 1.02 %.4f; %.4f m at S2 - (0, 3); wall cells' loose max %.6f m" % [
-			waited, piled, (piled / 30.0 - 1.0) * 100.0, steep, repose, _f(loose, s2 - Vector2i(0, 3)), wall_max])
+			waited, piled, _residual("slump", piled, 30.0), steep, repose, _f(loose, s2 - Vector2i(0, 3)), wall_max])
 	_report("pile settles at repose against the mask, conserved, packed", waited >= 0.0 and absf(piled - 30.0) <= 0.005 * 30.0
 			and steep <= repose and _f(loose, s2 - Vector2i(0, 3)) > 0.01 and wall_max < 1e-6 and not _terrain.sim.has_active()
 			and _terrain.window.edits.blobs.has(tile))
@@ -430,10 +485,10 @@ func _slump(s2: Vector2i) -> void:
 	var steep2 := _steepest(box, [])
 	var into: float = walled.map(func(c: Vector2i) -> float: return _f(loose, c)).max()
 	print("mask lifted: settled in %.2f s; %.6f m³ over the box (%+.4f %% of the settled pile); wall cells' loose max %.4f m; steepest %.4f" % [
-			waited, slumped, (slumped / piled - 1.0) * 100.0, into, steep2])
+			waited, slumped, _residual("slump lifted", slumped, piled), into, steep2])
 	_report("mask lifts, the pile slumps on", waited >= 0.0 and absf(slumped - piled) <= 0.005 * piled and into > 0.05
 			and steep2 <= repose)
-	print("slump: sim per active tile %s; active tiles max %d" % [Smoke._stat(_per_tile("slump"), SIM_BUDGET), _active_max.get("slump", 0)])
+	print("slump: sim per active tile %s; active tiles max %d" % [Smoke._stat(_per_tile("slump"), SIM_BUDGET), _stat_of("slump").max])
 
 
 ## Phase seam at θ = 0 on row: a pile across the seam keeps its volume, both seam tiles active.
@@ -452,7 +507,7 @@ func _seam(row: int) -> bool:
 	var tiles: Array[Vector2i] = [Vector2i(_terrain.window.tiles_around - 1, row / TerrainWindow.TILE), Vector2i(0, row / TerrainWindow.TILE)]
 	var both := tiles.all(func(t: Vector2i) -> bool: return _seen.has(t))
 	print("seam: settled in %.2f s; %.6f m³ over the box for 20 m³ (%+.4f %%); tiles %s seen active: %s" % [
-			waited, piled, (piled / 20.0 - 1.0) * 100.0, tiles, both])
+			waited, piled, _residual("seam", piled, 20.0), tiles, both])
 	_report("seam pile", waited >= 0.0 and absf(piled - 20.0) <= 0.005 * 20.0 and both)
 	return true
 
@@ -472,7 +527,7 @@ func _ends(spawn: Vector2i) -> bool:
 	var waited := await _settled(site)
 	var piled := _vol(_read("loose"), _read("surface"), box) - before
 	print("ends: row %d refused: %s; row %d settled in %.2f s, %.6f m³ over the box for 20 m³ (%+.4f %%)" % [
-			p.n_z() - 2, refused, site.y, waited, piled, (piled / 20.0 - 1.0) * 100.0])
+			p.n_z() - 2, refused, site.y, waited, piled, _residual("ends", piled, 20.0)])
 	_report("end rows", refused and waited >= 0.0 and absf(piled - 20.0) <= 0.005 * 20.0)
 	_terrain.teleport(_terrain.maps.spawn.x, _terrain.maps.spawn.y)
 	return await _settled_patch()
@@ -529,7 +584,7 @@ func _sheet(s3: Vector2i) -> bool:
 		dirt = dirt and (_f(loose, c) > 0.01 or _b(material, c) == 0)
 		far = maxf(far, _nearest(c, wet_cells, surface))
 	print("sheet: %d cells over 5 mm after 3 s; settled in %.2f s (%.1f s after the spill); sheet %+.6f, pore %+.6f, absorbed %+.6f m³: %.6f for 2 m³ (%+.3f %%)" % [
-			deep, waited, (Time.get_ticks_msec() - start) / 1000.0, sheet, pore, absorbed, total, (total / 2.0 - 1.0) * 100.0])
+			deep, waited, (Time.get_ticks_msec() - start) / 1000.0, sheet, pore, absorbed, total, _residual("sheet", total, 2.0)])
 	print("sheet: %d cells wet, %d saturation rose (%d in the window), all dirt-topped: %s, farthest from a wet cell %.3f m" % [
 			wet_cells.size(), risen.size(), risen_all, dirt, far])
 	_report("water spreads and soaks within 3 m", deep >= 15 and absf(total - 2.0) <= 0.02 * 2.0 and risen.size() == risen_all
@@ -567,7 +622,7 @@ func _walk(s4: Vector2i) -> bool:
 	var row1 := _mean_row(loose, surface, box, s4)
 	var pushes := _tools.pushes - pushes0
 	print("walk: pile settled in %.2f s, again in %.2f s after; %d pushes, %d landings counted; %.6f m³ loose over the box, was %.6f (%+.4f %%); mean row %+.4f -> %+.4f cells (%+.4f); lowest feet %+.3f m" % [
-			waited, waited2, pushes, _tools.tamps - tamps0, v1, v0, (v1 / v0 - 1.0) * 100.0, row0, row1, row1 - row0, low])
+			waited, waited2, pushes, _tools.tamps - tamps0, v1, v0, _residual("walk", v1, v0), row0, row1, row1 - row0, low])
 	_report("walking pushes forward, conserves, stands on it", waited >= 0.0 and waited2 >= 0.0 and pushes >= 10
 			and _tools.tamps == tamps0 and absf(v1 - v0) <= 0.005 * v0 and row1 - row0 >= 0.1 and low >= -0.3)
 	return true
@@ -612,7 +667,7 @@ func _jumps(s4: Vector2i) -> bool:
 	var tamps := _tools.tamps - tamps0
 	print("jumps: at %s (%.3f m loose), settled in %.2f s, again in %.2f s after; %d tamps; solid gained %.6f m³ · %.2f = %.6f for %.6f m³ loose lost (%+.4f %%); %d cells folded" % [
 			top, _f(l0, top), waited, waited2, tamps, solid_gain, swell, solid_gain * swell, loose_lost,
-			(solid_gain * swell / loose_lost - 1.0) * 100.0, folded])
+			_residual("jumps", solid_gain * swell, loose_lost), folded])
 	_report("four landings fold the patch, volume accounted", waited >= 0.0 and waited2 >= 0.0 and tamps >= 4
 			and solid_gain > 0.1 and absf(solid_gain * swell - loose_lost) <= 0.01 * loose_lost and folded > 0)
 	return true
@@ -627,19 +682,21 @@ func _bore(a: Vector2i) -> bool:
 	var shaft := _disc(a, t.bore_radius)
 	var s0 := _read("surface")
 	var l0 := _vol(_read("loose"), s0, box)
-	_edit_bakes = 0
-	_zone_moves = 0
-	_last_zone = _terrain.patch.zone
-	var zone0 := _last_zone
-	_terrain.patch.baked.connect(_on_baked)
+	var bakes0 := _edit_bakes
+	var moves0 := _zone_moves
+	var zone0 := _terrain.patch.zone
 	var start := Time.get_ticks_msec()
 	var at := _center(a)
 	var auger := _tools.place(at.x, at.y, Vector2i(1, 0))
 	if auger == null:
 		return _quit("The auger was not placed at %s." % a)
+	var tracing := [true]
+	_trace(tracing)
 	var reason := await _stopped(auger, 40.0)
 	var wall := (Time.get_ticks_msec() - start) / 1000.0
-	_terrain.patch.baked.disconnect(_on_baked)
+	tracing[0] = false
+	var bakes := _edit_bakes - bakes0
+	var moves := _zone_moves - moves0
 	if reason.is_empty():
 		return _quit("The auger did not stop in 40 s.")
 	var waited := await _settled(auger.spoil_cell())
@@ -665,35 +722,45 @@ func _bore(a: Vector2i) -> bool:
 	var steep := _steepest(box, shaft)
 	var repose := tan(deg_to_rad(_terrain.materials.repose_dry[0])) * 1.02
 	print("bore: stopped (%s) after %.2f s, %d ticks, depth %.4f m, %d refused; settled in %.2f s; counter %.6f m³, annulus %.6f m³ (%+.4f %%)" % [
-			reason, wall, auger.ticks, auger.depth, auger.refused, waited, auger.removed, removed, (auger.removed / removed - 1.0) * 100.0])
+			reason, wall, auger.ticks, auger.depth, auger.refused, waited, auger.removed, removed, _residual("bore counter", auger.removed, removed)])
 	print("bore: loose %.6f m³ over the box for %.6f · %.2f = %.6f (%+.4f %%), deposited %.6f (%+.4f %%); shaft drops %s m, bare: %s; loose within 2 cells max %.6f m at A %+d, %+d, the nearest over 1 cm %.2f m from A; steepest %.4f, repose · 1.02 %.4f" % [
-			piled, removed, swell, removed * swell, (piled / (removed * swell) - 1.0) * 100.0, auger.deposited,
-			(piled / auger.deposited - 1.0) * 100.0, drops, bare, rim, rim_at.x - a.x, rim_at.y - a.y, reach, steep, repose])
-	var rate := _edit_bakes / wall
+			piled, removed, swell, removed * swell, _residual("bore spoil", piled, removed * swell), auger.deposited,
+			_residual("bore deposited", piled, auger.deposited), drops, bare, rim, rim_at.x - a.x, rim_at.y - a.y, reach, steep, repose])
+	var rate := bakes / wall
 	print("bore: %d edit-shape landings in %.2f s: %.2f a second; %d zone moves (the zone was at %s, A is %s)" % [
-			_edit_bakes, wall, rate, _zone_moves, zone0, a])
+			bakes, wall, rate, moves, zone0, a])
 	_report("bore to depth, spoil conserved and clear of the rim", reason == "depth" and waited >= 0.0
 			and absf(auger.removed - removed) <= 1e-3 * removed and absf(piled - removed * swell) <= 0.005 * removed * swell
 			and absf(piled - auger.deposited) <= 0.005 * auger.deposited and bare and rim <= 0.01 and steep <= repose
 			and auger.refused == 0)
 	# The throttle lands the first touch at once and then one per 0.2 s: 1 + floor(wall / 0.2) at most.
 	_report("bore in 30 ± 2 s, edit-shape landings at most 5 a second, at most one zone move", absf(wall - 30.0) <= 2.0
-			and rate <= 5.0 + 1.0 / wall and _zone_moves <= 1)
+			and rate <= 5.0 + 1.0 / wall and moves <= 1)
 	var theta := Cyl.theta_of(_station.to_local(_player.global_position))
 	_face(Vector3(cos(theta), sin(theta), 0))
 	await _shot("tool_pile")
 	return true
 
 
-## Counts the edit-shape landings and the zone moves among them for the bore phase. Inside the readback flush:
-## stores only. An edit landing is for the last zone requested (edit_run's rule).
-func _on_baked(kind: String, _ms: float) -> void:
+## Counts patch's edit-shape landings and the zone moves among them, over the run and per phase. Inside the
+## readback flush: stores only. An edit landing is for the last zone requested (edit_run's rule).
+func _on_baked(kind: String, _ms: float, patch: ColliderPatch) -> void:
 	if kind != "edit":
 		return
+	var moved := patch._issued_zone != _last_zone
+	_last_zone = patch._issued_zone
 	_edit_bakes += 1
-	if _terrain.patch._issued_zone != _last_zone:
-		_zone_moves += 1
-		_last_zone = _terrain.patch._issued_zone
+	_zone_moves += int(moved)
+	var s := _stat_of(_phase)
+	s.bakes += 1
+	s.moves += int(moved)
+
+
+## The active tile count every 2 s into _bore_trace while tracing[0] holds.
+func _trace(tracing: Array) -> void:
+	while tracing[0]:
+		_bore_trace.append(_terrain.sim.active_tiles().size())
+		await get_tree().create_timer(2.0).timeout
 
 
 ## Phase box: a 1 m box dropped 2 m over the pile's top comes to rest on the collider where it ends up, by the
@@ -767,7 +834,7 @@ func _pickup(a: Vector2i) -> void:
 	var after := _vol(loose, _read("surface"), box)
 	var fell: float = shaft.map(func(c: Vector2i) -> float: return _f(loose, c)).max()
 	print("pickup: auger gone: %s, shaft loose max %.6f m after 1 s; a 2 m³ column at %s settled in %.2f s: %.6f m³ over the box, was %.6f + 2 (%+.4f %%); shaft loose max %.4f m" % [
-			gone, held, column, waited, after, before, (after / (before + 2.0) - 1.0) * 100.0, fell])
+			gone, held, column, waited, after, before, _residual("pickup", after, before + 2.0), fell])
 	_report("pickup opens the hole", gone and held < 1e-6 and waited >= 0.0 and absf(after - before - 2.0) <= 0.005 * (before + 2.0)
 			and fell > 0.05)
 
@@ -887,7 +954,7 @@ func _pump() -> bool:
 		far = maxf(far, _nearest(c, near, surface))
 	var lake_kept := _read("water_surface") == ws0
 	print("pump: at %s, spoil at %s; mode %s, %d ticks, pumped %.6f m³; settled in %.2f s; sheet %+.6f, pore %+.6f, absorbed %+.6f m³: %.6f for %.6f (%+.3f %%)" % [
-			a, spoil, mode, ticks, pumped, waited, sheet, pore, absorbed, total, pumped, (total / pumped - 1.0) * 100.0])
+			a, spoil, mode, ticks, pumped, waited, sheet, pore, absorbed, total, pumped, _residual("pump", total, pumped)])
 	print("pump: %d cells wet or reservoir by A, %d saturation rose (%d in the window), all dirt-topped: %s, farthest from a wet or reservoir cell %.3f m; water_surface unchanged: %s; %d cells held sheet water as the pump stopped, mean ground %.3f m, the spoil disc's %.3f m" % [
 			near.size(), risen.size(), risen_all, dirt, far, lake_kept, held, held_ground, spoil_ground])
 	_report("pumped water runs downhill, soaks dirt within 3 m, lake unchanged", mode == "pump" and pumped >= 8.0
@@ -967,7 +1034,7 @@ func _rock_spill() -> void:
 	var dry := _read("saturation") == sat0
 	var absorbed := _terrain.sim.absorbed - absorbed0
 	print("rock spill: 1 m³ at %s (%+d, %+d from the player's cell + (0, 4), %.3f m below it); after 3 s the sheet %.6f m³ on %d cells (%+.4f %%), saturation unchanged: %s, absorbed %+.6f m³" % [
-			spill, spill.x - from.x, spill.y - from.y, _f(surface, from) - _f(surface, spill), water, held, (water - 1.0) * 100.0, dry, absorbed])
+			spill, spill.x - from.x, spill.y - from.y, _f(surface, from) - _f(surface, spill), water, held, _residual("rock spill", water, 1.0), dry, absorbed])
 	_report("rock does not soak", dry and absorbed == 0.0 and absf(water - 1.0) <= 0.02)
 
 
@@ -1001,7 +1068,7 @@ func _rock(spawn: Vector2i) -> bool:
 		floored = floored and absf(_f(s1, x) - _f(bedrock, x)) <= 1e-3
 	print("rock: at %s, cover %s m; stopped (%s) after %.2f s at depth %.4f m, %d ticks; counter %.6f m³, annulus %.6f m³ (%+.4f %%); shaft at bedrock_top: %s" % [
 			c, cover, reason, wall, auger.depth, auger.ticks, auger.removed, removed,
-			(auger.removed / removed - 1.0) * 100.0 if removed > 0.0 else 0.0, floored])
+			_residual("rock counter", auger.removed, removed) if removed > 0.0 else 0.0, floored])
 	_report("rock floors the bore", reason == "rock" and auger.depth < t.bore_depth and absf(auger.removed - removed) <= 1e-3 * removed
 			and floored)
 	_tools.pickup()
@@ -1033,8 +1100,8 @@ func _scroll(s6: Vector2i, spawn: Vector2i) -> bool:
 	var steep := _steepest(box, [])
 	var repose := tan(deg_to_rad(_terrain.materials.repose_dry[0])) * 1.02
 	print("scroll: active 0.3 s after a 20 m³ deposit at %s: %s; %.6f m³ over the box; 600 m away at %s, %s evicted: %s; back: %.6f m³ at once (%+.4f %%), settled in %.2f s %.6f m³ (%+.4f %%), steepest %.4f, repose · 1.02 %.4f" % [
-			s6, slumping, l0, away, tile, evicted, l1, (l1 / l0 - 1.0) * 100.0, waited, l2, (l2 / l0 - 1.0) * 100.0, steep, repose])
-	print("scroll: the window's water %.6f m³ before, %.6f m³ back (%+.4f %%)" % [w0, w1, (w1 / w0 - 1.0) * 100.0])
+			s6, slumping, l0, away, tile, evicted, l1, _residual("scroll at once", l1, l0), waited, l2, _residual("scroll settled", l2, l0), steep, repose])
+	print("scroll: the window's water %.6f m³ before, %.6f m³ back (%+.4f %%)" % [w0, w1, _residual("scroll water", w1, w0)])
 	_report("pile survives a scroll mid-slump", not slumping.is_empty() and evicted and absf(l1 - l0) <= 1e-3 * l0
 			and waited >= 0.0 and absf(l2 - l0) <= 0.005 * l0 and steep <= repose and w0 > 0.0 and absf(w1 - w0) <= 0.02 * w0)
 	return true
@@ -1044,7 +1111,8 @@ func _scroll(s6: Vector2i, spawn: Vector2i) -> bool:
 ## and the window keeps its water, from the tiles saved at the exit; no auger stands after (see the header).
 ## False after quitting on a timeout.
 func _restart_mid_bore(s7: Vector2i) -> bool:
-	var step := _terrain.tool_params.bore_step
+	var t := _terrain.tool_params
+	var step := t.bore_step
 	var box := _box(s7, 24)
 	var ground := _f(_read("surface"), s7)
 	var at := _center(s7)
@@ -1056,6 +1124,8 @@ func _restart_mid_bore(s7: Vector2i) -> bool:
 	var depth0 := auger.depth
 	var surface := _read("surface")
 	var hole0 := _f(surface, s7)
+	# Mid-bore, so the hole check is not vacuous: deeper than the two steps it allows, short of the depth.
+	var mid := ground - hole0 > 2.0 * step and depth0 < t.bore_depth
 	var l0 := _vol(_read("loose"), surface, box)
 	var w0 := _water()
 	var center0 := _terrain.window.center_tile
@@ -1070,11 +1140,11 @@ func _restart_mid_bore(s7: Vector2i) -> bool:
 	var l1 := _vol(_read("loose"), surface, box)
 	var w1 := _water()
 	var waited := await _settled(spoil)
-	print("restart: auger at %s, %.4f m bored after 8 s; after the restart %d blobs loaded, no auger: %s; the hole %.4f m deep, was %.4f (%+.4f m, two steps %.4f); %.6f m³ loose over the box, was %.6f (%+.6f m³, allowed %.6f); window %s, was %s" % [
-			s7, depth0, blobs, gone, ground - hole1, ground - hole0, hole0 - hole1, 2.0 * step, l1, l0, l1 - l0, 0.3 + 0.01 * l0,
+	print("restart: auger at %s, %.4f m bored after 8 s; after the restart %d blobs loaded, no auger: %s; the hole %.4f m deep, was %.4f (%+.4f m, two steps %.4f); %.6f m³ loose over the box, was %.6f (%+.6f m³, %+.4f %%, allowed %.6f); window %s, was %s" % [
+			s7, depth0, blobs, gone, ground - hole1, ground - hole0, hole0 - hole1, 2.0 * step, l1, l0, l1 - l0, _residual("restart loose", l1, l0), 0.3 + 0.01 * l0,
 			_terrain.window.center_tile, center0])
-	print("restart: the window's water %.6f m³ after, %.6f m³ before (%+.4f %%); settled in %.2f s" % [w1, w0, (w1 / w0 - 1.0) * 100.0, waited])
-	_report("restart mid-bore keeps the hole, the pile and the puddle", blobs >= 3 and gone and absf(hole1 - hole0) <= 2.0 * step
+	print("restart: the window's water %.6f m³ after, %.6f m³ before (%+.4f %%); settled in %.2f s" % [w1, w0, _residual("restart water", w1, w0), waited])
+	_report("restart mid-bore keeps the hole, the pile and the puddle", mid and blobs >= 3 and gone and absf(hole1 - hole0) <= 2.0 * step
 			and absf(l1 - l0) <= 0.3 + 0.01 * l0 and w0 > 0.0 and absf(w1 - w0) <= 0.02 * w0 and waited >= 0.0)
 	return true
 
@@ -1110,9 +1180,11 @@ func _shot(file: String) -> void:
 	dump.window = _terrain.window
 	dump.center = _terrain.window.center_tile
 	RenderingServer.call_on_render_thread(dump._dump)
+	# The screenshot and the dump's six field reads are synchronous reads too.
+	_stat_of(_phase).reads += 7
 	var want := _sum(_read("loose"), _read("surface"))
 	print("%s: saved; the P dump's loose %.6f m³, the driver's %.6f m³ (%+.4f %%)" % [
-			file, dump.loose_volume, want, (dump.loose_volume / want - 1.0) * 100.0])
+			file, dump.loose_volume, want, _residual("P dump " + file, dump.loose_volume, want)])
 	_report("P dump loose volume (%s)" % file, want > 0.0 and absf(dump.loose_volume - want) <= 0.01 * want)
 	dump.free()
 
@@ -1286,8 +1358,9 @@ func _frames(n: int) -> void:
 		await get_tree().process_frame
 
 
-## A window field's texture, read synchronously.
+## A window field's texture, read synchronously (a stall), counted in the phase.
 func _read(field: String) -> PackedByteArray:
+	_stat_of(_phase).reads += 1
 	var out: Array[PackedByteArray] = []
 	var rid := _terrain.window.texture_rid(field)
 	RenderingServer.call_on_render_thread(func() -> void:
@@ -1436,22 +1509,51 @@ func _expect(ok: bool, what: String) -> void:
 		_ok = false
 
 
-## The timing summary, reported against the budgets and never asserted.
+## The measurement summary, reported against the budgets and never asserted (see the header).
 func _summary() -> void:
+	var vp := get_viewport()
 	print("---- tool run ----")
-	print("machine: %s, %s; driver %s" % [OS.get_processor_name(), RenderingServer.get_video_adapter_name(),
-			RenderingServer.get_current_rendering_driver_name()])
-	print("GPU lists in ms (Vulkan only):")
+	print("machine: %s, %s" % [OS.get_processor_name(), RenderingServer.get_video_adapter_name()])
+	print("driver: %s, window %s, viewport %s, display %.0f Hz, vsync mode %d" % [
+			RenderingServer.get_current_rendering_driver_name(), DisplayServer.window_get_size(),
+			vp.get_visible_rect().size, DisplayServer.screen_get_refresh_rate(), DisplayServer.window_get_vsync_mode()])
+	print("GPU passes in ms from the stamps to the restart (Vulkan only; sim per active tile, a frame's lists summed; apply and detail per tile; the others per list, a pack list being 1 to 4 tiles):")
+	var all: Array[float] = []
+	for phase: String in _sim_ms:
+		all.append_array(_sim_ms[phase])
+	print("  %-11s %s; %d steps" % ["sim/tile", Smoke._stat(all, SIM_BUDGET), _steps + _terrain.sim.steps])
+	var tiles := {"apply": _apply_tiles, "detail": _detail_tiles}
 	for pass_name: String in BUDGET:
 		var ms: Array[float] = []
 		for t in _timed:
 			if t.name == pass_name:
 				ms.append(t.ms)
-		print("  %-5s %s" % [pass_name, Smoke._stat(ms, BUDGET[pass_name])])
-	var all: Array[float] = []
+		var label := pass_name + ("/tile" if tiles.has(pass_name) else "")
+		if tiles.has(pass_name) and not ms.is_empty():
+			var n: Array[int] = tiles[pass_name]
+			if ms.size() != n.size():
+				print("  %-11s n/a (%d lists timed, %d issued)" % [label, ms.size(), n.size()])
+				continue
+			for i in ms.size():
+				ms[i] /= n[i]
+		print("  %-11s %s" % [label, Smoke._stat(ms, BUDGET[pass_name])])
 	for phase: String in _sim_ms:
-		all.append_array(_sim_ms[phase])
-		print("  sim   %-5s per active tile %s; active tiles max %d" % [phase, Smoke._stat(_sim_ms[phase], SIM_BUDGET), _active_max[phase]])
-	print("  sim   all   per active tile %s; %d steps" % [Smoke._stat(all, SIM_BUDGET), _steps + _terrain.sim.steps])
-	print("  the sheet and pump phases carry the driver's own synchronous reads (a 1 MB water read every 0.5 s), and so does")
-	print("  the walk phase (a 1 MB surface and a 1 MB loose read every 0.1 s, 15 of each)")
+		print("  sim/tile in %-6s %s" % [phase, Smoke._stat(_sim_ms[phase], SIM_BUDGET)])
+	print("per phase: active tiles mean / max and the frames with any; edit-shape landings a second and zone moves; CPU = frame interval, GPU = viewport render time; the driver's own synchronous reads (whole fields of 0.25 or 1 MB, stalls of its making: walk samples the feet every 0.1 s, sheet and pump the water every 0.5 s):")
+	for phase in PHASES:
+		var s := _stat_of(phase)
+		var frames: int = s.cpu.size()
+		print("  %-6s %5.1f s, active %.2f / %d, %d of %d frames; %.2f landings a second, %d zone moves; %s; %d reads" % [
+				phase, s.time, float(s.active) / frames, s.max, s.busy, frames, s.bakes / s.time, s.moves,
+				Smoke._times(s.cpu, s.gpu), s.reads])
+	print("bore: active tiles every 2 s from the placement %s" % [_bore_trace])
+	var residuals := PackedStringArray()
+	for what: String in _residuals:
+		residuals.append("%s %+.4f" % [what, _residuals[what]])
+	print("conservation residuals in %%: %s" % ", ".join(residuals))
+
+
+## (got / want − 1) in %, recorded under what for the summary.
+func _residual(what: String, got: float, want: float) -> float:
+	_residuals[what] = (got / want - 1.0) * 100.0
+	return _residuals[what]
