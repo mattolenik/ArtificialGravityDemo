@@ -43,10 +43,12 @@ var _window: TerrainWindow
 var _rd: RenderingDevice
 var _shader: RID
 var _pipeline: RID
-## Per window texel, what the flux pass sends each edge neighbour: loose and water in m³, pore quanta as bytes.
+## Per window texel, what the flux pass sends each edge neighbour: loose and water in m³, pore quanta as bytes;
+## and the loose it sends each diagonal neighbour, in m³.
 var _flux_loose: RID
 var _flux_water: RID
 var _flux_pore: RID
+var _flux_loose_d: RID
 ## The edit layer's stats buffer and its size in bytes.
 var _stats: RID
 var _stats_size := 0
@@ -79,7 +81,9 @@ func _setup_rd(window: TerrainWindow, edits: EditLayer) -> void:
 	_flux_loose = _flux_texture(window.size, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
 	_flux_water = _flux_texture(window.size, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
 	_flux_pore = _flux_texture(window.size, RenderingDevice.DATA_FORMAT_R8G8B8A8_UNORM)
-	# Binding 0..10 the window's fields in FIELDS order, 11..13 the flux textures, 14 the stats.
+	_flux_loose_d = _flux_texture(window.size, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
+	# Binding 0..10 the window's fields in FIELDS order, 11..13 the flux textures, 14 the stats, 15 the diagonal
+	# loose flux.
 	var images: Array[RID] = []
 	for field: String in TerrainWindow.FIELDS:
 		images.append(window.texture_rid(field))
@@ -96,6 +100,11 @@ func _setup_rd(window: TerrainWindow, edits: EditLayer) -> void:
 	s.binding = images.size()
 	s.add_id(_stats)
 	uniforms.append(s)
+	var d := RDUniform.new()
+	d.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+	d.binding = s.binding + 1
+	d.add_id(_flux_loose_d)
+	uniforms.append(d)
 	_set = _rd.uniform_set_create(uniforms, _shader, 0)
 
 
@@ -112,7 +121,7 @@ func _notification(what: int) -> void:
 	if what != NOTIFICATION_PREDELETE or _rd == null:
 		return
 	# Freeing the shader frees its pipeline and uniform set; the stats buffer is the edit layer's.
-	var rids: Array[RID] = [_shader, _flux_loose, _flux_water, _flux_pore]
+	var rids: Array[RID] = [_shader, _flux_loose, _flux_water, _flux_pore, _flux_loose_d]
 	RenderingServer.call_on_render_thread(TerrainWindow._free_rids.bind(_rd, rids))
 
 

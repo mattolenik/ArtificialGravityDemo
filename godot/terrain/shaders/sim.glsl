@@ -8,9 +8,14 @@
 //   a thickness times its own area (R - s) dtheta by 1 m: loose dirt (the excess over repose times
 //   slump_rate, plus the share flowing water carries) to flux_loose, sheet water (flow_rate of the drop in
 //   water surface) to flux_water, and on soak ticks one pore-water quantum per neighbour it wets to
-//   flux_pore. Outflows are capped at what the cell holds, so nothing goes negative.
-// 1 apply: each cell adds what its neighbours send it and subtracts what it sends, over its own area, soaks
-//   one quantum of its sheet into its column on soak ticks, and stores the result.
+//   flux_pore. Loose dirt also slumps to the four diagonal neighbours (DIAG order) into flux_loose_d, by the
+//   same rule over the diagonal edge distance sqrt(w_across^2 + 1), w_across the mean of the two cells'
+//   widths across: with the axes alone a pile settles into a pyramid whose faces stand at
+//   atan(sqrt(2) tan(repose)), 44.7 degrees for dry dirt, instead of a cone at repose. Transport, water and
+//   wetting stay on the axes. Outflows are capped at what the cell holds (the loose cap over all eight), so
+//   nothing goes negative.
+// 1 apply: each cell adds what its eight neighbours send it and subtracts what it sends, over its own area,
+//   soaks one quantum of its sheet into its column on soak ticks, and stores the result.
 //
 // Conservation (decision 2): a volume leaves a cell only as a flux entry that exactly one neighbour adds (the
 // same float), no cell is written by two invocations, and the apply pass stores every change however small
@@ -22,9 +27,9 @@
 // whole quanta of capacity / 255 m of depth, which the saturation byte holds exactly.
 //
 // The neighbour rule (decision 3): an applied cell that moved more than move_eps (or changed its saturation)
-// sets bit 0 of its slot in `stats`, and one on a tile edge also sets bit 1 of the slot across that edge, so
-// a tile that could not receive (inactive, refused above) is activated by TerrainSim a couple of frames
-// later and the flow resumes into it.
+// sets bit 0 of its slot in `stats`, and one on a tile edge or corner also sets bit 1 of the slot of every
+// neighbour across it, diagonals included, so a tile that could not receive (inactive, refused above) is
+// activated by TerrainSim a couple of frames later and the flow resumes into it.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -45,6 +50,8 @@ layout(set = 0, binding = 12, rgba32f) uniform restrict image2D flux_water;
 layout(set = 0, binding = 13, rgba8) uniform restrict image2D flux_pore;
 // One activity word per window slot (slot y * slots + x), then the reservoirs' absorbed water (EditLayer's).
 layout(set = 0, binding = 14, std430) restrict buffer Stats { uint stats[]; };
+// Per texel, the loose the cell sends each diagonal neighbour in DIAG order, in m^3.
+layout(set = 0, binding = 15, rgba32f) uniform restrict image2D flux_loose_d;
 
 layout(push_constant, std430) uniform Params {
 	ivec2 tile;             // the tile stepped (theta wrapped, z)
@@ -71,6 +78,8 @@ layout(push_constant, std430) uniform Params {
 const int TILE = 128;
 // The edge neighbours; the opposite of k is (k + 2) % 4. Even k step across (theta), odd k along (z).
 const ivec2 DIR4[4] = ivec2[4](ivec2(1, 0), ivec2(0, 1), ivec2(-1, 0), ivec2(0, -1));
+// The diagonal neighbours; the opposite of k is (k + 2) % 4 here too.
+const ivec2 DIAG[4] = ivec2[4](ivec2(1, 1), ivec2(-1, 1), ivec2(-1, -1), ivec2(1, -1));
 
 // Floor modulo; GLSL's % is undefined for negative operands.
 int wrap(int a, int n) {
@@ -94,10 +103,15 @@ uint byte(float unorm) {
 	return uint(round(unorm * 255.0));
 }
 
+// Cell c + d, theta wrapped.
+ivec2 offset(ivec2 c, ivec2 d) {
+	ivec2 n = c + d;
+	return ivec2(wrap(n.x, pc.n_theta), n.y);
+}
+
 // Cell c's edge neighbour k, theta wrapped.
 ivec2 neighbour(ivec2 c, int k) {
-	ivec2 n = c + DIR4[k];
-	return ivec2(wrap(n.x, pc.n_theta), n.y);
+	return offset(c, DIR4[k]);
 }
 
 // Component k of v, without a dynamic vector index.
@@ -187,6 +201,21 @@ void flux(ivec2 c, ivec2 t) {
 			given += 1u;
 		}
 	}
+	// Slump to the diagonals, over the diagonal edge distance.
+	float out_d[4] = float[4](0.0, 0.0, 0.0, 0.0);
+	for (int k = 0; k < 4; k++) {
+		ivec2 n = offset(c, DIAG[k]);
+		ivec2 tn;
+		if (!texel(n, tn) || !tile_active(tn) || blocked(n)) {
+			continue;
+		}
+		float s_n = imageLoad(w_surface, tn).r;
+		float across = 0.5 * ((pc.R - s) + (pc.R - s_n)) * pc.dtheta;
+		float ex = (H - s_n - imageLoad(w_loose, tn).r) - tr * sqrt(across * across + 1.0);
+		if (ex > 0.0) {
+			out_d[k] = pc.slump_rate * ex;
+		}
+	}
 	float tw = out_w[0] + out_w[1] + out_w[2] + out_w[3];
 	for (int k = 0; k < 4; k++) {
 		if (tw > d) {
@@ -194,15 +223,27 @@ void flux(ivec2 c, ivec2 t) {
 		}
 		out_l[k] += pc.transport_share * min(out_w[k] / pc.transport_depth, 1.0) * L;
 	}
-	float tl = out_l[0] + out_l[1] + out_l[2] + out_l[3];
+	float tl = out_l[0] + out_l[1] + out_l[2] + out_l[3] + out_d[0] + out_d[1] + out_d[2] + out_d[3];
 	if (tl > L) {
 		for (int k = 0; k < 4; k++) {
 			out_l[k] *= L / tl;
+			out_d[k] *= L / tl;
 		}
 	}
 	imageStore(flux_loose, t, vec4(out_l[0], out_l[1], out_l[2], out_l[3]) * a);
+	imageStore(flux_loose_d, t, vec4(out_d[0], out_d[1], out_d[2], out_d[3]) * a);
 	imageStore(flux_water, t, vec4(out_w[0], out_w[1], out_w[2], out_w[3]) * a);
 	imageStore(flux_pore, t, vec4(pore[0], pore[1], pore[2], pore[3]) / 255.0);
+}
+
+// Sets bit 1 of the slot of cell c + d when that neighbour lies in another tile (c is texel g of its own)
+// that is in the window.
+void wake(ivec2 c, ivec2 g, ivec2 d) {
+	ivec2 gn = g + d;
+	ivec2 tn;
+	if ((gn.x < 0 || gn.y < 0 || gn.x >= TILE || gn.y >= TILE) && texel(offset(c, d), tn)) {
+		atomicOr(stats[slot_word(tn)], 2u);
+	}
 }
 
 void apply(ivec2 c, ivec2 t, ivec2 g) {
@@ -213,18 +254,21 @@ void apply(ivec2 c, ivec2 t, ivec2 g) {
 	uint mat = byte(imageLoad(w_material, t).r);
 	float a = (pc.R - s) * pc.dtheta;
 	bool res = reservoir(imageLoad(w_water, t).r, s + L);
-	vec4 own = imageLoad(flux_loose, t);
+	vec4 own = imageLoad(flux_loose, t) + imageLoad(flux_loose_d, t);
 	vec4 own_w = imageLoad(flux_water, t);
 	uvec4 own_p = uvec4(round(imageLoad(flux_pore, t) * 255.0));
 	float in_l = 0.0;
 	float in_w = 0.0;
 	int in_p = 0;
 	for (int k = 0; k < 4; k++) {
+		int j = (k + 2) % 4;
 		ivec2 tn;
+		if (texel(offset(c, DIAG[k]), tn) && tile_active(tn)) {
+			in_l += pick(imageLoad(flux_loose_d, tn), j);
+		}
 		if (!texel(neighbour(c, k), tn) || !tile_active(tn)) {
 			continue;
 		}
-		int j = (k + 2) % 4;
 		in_l += pick(imageLoad(flux_loose, tn), j);
 		in_w += pick(imageLoad(flux_water, tn), j);
 		in_p += int(byte(pick(imageLoad(flux_pore, tn), j)));
@@ -261,12 +305,9 @@ void apply(ivec2 c, ivec2 t, ivec2 g) {
 	// The activity gate only.
 	if (abs(l2 - L) > pc.move_eps || abs(d2 - d) > pc.move_eps || q2 != int(q)) {
 		atomicOr(stats[slot_word(t)], 1u);
-		bool edge[4] = bool[4](g.x == TILE - 1, g.y == TILE - 1, g.x == 0, g.y == 0);
 		for (int k = 0; k < 4; k++) {
-			ivec2 tn;
-			if (edge[k] && texel(neighbour(c, k), tn)) {
-				atomicOr(stats[slot_word(tn)], 2u);
-			}
+			wake(c, g, DIR4[k]);
+			wake(c, g, DIAG[k]);
 		}
 	}
 }
