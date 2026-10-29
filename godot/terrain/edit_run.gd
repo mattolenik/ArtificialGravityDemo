@@ -338,11 +338,15 @@ func _deferred() -> void:
 	# re-touched while their tile is active (Terrain._retouch), and the last of those touches may still be
 	# waiting in the throttle, or its bake in flight, a few frames after.
 	var patch := _terrain.patch
+	var quiet := false
 	for i in 600:
-		if not (_terrain.sim.has_active() or _terrain._touch_radius >= 0 or patch._pending or patch._pending_edit
-				or patch._again_edit or patch._again_big):
+		quiet = not (_terrain.sim.has_active() or _terrain._touch_radius >= 0 or patch._pending or patch._pending_edit
+				or patch._again_edit or patch._again_big)
+		if quiet:
 			break
 		await get_tree().process_frame
+	if not quiet:
+		print("deferred: the collider was not quiet after 600 frames; the forced edits run anyway")
 	_phase = "deferred"
 	var both_moves := await _forced(a, b, false)
 	var big_idle := await _forced(b, at, true)

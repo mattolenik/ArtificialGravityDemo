@@ -154,6 +154,7 @@ static func make_tiles(parent: Node3D, w: TerrainWindow) -> Array[MeshInstance3D
 	ground.set_shader_parameter("material_tex", w.texture_rd("material"))
 	ground.set_shader_parameter("material_color", preload("res://terrain/materials.tres").color)
 	ground.set_shader_parameter("n_theta", w.params.n_theta())
+	ground.set_shader_parameter("saturation_tex", w.texture_rd("saturation"))
 	var water := _material(preload("res://terrain/shaders/water.gdshader"), w)
 	var tiles: Array[MeshInstance3D] = []
 	for i in w.slots * w.slots:
@@ -210,6 +211,7 @@ static func _material(shader: Shader, w: TerrainWindow) -> ShaderMaterial:
 	m.set_shader_parameter("surface_tex", w.texture_rd("surface"))
 	m.set_shader_parameter("loose_tex", w.texture_rd("loose"))
 	m.set_shader_parameter("water_tex", w.texture_rd("water_surface"))
+	m.set_shader_parameter("depth_tex", w.texture_rd("water_depth"))
 	m.set_shader_parameter("R", w.params.radius)
 	m.set_shader_parameter("dtheta", w.params.dtheta())
 	m.set_shader_parameter("cell", w.cell)

@@ -10,12 +10,17 @@ uniform sampler2D material_tex : filter_nearest;
 uniform vec4 material_color[4] : source_color;
 // Cells around the circumference, to wrap the speckle's cell index at theta = 0.
 uniform int n_theta;
+// Pore water held, 0 dry to 1 full.
+uniform sampler2D saturation_tex : filter_nearest;
 
 varying vec2 local_cell;
 // The normal's component toward the axis: 1 on flat ground.
 varying float up;
 // 1 under water, 0 on dry ground.
 varying float wet;
+// The vertex's texels: loose dirt, m, and saturation, 0..1.
+varying float loose_v;
+varying float sat_v;
 
 void vertex() {
 	ivec2 k = grid_cell(VERTEX);
@@ -24,6 +29,8 @@ void vertex() {
 	theta_z = p;
 	float h = ground_of(k);
 	wet = height_of(water_tex, k) > h + 0.05 ? 1.0 : 0.0;
+	loose_v = height_of(loose_tex, k);
+	sat_v = texelFetch(saturation_tex, window_texel(k), 0).r;
 	// Central differences: a cell spans (R - h) dtheta cell m across and cell m along.
 	float sx = (ground_of(k + ivec2(1, 0)) - ground_of(k - ivec2(1, 0))) / (2.0 * (R - h) * dtheta * cell);
 	float sz = (ground_of(k + ivec2(0, 1)) - ground_of(k - ivec2(0, 1))) / (2.0 * cell);
@@ -47,10 +54,14 @@ void fragment() {
 	}
 	ivec2 k = ivec2(round(local_cell));
 	int id = clamp(int(round(texelFetch(material_tex, window_texel(k), 0).r * 255.0)), 0, 3);
-	// A little speckle per window cell, keyed to the global cell so it matches across tiles.
+	// A pile of loose dirt: dirt's colour, darker, rougher and more speckled than the ground under it.
+	bool pile = loose_v > 0.02;
+	id = pile ? 0 : id;
+	// A speckle per window cell, keyed to the global cell so it matches across tiles.
 	ivec2 g = ivec2(int(round(tile_theta / (dtheta * cell))), int(round(tile_z / cell))) - 64 + k;
 	int around = n_theta / int(cell);
 	g.x = (g.x + around) % around;
-	ALBEDO = material_color[id].rgb * mix(0.55, 1.0, smoothstep(0.5, 1.0, up)) * mix(1.0, 0.7, wet) * (0.96 + 0.08 * hash(g));
-	ROUGHNESS = 0.95;
+	ALBEDO = material_color[id].rgb * (pile ? 0.75 : 1.0) * mix(1.0, 0.6, sat_v) * mix(0.55, 1.0, smoothstep(0.5, 1.0, up))
+			* mix(1.0, 0.7, wet) * (1.0 + (pile ? 0.3 : 0.08) * (hash(g) - 0.5));
+	ROUGHNESS = pile ? 1.0 : 0.95;
 }

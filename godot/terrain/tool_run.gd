@@ -28,7 +28,10 @@
 ## sheet (k = -1, S3): a 2 m³ spill of water spreads (after 3 s, the cells over 5 mm deep are counted) and
 ##    soaks: the window's sheet water, its pore water and what reservoirs absorbed add up to 2 m³ within 2 %,
 ##    and every cell whose saturation rose is dirt-topped and within 3.05 m of a cell that was wet. A water
-##    read every 0.5 s marks the wet cells: this phase carries the driver's own synchronous reads.
+##    read every 0.5 s marks the wet cells: this phase carries the driver's own synchronous reads. The player
+##    stands 12 m before S3 facing it (the sheet runs about 8 m down the slope toward it), and 7 s after the
+##    spill, a sheet still standing (it has soaked away by the time it settles) and the dirt round it
+##    darkened, the shot (below) saves user://debug/tool_puddle.png.
 ## walk (k = -2, S4; Task 4): a 12 m³ deposit of radius 2 settles; the player, stood 8 m before it along -z
 ##    and facing +z, holds W for 1.5 s and walks over it: at least 10 pushes, no landing counted, the loose
 ##    volume over the box of 24 kept within 0.5 %, its loose-weighted mean row 0.1 cells further on, and the
@@ -43,7 +46,8 @@
 ##    the surfaces within 0.1 %, the loose over the box of 24 is that times the swell and what it deposited
 ##    within 0.5 %, the shaft is 10 m down and bare, no loose within 2 cells of A (decision 6), the pile at
 ##    repose, no tick refused; the edit-shape landings at most 5 a second over the bore and at most one zone
-##    move (printed and asserted).
+##    move (printed and asserted). Then, the auger still standing, the player at the spawn faces spinward
+##    onto the pile and the shot saves user://debug/tool_pile.png.
 ## box: a 1 m box dropped 2 m over the pile's top comes to rest within 8 s (a cube cannot balance on the apex,
 ##    so it may roll down), its lowest corner on the collider and at surface + loose of the cell where it
 ##    rests, inside the pile's box of 24.
@@ -53,6 +57,9 @@
 ##    and stop, and resume when it is back; it is picked up while its ticks are in flight (no ERROR line).
 ## rock: at NoiseReport.rock_site an auger 3 cells spinward of the player stops at rock before 10 m, its
 ##    counter matching the annulus, every shaft cell at its bedrock_top; then back to the spawn.
+## A shot tilts the camera down under the light bar's noon, waits 6 frames, saves the screenshot and levels the
+## camera, then runs the P dump (debug_window_dump.gd) and checks its loose volume against the driver's over the
+## window within 1 %.
 ## Then prints the GPU times of the edit (stamp), pack and sim lists against their budget, reported and not
 ## asserted (Vulkan only: Metal reports zeros, shown as n/a), and PASS and exits 0 when every check holds,
 ## else FAIL and 1; persist_edits is off, so nothing is saved. Last, a small deposit makes a tile active and
@@ -159,7 +166,8 @@ func _route() -> void:
 	if not await _ends(spawn):
 		return
 	_phase = "sheet"
-	await _sheet(spawn + Vector2i(0, -40))
+	if not await _sheet(spawn + Vector2i(0, -40)):
+		return
 	var s4 := spawn + Vector2i(0, -80)
 	_phase = "walk"
 	if not await _walk(s4):
@@ -400,8 +408,11 @@ func _ends(spawn: Vector2i) -> bool:
 
 
 ## Phase sheet at s3: a spill spreads, soaks and wets dirt within the wetting distance, its water accounted
-## for over the whole window (see the header).
-func _sheet(s3: Vector2i) -> void:
+## for over the whole window (see the header). False after quitting on a timeout.
+func _sheet(s3: Vector2i) -> bool:
+	if not await _teleport(s3 - Vector2i(0, 12)):
+		return false
+	_face(Vector3(0, 0, 1))
 	var surface := _read("surface")
 	var sheet0 := _sum(_read("water_depth"), surface)
 	var sat0 := _read("saturation")
@@ -415,6 +426,9 @@ func _sheet(s3: Vector2i) -> void:
 	_sample_wet(wet, sampling)
 	await get_tree().create_timer(3.0).timeout
 	var deep := Array(_read("water_depth").to_float32_array()).filter(func(d: float) -> bool: return d > 0.005).size()
+	# The shot 7 s after the spill: a sheet still stands and the dirt round it has darkened (see the header).
+	await get_tree().create_timer(4.0).timeout
+	await _shot("tool_puddle")
 	var waited := await _settled(s3, 12.0)
 	sampling[0] = false
 	_mark_wet(wet)
@@ -449,6 +463,7 @@ func _sheet(s3: Vector2i) -> void:
 			wet_cells.size(), risen.size(), risen_all, dirt, far])
 	_report("water spreads and soaks within 3 m", deep >= 20 and absf(total - 2.0) <= 0.02 * 2.0 and risen.size() == risen_all
 			and not risen.is_empty() and dirt and far <= 3.05)
+	return true
 
 
 ## Phase walk at s4: the player walks over a settled pile, pushing it on and standing on it (see the header).
@@ -590,8 +605,12 @@ func _bore(a: Vector2i) -> bool:
 			and absf(auger.removed - removed) <= 1e-3 * removed and absf(piled - removed * swell) <= 0.005 * removed * swell
 			and absf(piled - auger.deposited) <= 0.005 * auger.deposited and bare and rim <= 0.01 and steep <= repose
 			and auger.refused == 0)
+	# The throttle lands the first touch at once and then one per 0.2 s: 1 + floor(wall / 0.2) at most.
 	_report("bore in 30 ± 2 s, edit-shape landings at most 5 a second, at most one zone move", absf(wall - 30.0) <= 2.0
-			and rate <= 5.0 and _zone_moves <= 1)
+			and rate <= 5.0 + 1.0 / wall and _zone_moves <= 1)
+	var theta := Cyl.theta_of(_station.to_local(_player.global_position))
+	_face(Vector3(cos(theta), sin(theta), 0))
+	await _shot("tool_pile")
 	return true
 
 
@@ -763,6 +782,27 @@ func _quit(what: String) -> bool:
 	push_error(what)
 	get_tree().quit(1)
 	return false
+
+
+## Tilts the camera down onto what the player faces, under the light bar's noon, waits 6 frames, saves
+## user://debug/<file>.png and levels the camera; then runs the P dump as NoiseReport does and checks its loose
+## volume against _sum over the window within 1 %.
+func _shot(file: String) -> void:
+	(_station.get_node("LightBar") as LightBar).theta = Cyl.theta_of(_station.to_local(_player.global_position))
+	_player.look(Vector2(0.0, 300.0))
+	await _frames(6)
+	DirAccess.make_dir_recursive_absolute("user://debug")
+	get_viewport().get_texture().get_image().save_png("user://debug/%s.png" % file)
+	_player.look(Vector2(0.0, -300.0))
+	var dump := preload("res://terrain/debug_window_dump.gd").new()
+	dump.window = _terrain.window
+	dump.center = _terrain.window.center_tile
+	RenderingServer.call_on_render_thread(dump._dump)
+	var want := _sum(_read("loose"), _read("surface"))
+	print("%s: saved; the P dump's loose %.6f m³, the driver's %.6f m³ (%+.4f %%)" % [
+			file, dump.loose_volume, want, (dump.loose_volume / want - 1.0) * 100.0])
+	_report("P dump loose volume (%s)" % file, absf(dump.loose_volume - want) <= 0.01 * want)
+	dump.free()
 
 
 ## The player's feet (1 m under its origin along its up) over surface + loose at their cell, from synchronous

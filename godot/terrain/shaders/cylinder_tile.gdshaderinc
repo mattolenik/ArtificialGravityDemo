@@ -12,6 +12,7 @@
 uniform sampler2D surface_tex : filter_nearest;
 uniform sampler2D loose_tex : filter_nearest;
 uniform sampler2D water_tex : filter_nearest;
+uniform sampler2D depth_tex : filter_nearest;  // water_depth: the sheet of spilled water on the ground, m
 uniform float R;
 uniform float dtheta;  // angle of one 1 m cell around the axis
 uniform float cell = 1.0;  // window cell size in m: 1 for the main window, 8 for the far ring's
