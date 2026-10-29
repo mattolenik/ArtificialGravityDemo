@@ -48,6 +48,7 @@ Auger and controls:
 - `E` reads `keycode` while the fly camera and `DebugEdit` read physical keys; use `physical_keycode` (`tools.gd`).
 - `place` accepts a placement under the player (the cylinder spawns through the capsule); needs a 1.5 m minimum distance (`tools.gd`).
 - The cell-centre formula is duplicated in `auger.gd`, `tools.gd` and `tool_run.gd`; add `WorldParams.cell_center(c)`.
+- The shovel's held scoop is not saved across a restart; a scoop on a cell under sheet water leaves the water in place (`tools.gd`, `edit.glsl`).
 
 Player:
 - `floor_snap_length` is now 0.3 (was 0.1) so a 15 m/s runner stays on 35° to 40° descents (a 0.1 snap left a pile's shoulder); a feel change the user may tune (`player.tscn`).

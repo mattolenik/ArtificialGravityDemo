@@ -22,6 +22,12 @@ extends Resource
 @export var place_reach := 10.0
 ## How close the player must be to pick the auger up, in m.
 @export var pickup_distance := 3.0
+## What one shovel scoop takes, in m³ of loose dirt (solid ground counts times the swell).
+@export var scoop_volume := 0.25
+## The scoop's disc radius in cells (1: the five-cell plus, like the bore).
+@export var scoop_radius := 1
+## How far from the player the crosshair may scoop or dump, in m.
+@export var shovel_reach := 3.0
 ## The feet's disc radius in cells (1: a five-cell plus).
 @export var foot_radius := 1
 ## The share of each footprint cell's loose a push moves to the cell ahead.

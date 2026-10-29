@@ -5,11 +5,11 @@
 ## apply copies a tile's blob over the detail pass's output whenever the tile enters the window, so an edit
 ## survives the window scrolling away and back. Blobs move as whole PackedByteArrays, never looped here.
 ## Limit (decision 4): a stamped tile evicted and re-entered before its readback lands gets its old blob.
-## Slice 3 adds the tool stamps (stamp_op: bore, deposit, push, tamp, spill), a bore counter read back after
-## each counted stamp, and a stats buffer of one activity flag per window slot for TerrainSim. The apply flags
-## every entering tile that holds loose or water (a pile mid-slump resumes), so at every start each tile with a
-## pile goes active for settle_time, is re-packed into `unsaved` and re-saved byte-identical at the next
-## autosave or exit: expected writes, not a leak.
+## Slice 3 adds the tool stamps (stamp_op: bore, deposit, push, tamp, spill, scoop), a counter read back after
+## each counted stamp (a bore or a scoop), and a stats buffer of one activity flag per window slot for
+## TerrainSim. The apply flags every entering tile that holds loose or water (a pile mid-slump resumes), so at
+## every start each tile with a pile goes active for settle_time, is re-packed into `unsaved` and re-saved
+## byte-identical at the next autosave or exit: expected writes, not a leak.
 class_name EditLayer
 extends RefCounted
 
@@ -22,6 +22,7 @@ const MODE_DEPOSIT := 4
 const MODE_PUSH := 5
 const MODE_TAMP := 6
 const MODE_SPILL := 7
+const MODE_SCOOP := 8
 
 ## Per cell: five float32 heights (surface, bedrock_top, clay_bottom, clay_top, water_surface), then one
 ## uint32 material | compaction << 8 | saturation << 16 | mask << 24; mask 255 where edited, else 0; then
@@ -34,10 +35,10 @@ const V1_BLOB_SIZE := TerrainWindow.TILE * TerrainWindow.TILE * V1_CELL_BYTES
 ## Tiles one stamp can touch, radius at most 64 cells (Terrain.edit refuses more): the download buffer's slots.
 const DOWN_SLOTS := 4
 
-## One stamp of edit.glsl, for stamp_op. `amount` is: raise, m at the centre; bore, the step in m; deposit and
-## spill, m³; push, the share; tamp, the compaction step. `limit` is: bore, the pump's m³ per tick; push, the
-## cap in m per cell; tamp, the swell. Bore and push read other cells than their own, so they must fit one
-## 8 x 8 workgroup: reach() at most 3.
+## One stamp of edit.glsl, for stamp_op. `amount` is: raise, m at the centre; bore, the step in m; deposit,
+## spill and scoop, m³; push, the share; tamp, the compaction step. `limit` is: bore, the pump's m³ per tick;
+## push, the cap in m per cell; tamp and scoop, the swell. Bore and push read other cells than their own, so
+## they must fit one 8 x 8 workgroup: reach() at most 3.
 class Op extends RefCounted:
 	var cell: Vector2i
 	var radius: int
@@ -51,7 +52,8 @@ class Op extends RefCounted:
 	var obstacle_radius := -1
 	## Whether the stamp packs its tiles into `blobs` (tool stamps leave that to the settle pack).
 	var pack := true
-	## Bore: called with (volume_m3, wet) when the counter lands, inside the readback flush (store only).
+	## Bore and scoop: called with (volume_m3, wet) when the counter lands, inside the readback flush (store
+	## only); a scoop's volume is loose-equivalent m³ and never wet.
 	var counted := Callable()
 
 	## Cells from `cell` the stamp writes: a push also fills the ring just past its disc.
@@ -73,7 +75,7 @@ var _pipeline: RID
 ## One blob for the apply pass, and DOWN_SLOTS for the pack pass.
 var _up: RID
 var _down: RID
-## The bore counter: m³ cut or lifted in units of 1e-6, then 1 when a tick pumped.
+## The counter: m³ cut, lifted or scooped in units of 1e-6, then 1 when a bore tick pumped.
 var _counter: RID
 ## One activity flag per window slot, then the reservoirs' absorbed water (TerrainSim's).
 var _stats: RID

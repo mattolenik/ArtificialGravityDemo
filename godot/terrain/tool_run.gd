@@ -40,6 +40,14 @@
 ## jumps (S4): stood on the pile's highest cell, the player jumps four times 1.2 s apart: at least four
 ##    tamps, the solid gained over the box above 0.1 m³ and, times the swell, the loose lost within 1 %, and
 ##    at least one cell folded (no loose, surface risen).
+## shovel (k = 4, S8, the player 4 cells spinward of it), through Tools.scoop and dump aimed at cells:
+## 1. a 3 m³ deposit of radius 2 settles; a scoop at S8 holds scoop_volume within 1 %, the loose over the box
+##    of 12 dropped by what it holds within 0.1 % and the surface is bitwise unchanged (loose first);
+## 2. dumped at S8 + (0, 6), the shovel is empty and the loose over the box is back within 0.1 %;
+## 3. a scoop of the bare ground at B = S8 - (0, 6) holds scoop_volume within 1 %, the annulus cut over the box
+##    of 4 times the swell is what it holds within 0.1 %, the box's loose unchanged within 1e-6 m³, the disc's
+##    surface lower and its clay at most the surface;
+## 4. dumped back at B, the box's loose gains what was held within 0.1 % once settled; two scoops, two dumps.
 ## The auger (Task 5), back at the spawn, at A = spawn_cell + (6, 0), its spoil side (1, 0):
 ## bore: an auger placed at A bores to depth in 30 ± 2 s: the counter's landings add up to the annulus between
 ##    the surfaces within 0.1 %, the loose over the box of 24 is that times the swell and what it deposited
@@ -65,8 +73,10 @@
 ##    in sheet.
 ## rock: at NoiseReport.rock_site, first 1 m³ spilled on the lowest all-rock spoil disc within 3 cells of the
 ##    player's cell + (0, 4) pools in that rock hollow: after 3 s the saturation is bitwise unchanged, nothing
-##    absorbed, the window's sheet 1 m³ within 2 %. Then an auger 3 cells spinward of the player stops at rock
-##    before 10 m, its counter matching the annulus, every shaft cell at its bedrock_top; then back to the spawn.
+##    absorbed, the window's sheet 1 m³ within 2 %. Then a scoop on a disc of bare rock (every cell at its
+##    bedrock_top) within 3 cells of the same cell is accepted and holds nothing. Then an auger 3 cells spinward
+##    of the player stops at rock before 10 m, its counter matching the annulus, every shaft cell at its
+##    bedrock_top; then back to the spawn.
 ## Persistence (Task 8), back at the spawn:
 ## scroll (k = 3, S6): a 20 m³ deposit of radius 2, 0.3 s on still slumping (a tile active), is read over the
 ##    box of 24; the player goes 600 m spinward (S6's tile evicted, packed as it leaves) and back: the pile's
@@ -291,6 +301,9 @@ func _route() -> void:
 		return
 	_phase = "jumps"
 	if not await _jumps(s4):
+		return
+	_phase = "shovel"
+	if not await _shovel(spawn + Vector2i(0, 160)):
 		return
 	if not await _teleport(spawn):
 		return
@@ -673,6 +686,77 @@ func _jumps(s4: Vector2i) -> bool:
 	return true
 
 
+## Phase shovel at s8: a scoop takes a pile's loose first and a dump gives it back; a scoop on bare ground bites
+## the solid with the swell and a dump refills the dent (see the header). False after quitting on a timeout.
+func _shovel(s8: Vector2i) -> bool:
+	if not await _teleport(s8 + Vector2i(4, 0)):
+		return false
+	var t := _terrain.tool_params
+	var swell := _terrain.materials.swell_factor[0]
+	var scoops0 := _tools.scoops
+	var dumps0 := _tools.dumps
+	var box := _box(s8, 12)
+	_stamp(_op(s8, 2, EditLayer.MODE_DEPOSIT, 3.0))
+	var waited := await _settled(s8)
+	var s0 := _read("surface")
+	var l0 := _vol(_read("loose"), s0, box)
+	var timed0 := _timed.size()
+	var held := await _scoop(s8)
+	var edit_ms := _timed.slice(timed0).filter(func(e: Dictionary) -> bool: return e.name == "edit").map(func(e: Dictionary) -> float: return e.ms)
+	var s1 := _read("surface")
+	var l1 := _vol(_read("loose"), s1, box)
+	print("shovel: a 3 m³ pile at %s settled in %.2f s; the scoop holds %.6f m³ (%+.4f %% of %.2f), the loose over the box of 12 dropped %.6f m³ (%+.4f %% of it), surface unchanged: %s; its edit list %s ms" % [
+			s8, waited, held, (held / t.scoop_volume - 1.0) * 100.0, t.scoop_volume, l0 - l1, _residual("scoop loose", l0 - l1, held),
+			s1 == s0, edit_ms])
+	_report("scoop takes loose first", waited >= 0.0 and absf(held - t.scoop_volume) <= 0.01 * t.scoop_volume
+			and absf(l0 - l1 - held) <= 1e-3 * held and s1 == s0)
+	_tools.dump(s8 + Vector2i(0, 6))
+	var emptied := _tools.held == 0.0
+	await _frames(3)
+	var l2 := _vol(_read("loose"), _read("surface"), box)
+	print("shovel: dumped at %s, empty: %s; the loose over the box %.6f m³, was %.6f before the scoop (%+.4f %%)" % [
+			s8 + Vector2i(0, 6), emptied, l2, l0, _residual("dump", l2, l0)])
+	_report("dump returns it", emptied and absf(l2 - l0) <= 1e-3 * l0)
+	var waited2 := await _settled(s8)
+	var b := s8 + Vector2i(0, -6)
+	var bbox := _box(b, 4)
+	s0 = _read("surface")
+	var lb0 := _vol(_read("loose"), s0, bbox)
+	var bit := await _scoop(b)
+	s1 = _read("surface")
+	var lb1 := _vol(_read("loose"), s1, bbox)
+	var removed := _removed(s0, s1, bbox)
+	var clay_top := _read("clay_top")
+	var clay_bottom := _read("clay_bottom")
+	var dented := _disc(b, t.scoop_radius).all(func(c: Vector2i) -> bool:
+		return _f(s1, c) < _f(s0, c) and _f(clay_top, c) <= _f(s1, c) and _f(clay_bottom, c) <= _f(s1, c))
+	print("shovel: settled in %.2f s; bare ground at %s: the scoop holds %.6f m³, the annulus cut %.6f m³ · %.2f = %.6f (%+.4f %%), the loose over the box of 4 %+.9f m³, the disc dented under its clay: %s" % [
+			waited2, b, bit, removed, swell, removed * swell, _residual("scoop solid", removed * swell, bit), lb1 - lb0, dented])
+	_report("scoop bites solid dirt with the swell", waited2 >= 0.0 and absf(bit - t.scoop_volume) <= 0.01 * t.scoop_volume
+			and absf(removed * swell - bit) <= 1e-3 * bit and absf(lb1 - lb0) <= 1e-6 and dented)
+	_tools.dump(b)
+	emptied = _tools.held == 0.0
+	var waited3 := await _settled(b)
+	var lb2 := _vol(_read("loose"), _read("surface"), bbox)
+	print("shovel: dumped back at %s, empty: %s, settled in %.2f s: the loose over the box of 4 gained %.6f m³ for %.6f held (%+.4f %%); %d scoops, %d dumps" % [
+			b, emptied, waited3, lb2 - lb0, bit, _residual("refill", lb2 - lb0, bit), _tools.scoops - scoops0, _tools.dumps - dumps0])
+	_report("dump refills", emptied and waited3 >= 0.0 and absf(lb2 - lb0 - bit) <= 1e-3 * bit
+			and _tools.scoops - scoops0 == 2 and _tools.dumps - dumps0 == 2)
+	return true
+
+
+## Scoops at c through Tools.scoop, waits for its counter to land (at most 30 frames), then 3 frames: the m³ the
+## shovel holds.
+func _scoop(c: Vector2i) -> float:
+	_tools.scoop(c)
+	for i in 30:
+		if not _tools._scoop_pending:
+			break
+		await get_tree().process_frame
+	await _frames(3)
+	return _tools.held
+
+
 ## Phase bore at a: an auger bores to depth and heaps its spoil beside itself, conserved and clear of the rim,
 ## the collider following at most 5 times a second (see the header). False after quitting on a timeout.
 func _bore(a: Vector2i) -> bool:
@@ -1038,6 +1122,28 @@ func _rock_spill() -> void:
 	_report("rock does not soak", dry and absorbed == 0.0 and absf(water - 1.0) <= 0.02)
 
 
+## A scoop on the first scoop disc of bare rock (every cell's surface at its bedrock_top) within 3 cells of the
+## player's cell + (0, 4), _rock_spill's search: accepted, it holds nothing.
+func _rock_scoop() -> void:
+	var surface := _read("surface")
+	var bedrock := _read("bedrock_top")
+	var from := _tools.player_cell() + Vector2i(0, 4)
+	var bare := func(c: Vector2i) -> bool: return _f(surface, c) <= _f(bedrock, c)
+	var at := TerrainSim.NO_CELL
+	for c in _box(from, 3):
+		if _disc(c, _terrain.tool_params.scoop_radius).all(bare):
+			at = c
+			break
+	if at == TerrainSim.NO_CELL:
+		_report("rock gives nothing (no bare-rock disc within 3 cells of %s)" % from, false)
+		return
+	var scoops0 := _tools.scoops
+	var held := await _scoop(at)
+	print("rock scoop: at %s, accepted: %s, landed: %s, holds %.6f m³, surface unchanged: %s" % [
+			at, _tools.scoops == scoops0 + 1, not _tools._scoop_pending, held, _read("surface") == surface])
+	_report("rock gives nothing", _tools.scoops == scoops0 + 1 and not _tools._scoop_pending and held == 0.0)
+
+
 ## Phase rock at NoiseReport.rock_site: spilled water pools on bare rock without soaking (_rock_spill), then an
 ## auger stops at rock before its depth, every shaft cell at its bedrock_top (see the header). Back to the
 ## spawn after. False after quitting on a timeout.
@@ -1048,6 +1154,7 @@ func _rock(spawn: Vector2i) -> bool:
 		return false
 	await _rock_spill()
 	var t := _terrain.tool_params
+	await _rock_scoop()
 	var c := _tools.player_cell() + Vector2i(3, 0)
 	var shaft := _disc(c, t.bore_radius)
 	var s0 := _read("surface")

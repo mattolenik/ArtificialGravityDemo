@@ -12,6 +12,8 @@
 //   (radius; radius + 1 for the push) and on the resident cells of the disc of `radius` around it; see each
 //   function. Volumes are on the true cell areas, (R - s) dtheta by 1 m, so a deposit, spill or push
 //   conserves its volume.
+// 8 scoop: the shovel, on the resident cells of the disc of `radius` around `cell`, loose first, then the
+//   solid ground with the swell; see scoop.
 // Every stamp mode flags the slot of each cell it changes in `stats` (bit 0: TerrainSim's activity), and so
 // does apply for a cell whose blob holds loose dirt or water, so a pile re-entering the window resumes while
 // a plain edited tile does not wake the simulation.
@@ -34,7 +36,8 @@ layout(set = 0, binding = 9, r8) uniform restrict image2D w_saturation;
 layout(set = 0, binding = 10, r8) uniform restrict image2D w_mask;
 layout(set = 0, binding = 11, r32f) uniform restrict image2D w_loose;
 layout(set = 0, binding = 12, r32f) uniform restrict image2D w_depth;
-// A bore tick: m^3 cut or lifted in units of 1e-6, then 1 when it pumped; cleared before each counted stamp.
+// A bore tick: m^3 cut or lifted in units of 1e-6, then 1 when it pumped; a scoop: loose-equivalent m^3 taken,
+// in units of 1e-6. Cleared before each counted stamp.
 layout(set = 0, binding = 13, std430) restrict buffer Counter { uint counter[2]; };
 // One activity word per window slot (slot y * slots + x), then TerrainSim's absorbed water.
 layout(set = 0, binding = 14, std430) restrict buffer Stats { uint stats[]; };
@@ -47,12 +50,12 @@ layout(push_constant, std430) uniform Params {
 	int slots;            // window tiles per axis
 	int mode;             // EditLayer.MODE_*
 	int radius;           // stamp radius in cells
-	int slot;             // pack: the slot of `down`; bore, deposit, spill: the disc's cell count
+	int slot;             // pack: the slot of `down`; bore, deposit, spill, scoop: the disc's cell count
 	int obstacle_radius;  // cells; negative: no obstacle
 	ivec2 dir;            // push: the axis step toward the cell ahead
 	ivec2 obstacle;       // the obstacle's centre cell
-	float dh;             // raise: m at the centre; bore: the step in m; deposit, spill: m^3; push: the share; tamp: the step
-	float limit;          // bore: the pump's m^3 per tick; push: the cap in m per cell; tamp: the swell
+	float dh;             // raise: m at the centre; bore: the step in m; deposit, spill, scoop: m^3; push: the share; tamp: the step
+	float limit;          // bore: the pump's m^3 per tick; push: the cap in m per cell; tamp, scoop: the swell
 	float h_max;          // the highest ground, h_sea + h_mtn
 	float R;              // hull radius in m
 	float dtheta;         // rad per cell around
@@ -259,6 +262,49 @@ void tamp(ivec2 g) {
 	flag(t);
 }
 
+// 8 scoop, the shovel: each cell of the disc takes its share dh / slot m^3 (loose-equivalent), from its loose
+// first, then the rest from the solid ground under it, the depth that share over the swell `limit` fills on the
+// cell's area, stopping at bedrock_top (a rock-floored cell cuts nothing), the clay cut down with it and the
+// material by the strata. counter[0] gets the loose taken plus the annulus cut (the bore's product form) times
+// the swell. Water is left as it is; a cell that changed is masked and flagged. Each invocation reads and
+// writes only its own cell, so any radius.
+void scoop(ivec2 g) {
+	ivec2 t;
+	if (!disc_texel(g, t)) {
+		return;
+	}
+	float share = pc.dh / float(pc.slot);
+	float s = imageLoad(w_surface, t).r;
+	float a = area(s);
+	float loose = imageLoad(w_loose, t).r;
+	float tl = min(loose, share / a);
+	float got = tl * a;
+	float rem = share - got;
+	float cut = 0.0;
+	if (rem > 1e-9) {
+		float bt = imageLoad(w_bedrock, t).r;
+		cut = min(rem / pc.limit / a, max(s - bt, 0.0));
+		if (cut > 0.0) {
+			float s2 = s - cut;
+			float ct = min(imageLoad(w_clay_top, t).r, s2);
+			imageStore(w_surface, t, vec4(s2));
+			imageStore(w_clay_bottom, t, vec4(min(imageLoad(w_clay_bottom, t).r, s2)));
+			imageStore(w_clay_top, t, vec4(ct));
+			imageStore(w_material, t, vec4(top_material(s2, bt, ct) / 255.0));
+			got += 0.5 * pc.dtheta * cut * (2.0 * (pc.R - s) + cut) * pc.limit;
+		}
+	}
+	atomicAdd(counter[0], uint(round(got * 1e6)));
+	if (tl <= 0.0 && cut <= 0.0) {
+		return;
+	}
+	if (tl > 0.0) {
+		imageStore(w_loose, t, vec4(loose - tl));
+	}
+	imageStore(w_mask, t, vec4(1.0));
+	flag(t);
+}
+
 void main() {
 	ivec2 g = ivec2(gl_GlobalInvocationID.xy);
 	// pc.mode is uniform, so every invocation of a bore or push reaches its barrier.
@@ -276,6 +322,10 @@ void main() {
 	}
 	if (pc.mode == 6) {
 		tamp(g);
+		return;
+	}
+	if (pc.mode == 8) {
+		scoop(g);
 		return;
 	}
 	if (pc.mode == 0) {
