@@ -20,6 +20,7 @@ What the edits plan (`2026-10-27-terrain-edits-C.md`, branch `terrain-edits`) le
 ## Deferred by the task reviews
 
 - **Digging in place for 2 s makes 60° pit walls the player cannot climb** (20 stamps of 0.25 m at 10 a second in a 5-cell disc). `edit_run.gd`'s trench digs on the move for that reason. A tool needs a slower rate, a wider disc or a limit on the slope it leaves, or the player needs a way out.
+  - Closed 2026-10-29 by `2026-10-29-terrain-cave-in.md`: a solid wall standing steeper than its stand slope over disturbed ground (dirt 45° dry, 35° saturated; clay 70° to 30°; rock never) caves into loose, which slumps to repose (`sim.glsl`'s slope stability), so a pit dug in place becomes a loose-sided bowl the player can walk out of.
 - **Rim cells at exactly the stamp radius are masked with zero lift**: a face cell on the rim becomes dirt. Tighten the stamp's `dist > radius` skip in `edit.glsl` to `>=` if that shows.
 - **Cells with `cliff == 255` at the height cap have no jump** (generator quirk): the first such cell found by `debug_window.gd --cliff` is clipped by the cap, not a rim.
 - **Two sources for the hole cell in `ColliderPatch`**: `_bake` reads `zone`, `rebuild` binds it as an argument to the landing. Pass the hole cell into `_bake` instead of a bool, so there is one.

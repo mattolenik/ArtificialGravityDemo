@@ -35,22 +35,26 @@
 - Modify: `godot/terrain/material_set.gd`, `godot/terrain/materials.tres` (dirt dry stand 45°)
 - Test: `godot/tests/test_terrain_sim.gd` (`material_table` bytes)
 
-- [ ] **Step 1: the test**: `sim.material_table()` is 48 bytes: tan 45° at 0, tan 70° at 4, tan 35° at 16, 1.25 at 32, 1.6 at 44.
-- [ ] **Step 2: implement**, as the architecture says. `material_table() -> PackedByteArray` (CPU only, headless-safe).
-- [ ] **Step 3:** `sh tests/run.sh` → every test PASS.
-- [ ] **Step 4: Commit.**
+- [x] **Step 1: the test**: `sim.material_table()` is 48 bytes: tan 45° at 0, tan 70° at 4, tan 35° at 16, 1.25 at 32, 1.6 at 44.
+- [x] **Step 2: implement**, as the architecture says. `material_table() -> PackedByteArray` (CPU only, headless-safe).
+- [x] **Step 3:** `sh tests/run.sh` → every test PASS.
+- [x] **Step 4: Commit.**
 
 ### Task 2: The tool run proves it
 
 **Files:**
 - Modify: `godot/terrain/tool_run.gd` (header; `_pickup`; `_restart_mid_bore`; `_steepest_wall`)
 
-- [ ] **Step 1:** `_pickup`: the auger picked up, within 1 s the shaft's cells hold loose (the walls caving); the 2 m³ column slumps in with it; settled, the loose over the box of 24 grew by 2 m³ plus the solid cut from the box times the swell within 0.5 %, the steepest wall (surface over a neighbour's surface + loose, over the edge distance) and the steepest ground slope of a loose cell at most tan 45° · 1.02, cells beyond the shaft lowered; then the shot `tool_cave`.
-- [ ] **Step 2:** `_restart_mid_bore`: reads after the settle; the loose over the box grew by the solid cut from the box outside the shaft times the swell, within the old 0.3 m³ + 1 %.
-- [ ] **Step 3:** `sh tests/offscreen.sh res://terrain/tool_run.tscn /abs/log` → PASS, 0 ERROR lines; the lake and stamps phases unchanged.
-- [ ] **Step 4: Commit.**
+- [x] **Step 1:** `_pickup`: the auger picked up, within 1 s the shaft's cells hold loose (the walls caving); the 2 m³ column slumps in with it; settled, the loose over the box of 24 grew by 2 m³ plus the solid cut from the box times the swell within 0.5 %, the steepest wall (surface over a neighbour's surface + loose, over the edge distance) and the steepest ground slope of a loose cell at most tan 45° · 1.02, cells beyond the shaft lowered; then the shot `tool_cave`.
+- [x] **Step 2:** `_restart_mid_bore`: reads after the settle; the loose over the box grew by the solid cut from the box outside the shaft times the swell, within the old 0.3 m³ + 1 %.
+- [x] **Step 3:** `sh tests/offscreen.sh res://terrain/tool_run.tscn /abs/log` → PASS, 0 ERROR lines; the lake and stamps phases unchanged.
+- [x] **Step 4: Commit.**
 
 ### Task 3: Notes
 
-- [ ] `docs/terrain-research.md` 6.8: a "Slope stability, 2026-10-29" paragraph with the run's figures; `docs/superpowers/plans/2026-10-28-terrain-slice-3-followups.md`: the rule's rulings (disturbed-only gate, 45°, the auger's casing) and what is left (the generator does not yet enforce the stand slope; moisture only through saturation; one swell per cut).
+- [x] `docs/terrain-research.md` 6.8: a "Slope stability, 2026-10-29" paragraph with the run's figures; `docs/superpowers/plans/2026-10-28-terrain-slice-3-followups.md`: the rule's rulings (disturbed-only gate, 45°, the auger's casing) and what is left (the generator does not yet enforce the stand slope; moisture only through saturation; one swell per cut).
 - [ ] Finish: superpowers:finishing-a-development-branch against `terrain`.
+
+## Results (2026-10-29)
+
+Two Vulkan tool runs. The first failed one check: the stamps phase measured its 1 m bore's annulus over a box of 3, and the pit's tallest walls, where the natural relief stands over 1 m above the floor, caved about 0.03 m³ (the annulus read −0.57 % against the counter); it is measured over the disc now, where it matches as before (+0.0244 %). The second run: PASS, 0 ERROR lines; the pickup phase's 10 m shaft caved to a bowl (8.20 m of rubble in the shaft after 1 s, 46.159 m³ of solid cut from the walls, the loose over the box 126.640748 m³ for 66.940131 + 2 + 46.159063 × 1.25 = 126.638960, +0.0014 %, the steepest wall tan 1.0010 against 1.02 × tan 45°, the loose on it at repose), the restart phase's uncased 2.70 m shaft caved after the restart (8.068 m³ of loose from its walls, the box conserved to +0.000107 m³), the lake and pump phases unchanged. The `sim` list per active tile: 0.143 ms median over the run, about 0.01 ms over the eviction run's phases. `user://debug/tool_cave.png` shows the bowl from 3 cells off. The headless suite 18 of 18. The figures are in `docs/terrain-research.md` 6.8, "Slope stability".

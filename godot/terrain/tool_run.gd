@@ -10,8 +10,9 @@
 ##    (loose, compaction and material 0) and the surface gained the disc's loose volume over the swell;
 ## 4. a 0.5 m³ spill at S1 + (0, 10): the window's sheet water plus its pore water grew by 0.5 m³;
 ## 5. 30 bore ticks at S1 + (0, 20), 10 a second: the counter's landings add up to the annulus between the
-##    surfaces before and after, no tick wet, the disc 1 m down, its clay under the surface, its material by
-##    the strata;
+##    surfaces before and after over the disc (its tallest walls, where the relief stands over 1 m above the
+##    floor, cave a little: slope stability), no tick wet, the disc 1 m down, its clay under the surface, its
+##    material by the strata;
 ## 6. pack_tiles of six resident tiles, S1's first: two lists, the second reusing slot 0; every blob lands,
 ##    and S1's tile holds the window's loose.
 ## slump (k = 2, S2; Task 3):
@@ -59,8 +60,12 @@
 ## box: a 1 m box dropped 2 m over the pile's top comes to rest within 8 s (a cube cannot balance on the apex,
 ##    so it may roll down), its lowest corner on the collider and at surface + loose of the cell where it
 ##    rests, inside the pile's box of 24.
-## pickup: the auger picked up, the shaft stays bare for 1 s; a 2 m³ column on the cell beside the shaft's
-##    rim slumps into the open hole, the box's loose growing by 2 m³.
+## pickup: the auger picked up, its casing gone, the shaft caves in (slope stability): within 1 s its cells
+##    hold loose; a 2 m³ column on the cell beside the rim slumps in with it; settled, the loose over the box
+##    of 24 has grown by 2 m³ plus the solid cut from the box times the swell within 0.5 %, cells beyond the
+##    shaft are lower, and no surface stands over a neighbour's ground (surface + loose), nor any loose cell's
+##    ground over a neighbour's, steeper than dirt's dry stand slope (stable_slope_dry, 45°, within 2 %). Then
+##    the player, stood 3 cells antispinward of A facing it, has the shot save user://debug/tool_cave.png.
 ## pause: an auger at A + (0, 20), a second one refused; with the player 600 m spinward its ticks are refused
 ##    and stop, and resume when it is back; it is picked up while its ticks are in flight (no ERROR line).
 ## pump (Task 7): at the first of the five lakes nearest the spawn whose four cells from the shore on are dirt
@@ -100,8 +105,9 @@
 ##    and once settled, over what it held before the stamp. The stats readbacks over the moves are printed, not asserted.
 ## restart (S7 = spawn_cell + (-6, 0)): an auger bores there, its spoil side (-1, 0); 8 s on, mid-bore (the hole
 ##    over two bore steps deep, the auger short of its depth), the terrain restarts in-process (_restart): the edited tiles load from the world copy, no auger stands, and
-##    stood at S7 the hole's surface is within two bore steps, the loose over the box of 24 within 0.3 m³ + 1 %
-##    (one tick's spoil at most) and the window's water within 2 % of what they were before.
+##    stood at S7 and settled (the shaft, uncased, caves in) the hole's surface is within two bore steps, the
+##    loose over the box of 24 within 0.3 m³ + 1 % (one tick's spoil at most) of what it was plus the solid cut
+##    from the box outside the shaft times the swell, and the window's water within 2 % of what it was.
 ## A shot tilts the camera down under the light bar's noon, waits 6 frames, saves the screenshot and levels the
 ## camera, then runs the P dump (debug_window_dump.gd) and checks its loose volume against the driver's over the
 ## window within 1 %.
@@ -443,7 +449,6 @@ func _stamps(s1: Vector2i) -> void:
 	_report("spill conserves", absf(sheet + pore - 0.5) <= 0.02 * 0.5)
 
 	var b := s1 + Vector2i(0, 20)
-	var bore_box := _box(b, 3)
 	var s0 := _read("surface")
 	for i in 30:
 		var op := _op(b, t.bore_radius, EditLayer.MODE_BORE, t.bore_step, Vector2i.ZERO, t.pump_rate / t.bore_rate)
@@ -456,7 +461,7 @@ func _stamps(s1: Vector2i) -> void:
 	var clay_bottom := _read("clay_bottom")
 	var clay_top := _read("clay_top")
 	var material := _read("material")
-	var removed := _removed(s0, s30, bore_box)
+	var removed := _removed(s0, s30, _disc(b, t.bore_radius))
 	var drops: Array[String] = []
 	var dropped := true
 	var strata := true
@@ -933,24 +938,35 @@ func _box_drop(a: Vector2i) -> void:
 func _pickup(a: Vector2i) -> void:
 	var box := _box(a, 24)
 	var shaft := _disc(a, _terrain.tool_params.bore_radius)
-	var before := _vol(_read("loose"), _read("surface"), box)
+	var swell := _terrain.materials.swell_factor[0]
+	var s0 := _read("surface")
+	var before := _vol(_read("loose"), s0, box)
 	_tools.pickup()
 	await get_tree().create_timer(1.0).timeout
 	var loose := _read("loose")
 	var held: float = shaft.map(func(c: Vector2i) -> float: return _f(loose, c)).max()
 	var gone := _tools.auger == null
-	# Settled at the column's own cell: the shaft's centre holds no loose before the column slumps, so its
-	# blob would match the window before the column's activity flag has even landed.
 	var column := a + Vector2i(0, 2)
 	_stamp(_op(column, 0, EditLayer.MODE_DEPOSIT, 2.0))
-	var waited := await _settled(column)
+	var waited := await _settled(column, 20.0)
 	loose = _read("loose")
-	var after := _vol(loose, _read("surface"), box)
-	var fell: float = shaft.map(func(c: Vector2i) -> float: return _f(loose, c)).max()
-	print("pickup: auger gone: %s, shaft loose max %.6f m after 1 s; a 2 m³ column at %s settled in %.2f s: %.6f m³ over the box, was %.6f + 2 (%+.4f %%); shaft loose max %.4f m" % [
-			gone, held, column, waited, after, before, _residual("pickup", after, before + 2.0), fell])
-	_report("pickup opens the hole", gone and held < 1e-6 and waited >= 0.0 and absf(after - before - 2.0) <= 0.005 * (before + 2.0)
-			and fell > 0.05)
+	var s1 := _read("surface")
+	var after := _vol(loose, s1, box)
+	var cut := _removed(s0, s1, box)
+	var want := before + 2.0 + cut * swell
+	var lowered := box.filter(func(c: Vector2i) -> bool: return not shaft.has(c) and _f(s1, c) < _f(s0, c) - 0.01).size()
+	var stand := tan(deg_to_rad(_terrain.materials.stable_slope_dry[0])) * 1.02
+	var wall := _steepest_wall(box)
+	var ground := _steepest(box, [])
+	print("pickup: auger gone: %s, shaft loose max %.4f m after 1 s (the walls caving); a 2 m³ column at %s settled in %.2f s: %.6f m³ over the box, was %.6f + 2 + %.6f m³ cut · %.2f = %.6f (%+.4f %%); %d cells beyond the shaft lowered; steepest wall %.4f, ground %.4f, stand · 1.02 %.4f" % [
+			gone, held, column, waited, after, before, cut, swell, want, _residual("pickup", after, want), lowered, wall, ground, stand])
+	_report("pickup caves the shaft in to a bowl at the stand slope", gone and held > 0.05 and waited >= 0.0 and absf(after - want) <= 0.005 * want
+			and lowered > 0 and wall <= stand and ground <= stand)
+	if not await _teleport(a + Vector2i(-3, 0)):
+		return
+	var theta := Cyl.theta_of(_station.to_local(_player.global_position))
+	_face(Vector3(cos(theta), sin(theta), 0))
+	await _shot("tool_cave")
 
 
 ## Phase pause at a + (0, 20): one auger at a time; its ticks are refused while the player is 600 m away and
@@ -1414,13 +1430,17 @@ func _restart_mid_bore(s7: Vector2i) -> bool:
 	var gone := _tools.auger == null
 	if not await _teleport(s7):
 		return false
-	surface = _read("surface")
-	var hole1 := _f(surface, s7)
-	var l1 := _vol(_read("loose"), surface, box)
+	# Settled first: the shaft, uncased, caves in; its walls' cut joins the loose with the swell.
+	var waited := await _settled(spoil, 20.0)
+	var surface1 := _read("surface")
+	var hole1 := _f(surface1, s7)
+	var walls: Array[Vector2i] = []
+	walls.assign(box.filter(func(c: Vector2i) -> bool: return not _disc(s7, t.bore_radius).has(c)))
+	var caved := _removed(surface, surface1, walls) * _terrain.materials.swell_factor[0]
+	var l1 := _vol(_read("loose"), surface1, box) - caved
 	var w1 := _water()
-	var waited := await _settled(spoil)
-	print("restart: auger at %s, %.4f m bored after 8 s; after the restart %d blobs loaded, no auger: %s; the hole %.4f m deep, was %.4f (%+.4f m, two steps %.4f); %.6f m³ loose over the box, was %.6f (%+.6f m³, %+.4f %%, allowed %.6f); window %s, was %s" % [
-			s7, depth0, blobs, gone, ground - hole1, ground - hole0, hole0 - hole1, 2.0 * step, l1, l0, l1 - l0, _residual("restart loose", l1, l0), 0.3 + 0.01 * l0,
+	print("restart: auger at %s, %.4f m bored after 8 s; after the restart %d blobs loaded, no auger: %s; the hole %.4f m deep, was %.4f (%+.4f m, two steps %.4f); %.6f m³ loose over the box less the %.6f m³ the caved walls gave, was %.6f (%+.6f m³, %+.4f %%, allowed %.6f); window %s, was %s" % [
+			s7, depth0, blobs, gone, ground - hole1, ground - hole0, hole0 - hole1, 2.0 * step, l1, caved, l0, l1 - l0, _residual("restart loose", l1, l0), 0.3 + 0.01 * l0,
 			_terrain.window.center_tile, center0])
 	print("restart: the window's water %.6f m³ after, %.6f m³ before (%+.4f %%); settled in %.2f s" % [w1, w0, _residual("restart water", w1, w0), waited])
 	_report("restart mid-bore keeps the hole, the pile and the puddle", mid and blobs >= 3 and gone and absf(hole1 - hole0) <= 2.0 * step
@@ -1711,6 +1731,22 @@ func _steepest(cells: Array[Vector2i], blocked: Array[Vector2i]) -> float:
 			var across := 0.5 * ((p.radius - _f(surface, c)) + (p.radius - _f(surface, n))) * p.dtheta()
 			var w := 1.0 if d.x == 0 else sqrt(across * across + d.y * d.y)
 			worst = maxf(worst, (_f(surface, c) + _f(loose, c) - _f(surface, n) - _f(loose, n)) / w)
+	return worst
+
+
+## The steepest (s_c − H_n) / w from a cell of cells to an edge or diagonal neighbour, s the surface and H
+## surface + loose, w as _steepest: the slope stability rule's measure of a solid wall.
+func _steepest_wall(cells: Array[Vector2i]) -> float:
+	var p := _terrain.params
+	var loose := _read("loose")
+	var surface := _read("surface")
+	var worst := -INF
+	for c in cells:
+		for d in DIR4 + DIAG:
+			var n := Vector2i(posmod(c.x + d.x, p.n_theta()), c.y + d.y)
+			var across := 0.5 * ((p.radius - _f(surface, c)) + (p.radius - _f(surface, n))) * p.dtheta()
+			var w := 1.0 if d.x == 0 else sqrt(across * across + d.y * d.y)
+			worst = maxf(worst, (_f(surface, c) - _f(surface, n) - _f(loose, n)) / w)
 	return worst
 
 
