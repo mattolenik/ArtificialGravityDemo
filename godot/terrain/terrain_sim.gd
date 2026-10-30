@@ -3,8 +3,8 @@
 ## running sheet water down its surface, soaking it into the column and wetting dirt beside it, and letting
 ## the water carry loose. Activity is flagged by the GPU per window slot in the edit layer's stats buffer
 ## (stamps, the edit layer's apply of a blob holding loose or water, and every simulated cell that moved),
-## read back after every frame that ran a list, a stamp or an apply, and bookkept here per tile in seconds of
-## quiet: a tile quiet for settle_time is handed back by step for Terrain to pack and leaves the active set.
+## read back after every frame that ran a list, a stamp or an apply, and at every window move before its slots
+## change, and bookkept here per tile in seconds of quiet: a tile quiet for settle_time is handed back by step for Terrain to pack and leaves the active set.
 ## The active mask is 64 bits, so the window is at most 1024 cells (8 x 8 slots). settle and the bookkeeping
 ## are CPU only (headless-safe); setup and step are the RenderingDevice entry points.
 class_name TerrainSim
@@ -44,6 +44,9 @@ var _accum := 0.0
 ## The process frame of the oldest stats readback not yet landed (-1: none), and of the latest asked.
 var _waiting_since := -1
 var _asked := -1
+## Stats readbacks asked (every path, a device or not) and the generation the last one was bound to.
+var stats_reads := 0
+var last_asked_generation := -1
 ## The window (setup's, then the one settle last saw), for activate's residency test.
 var _window: TerrainWindow
 var _rd: RenderingDevice
@@ -209,7 +212,17 @@ func _step_rd(lists: Array[Array], generation: int) -> void:
 			_rd.compute_list_dispatch(list, TerrainWindow.TILE / 8, TerrainWindow.TILE / 8, 1)
 		_rd.compute_list_end()
 		_rd.capture_timestamp("sim_end")
-	# After the lists, so the stats hold their flags; the request copies the buffer before the clear runs.
+	# After the lists, so the stats hold their flags.
+	_read_stats_rd(generation)
+
+
+## The stats readback bound to `generation`, then the clear (the request copies the buffer before the clear
+## runs), on the render thread; recorded in stats_reads and last_asked_generation, and skipped without a device.
+func _read_stats_rd(generation: int) -> void:
+	stats_reads += 1
+	last_asked_generation = generation
+	if _rd == null or not _set.is_valid():
+		return
 	var frame := Engine.get_process_frames()
 	var err := _rd.buffer_get_data_async(_stats, _on_stats.bind(generation, frame), 0, _stats_size)
 	if err != OK:
@@ -240,8 +253,14 @@ func _on_stats(data: PackedByteArray, generation: int, asked := -1) -> void:
 
 ## The window is about to move (Terrain._move_window) and `slots` (those of the tiles it evicts, which the
 ## entering tiles take) change tile: their landed flags are dropped now, and those of readbacks requested
-## before this call when they land.
+## before this call when they land. The flags still on the GPU are asked for first, at the generation that
+## is ending (one 68-byte request per move), so an evicted tile's flag in flight is consumed and ignored
+## instead of riding the move frame's readback, at the new generation, onto the tile that takes its slot.
 func invalidate(slots: Array[Vector2i]) -> void:
+	if _rd == null:
+		_read_stats_rd(_generation)
+	else:
+		RenderingServer.call_on_render_thread(_read_stats_rd.bind(_generation))
 	_generation += 1
 	var n := _window.slots * _window.slots
 	if _changed.size() != n:

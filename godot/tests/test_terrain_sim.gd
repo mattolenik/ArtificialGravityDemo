@@ -55,6 +55,14 @@ func _initialize() -> void:
 	w._resident.clear()
 	flags.fill(0); flags[3] = 1
 	check(sim.settle(w, 0.0, flags).is_empty() and not sim.has_active(), "no tile, no activity")
+	# invalidate asks for the stats at the old generation before it bumps it: a stamp's flag in flight for an
+	# evicted slot is consumed by that request and ignored when it lands (the slot changed), instead of riding
+	# the move frame's readback, asked at the new generation, onto the tile that takes the slot. Without a
+	# device the request is recorded and skipped.
+	var reads := sim.stats_reads
+	var gen := sim._generation
+	sim.invalidate([Vector2i(2, 2)])
+	check(sim.stats_reads == reads + 1 and sim.last_asked_generation == gen and sim._generation == gen + 1, "invalidate asks once, at the old generation, then bumps it")
 	# The push constants of sim.glsl: 112 bytes with the tunables at their offsets.
 	w.configure(p, 512, 1.0)
 	sim.materials = load("res://terrain/materials.tres")
