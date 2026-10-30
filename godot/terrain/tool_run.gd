@@ -91,6 +91,12 @@
 ##    volume is kept within 0.1 % at once (its blob re-applied) and within 0.5 % once settled, at repose; the
 ##    window's water (sheet plus pore water, the sheet phase's puddle among it), read before and after over the
 ##    same wanted set, within 2 %.
+## evict (S9: the first row from spawn_cell + (0, 60) outward whose five-cell plus is dry land, and S9' the same
+##    from 40 rows past it, both clear of the slump and scroll piles): a 1 m³ deposit of radius 1 at S9 and, in the same frame, the player 600 m antispinward (S9's tile
+##    evicted with the stamp's flag in flight); the same at S9' with one frame between the stamp and the move.
+##    Six frames after each move no tile is active (the flag woke no entering tile); back at the spawn each
+##    box of 6 has gained its 1 m³ within 0.1 % at once (its tile was packed as it left, the blob re-applied)
+##    and once settled, over what it held before the stamp. The stats readbacks over the moves are printed, not asserted.
 ## restart (S7 = spawn_cell + (-6, 0)): an auger bores there, its spoil side (-1, 0); 8 s on, mid-bore (the hole
 ##    over two bore steps deep, the auger short of its depth), the terrain restarts in-process (_restart): the edited tiles load from the world copy, no auger stands, and
 ##    stood at S7 the hole's surface is within two bore steps, the loose over the box of 24 within 0.3 m³ + 1 %
@@ -120,7 +126,7 @@ const Smoke := preload("res://terrain/smoke_run.gd")
 const BUDGET := {"edit": 0.5, "pack": 0.5, "apply": 0.5, "bake_edit": 1.0, "bake": 1.0, "detail": 2.0}
 const SIM_BUDGET := 0.25
 ## The phases the summary reports frame by frame.
-const PHASES: Array[String] = ["slump", "sheet", "walk", "jumps", "bore", "pump", "lake", "scroll"]
+const PHASES: Array[String] = ["slump", "sheet", "walk", "jumps", "bore", "pump", "lake", "scroll", "evict"]
 ## The edge neighbours in sim.glsl's order, then the diagonal ones, which loose slumps to as well.
 const DIR4: Array[Vector2i] = [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]
 const DIAG: Array[Vector2i] = [Vector2i(1, 1), Vector2i(-1, 1), Vector2i(-1, -1), Vector2i(1, -1)]
@@ -342,6 +348,9 @@ func _route() -> void:
 		return
 	_phase = "scroll"
 	if not await _scroll(spawn + Vector2i(0, 120), spawn):
+		return
+	_phase = "evict"
+	if not await _evict(spawn + Vector2i(0, 60), spawn):
 		return
 	# Nothing but the teleports buried the player: the unbury rule (Tools._physics_process) never fired outside
 	# _settled_patch (the restart makes a new Tools, so the count is checked again after it).
@@ -1314,6 +1323,69 @@ func _scroll(s6: Vector2i, spawn: Vector2i) -> bool:
 	return true
 
 
+## Phase evict from `from`: a stamp made in the frame of a window move, and one a frame before it, survive the
+## eviction (packed as the tile leaves) and wake no entering tile (see the header). False after quitting on
+## a timeout.
+func _evict(from: Vector2i, spawn: Vector2i) -> bool:
+	var window := _terrain.window
+	var p := _terrain.params
+	var away := spawn - Vector2i(roundi(600.0 / (p.radius * p.dtheta())), 0)
+	var s9 := _dry_site(from)
+	var sites: Array[Vector2i] = [s9, _dry_site(from + Vector2i(0, 40))]
+	var evicted := true
+	var woke := 0
+	var reads := 0
+	var at_once: Array[float] = []
+	var settled: Array[float] = []
+	for k in 2:
+		var site := sites[k]
+		var reads0 := _terrain.sim.stats_reads
+		var tile := window.tile_of_cell(site.x, site.y)
+		var slot := window.slot_of(tile)
+		var before := _vol(_read("loose"), _read("surface"), _box(site, 6))
+		_stamp(_op(site, 1, EditLayer.MODE_DEPOSIT, 1.0))
+		await _frames(k)
+		var to := _center(away)
+		_terrain.teleport(to.x, to.y)
+		# Terrain._process moves the window in the next frame; the flag lands within three more.
+		await _frames(6)
+		var taker := window.tile_at(slot)
+		if _terrain.sim.is_active(taker) and not _terrain.window.edits.blobs.has(taker):
+			woke += 1
+		evicted = evicted and not window.is_resident(tile)
+		reads += _terrain.sim.stats_reads - reads0
+		if not await _settled_patch():
+			return false
+		if not await _teleport(spawn):
+			return false
+		at_once.append(_vol(_read("loose"), _read("surface"), _box(site, 6)) - before)
+		var waited := await _settled(site)
+		settled.append(_vol(_read("loose"), _read("surface"), _box(site, 6)) - before if waited >= 0.0 else -1.0)
+	print("evict: stamps at %s (same frame) and %s (a frame before the move), 600 m away at %s, evicted: %s; active tiles 6 frames after the moves %d; back: the boxes gained %.6f and %.6f m³ at once (%+.4f %%, %+.4f %%), settled %.6f and %.6f m³; stats readbacks over the two moves %d" % [
+			sites[0], sites[1], away, evicted, woke, at_once[0], at_once[1], _residual("evict same frame", at_once[0], 1.0),
+			_residual("evict a frame before", at_once[1], 1.0), settled[0], settled[1], reads])
+	_report("a stamp survives an eviction within its readback latency", evicted and woke == 0
+			and absf(at_once[0] - 1.0) <= 1e-3 and absf(at_once[1] - 1.0) <= 1e-3
+			and absf(settled[0] - 1.0) <= 1e-3 and absf(settled[1] - 1.0) <= 1e-3)
+	return true
+
+
+## The first cell from c outward along +z whose five-cell plus is dry land (no static water over any of its
+## cells), within 64 rows; c itself when none is.
+func _dry_site(c: Vector2i) -> Vector2i:
+	var surface := _read("surface")
+	var loose := _read("loose")
+	var ws := _read("water_surface")
+	for i in 64:
+		var s := c + Vector2i(0, i)
+		var dry := true
+		for d in _disc(s, 1):
+			dry = dry and _f(ws, d) <= _f(surface, d) + _f(loose, d) + 1e-3
+		if dry:
+			return s
+	return c
+
+
 ## Phase restart at s7: an auger stopped mid-bore by an in-process restart (_restart) leaves its hole and pile,
 ## and the window keeps its water, from the tiles saved at the exit; no auger stands after (see the header).
 ## False after quitting on a timeout.
@@ -1489,11 +1561,12 @@ func _quit_active(site: Vector2i) -> void:
 		await get_tree().process_frame
 	var tiles := _terrain.sim.active_tiles()
 	var edits := _terrain.window.edits
+	var stamped := edits.stamped.size()
 	for t in tiles:
 		edits.blobs.erase(t)
 	_terrain.tree_exited.connect(func() -> void:
 		var packed := not tiles.is_empty() and tiles.all(func(t: Vector2i) -> bool: return edits.blobs.has(t))
-		print("exit pack: %d active tiles %s at quit, packed: %s" % [tiles.size(), tiles, packed])
+		print("exit pack: %d active tiles %s at quit, packed: %s; %d tiles held unpacked stamps, none left unpacked: %s" % [tiles.size(), tiles, packed, stamped, edits.stamped.is_empty()])
 		if not packed:
 			push_error("exit pack: no active tile at quit, or its blob did not land"))
 	get_tree().quit(0 if _ok else 1)
@@ -1553,7 +1626,7 @@ func _settled_patch() -> bool:
 		await get_tree().process_frame
 		frames += 1
 		if frames > 600:
-			push_error("No collider patch under the player after 600 frames.")
+			push_error("No collider patch under the player after 600 frames (bake pending %s, renderer stalled %s)." % [_terrain.patch._pending, _terrain.sim.stalled()])
 			get_tree().quit(1)
 			return false
 	await get_tree().create_timer(1.0).timeout

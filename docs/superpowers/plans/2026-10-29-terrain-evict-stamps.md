@@ -211,8 +211,8 @@ git commit -m "Terrain: a window move packs the evicted tiles that hold unpacked
 After the `scroll` paragraph add:
 
 ```
-## evict (S9: the first row from spawn_cell + (0, 200) outward whose five-cell plus is dry land, and S9' 20 rows
-##    past it): a 1 m³ deposit of radius 1 at S9 and, in the same frame, the player 600 m spinward (S9's tile
+## evict (S9: the first row from spawn_cell + (0, 60) outward whose five-cell plus is dry land, and S9' the same
+##    from 40 rows past it, both clear of the slump and scroll piles): a 1 m³ deposit of radius 1 at S9 and, in the same frame, the player 600 m antispinward, clear of the seam phase's pile (S9's tile
 ##    evicted with the stamp's flag in flight); the same at S9' with one frame between the stamp and the move.
 ##    Six frames after each move no tile is active (the flag woke no entering tile); back at the spawn each
 ##    box of 6 holds its 1 m³ within 0.1 % at once (its tile was packed as it left, the blob re-applied) and
@@ -225,7 +225,7 @@ After the `scroll` paragraph add:
 
 ```gdscript
 	_phase = "evict"
-	if not await _evict(spawn + Vector2i(0, 200), spawn):
+	if not await _evict(spawn + Vector2i(0, 60), spawn):
 		return
 ```
 
@@ -240,9 +240,9 @@ After `_scroll`:
 func _evict(from: Vector2i, spawn: Vector2i) -> bool:
 	var window := _terrain.window
 	var p := _terrain.params
-	var away := spawn + Vector2i(roundi(600.0 / (p.radius * p.dtheta())), 0)
+	var away := spawn - Vector2i(roundi(600.0 / (p.radius * p.dtheta())), 0)
 	var s9 := _dry_site(from)
-	var sites: Array[Vector2i] = [s9, s9 + Vector2i(0, 20)]
+	var sites: Array[Vector2i] = [s9, _dry_site(from + Vector2i(0, 40))]
 	var evicted := true
 	var woke := 0
 	var reads := 0
