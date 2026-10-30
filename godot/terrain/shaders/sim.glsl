@@ -35,6 +35,17 @@
 // sets bit 0 of its slot in `stats`, and one on a tile edge or corner also sets bit 1 of the slot of every
 // neighbour across it, diagonals included, so a tile that could not receive (inactive, refused above) is
 // activated by TerrainSim a couple of frames later and the flow resumes into it.
+//
+// Slope stability (the research doc's 6.2 rule): a solid cell whose surface stands over a disturbed
+// neighbour's ground (its edit mask set: dug, piled on, flowed over) by more than its stand slope at its
+// saturation (Materials.stand_dry to stand_sat; dirt and clay, rock never) fails: the flux pass writes
+// slump_rate of the steepest such excess, at most down to bedrock_top, to flux_fail, and the apply pass
+// cuts it from the surface (the clay with it, the material by the strata) and adds it to the cell's loose
+// times the swell, so a dug hole caves in to a loose-sided bowl. Only toward disturbed ground, so a
+// generated hillside (up to 60 deg, with thin soil) stands until something beside it is dug or moved. The
+// loose piled against a wall counts as that neighbour's ground, so rubble filling a hole ends its
+// collapse; nothing fails toward a blocked cell (the auger's casing). A wall across a tile edge that would
+// fail toward a disturbed cell has its tile woken (bit 1), as it is not stepped until then.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -57,6 +68,15 @@ layout(set = 0, binding = 13, rgba8) uniform restrict image2D flux_pore;
 layout(set = 0, binding = 14, std430) restrict buffer Stats { uint stats[]; };
 // Per texel, the loose the cell sends each diagonal neighbour in DIAG order, in m^3.
 layout(set = 0, binding = 15, rgba32f) uniform restrict image2D flux_loose_d;
+// Per texel, the solid depth in m the flux pass found failing on the cell, for the apply pass.
+layout(set = 0, binding = 16, r32f) uniform restrict image2D flux_fail;
+// Per material: tan of the solid's stand slope dry and saturated, and the swell of its loose form
+// (TerrainSim.material_table).
+layout(set = 0, binding = 17, std430) restrict readonly buffer Materials {
+	float stand_dry[4];
+	float stand_sat[4];
+	float swell[4];
+} mt;
 
 layout(push_constant, std430) uniform Params {
 	ivec2 tile;             // the tile stepped (theta wrapped, z)
@@ -156,7 +176,27 @@ bool reservoir(float ws, float H) {
 	return ws > H + 1e-3;
 }
 
-void flux(ivec2 c, ivec2 t) {
+// tan of the stand slope of solid of material mat at saturation sat, dry to saturated; rock never fails.
+float stand_tan(uint mat, float sat) {
+	return mat >= 2u ? 1e30 : mix(mt.stand_dry[mat], mt.stand_sat[mat], sat);
+}
+
+// The top material by the strata at surface s: rock, clay or dirt (edit.glsl's rule).
+float top_material(float s, float bt, float ct) {
+	return bt >= s - 0.01 ? 2.0 : (ct >= s - 0.01 ? 1.0 : 0.0);
+}
+
+// Sets bit 1 of the slot of cell c + d when that neighbour lies in another tile (c is texel g of its own)
+// that is in the window.
+void wake(ivec2 c, ivec2 g, ivec2 d) {
+	ivec2 gn = g + d;
+	ivec2 tn;
+	if ((gn.x < 0 || gn.y < 0 || gn.x >= TILE || gn.y >= TILE) && texel(offset(c, d), tn)) {
+		atomicOr(stats[slot_word(tn)], 2u);
+	}
+}
+
+void flux(ivec2 c, ivec2 t, ivec2 g) {
 	float s = imageLoad(w_surface, t).r;
 	float L = imageLoad(w_loose, t).r;
 	float d = imageLoad(w_depth, t).r;
@@ -170,6 +210,11 @@ void flux(ivec2 c, ivec2 t) {
 	// Repose dry to damp over saturation 0..0.5, damp to saturated over 0.5..1.
 	float tr = sat < 0.5 ? mix(pc.repose_tan[0], pc.repose_tan[1], 2.0 * sat)
 			: mix(pc.repose_tan[1], pc.repose_tan[2], 2.0 * sat - 1.0);
+	// Slope stability: this solid's stand slope, whether this cell is disturbed, and the steepest excess of
+	// its surface over a disturbed neighbour's ground past that slope, in m.
+	float stand = stand_tan(mat, sat);
+	bool masked = byte(imageLoad(w_mask, t).r) != 0u;
+	float fail = 0.0;
 	float out_l[4] = float[4](0.0, 0.0, 0.0, 0.0);
 	float out_w[4] = float[4](0.0, 0.0, 0.0, 0.0);
 	float pore[4] = float[4](0.0, 0.0, 0.0, 0.0);
@@ -194,12 +239,20 @@ void flux(ivec2 c, ivec2 t) {
 			level = ws_n;
 			level_k = k;
 		}
+		// The edge distance: the mean of the two widths across, 1 m along.
+		float w = k % 2 == 0 ? 0.5 * ((pc.R - s) + (pc.R - s_n)) * pc.dtheta : 1.0;
+		if (byte(imageLoad(w_mask, tn).r) != 0u) {
+			fail = max(fail, (s - h_n) - stand * w);
+		}
 		if (!tile_active(tn)) {
+			// A wall over there that would fail toward this disturbed cell: its tile is woken, as it is not
+			// stepped until then.
+			if (masked && s_n - H > stand_tan(mat_n, imageLoad(w_saturation, tn).r) * w) {
+				wake(c, g, DIR4[k]);
+			}
 			continue;
 		}
 		float w_n = res_n ? ws_n : h_n + imageLoad(w_depth, tn).r;
-		// The edge distance: the mean of the two widths across, 1 m along.
-		float w = k % 2 == 0 ? 0.5 * ((pc.R - s) + (pc.R - s_n)) * pc.dtheta : 1.0;
 		float ex = (H - h_n) - tr * w;
 		if (ex > 0.0) {
 			out_l[k] = pc.slump_rate * ex;
@@ -222,16 +275,28 @@ void flux(ivec2 c, ivec2 t) {
 	for (int k = 0; k < 4; k++) {
 		ivec2 n = offset(c, DIAG[k]);
 		ivec2 tn;
-		if (!texel(n, tn) || !tile_active(tn) || blocked(n)) {
+		if (!texel(n, tn) || blocked(n)) {
 			continue;
 		}
 		float s_n = imageLoad(w_surface, tn).r;
+		float h_n = s_n + imageLoad(w_loose, tn).r;
 		float across = 0.5 * ((pc.R - s) + (pc.R - s_n)) * pc.dtheta;
-		float ex = (H - s_n - imageLoad(w_loose, tn).r) - tr * sqrt(across * across + 1.0);
+		float wd = sqrt(across * across + 1.0);
+		if (byte(imageLoad(w_mask, tn).r) != 0u) {
+			fail = max(fail, (s - h_n) - stand * wd);
+		}
+		if (!tile_active(tn)) {
+			continue;
+		}
+		float ex = (H - h_n) - tr * wd;
 		if (ex > 0.0) {
 			out_d[k] = pc.slump_rate * ex;
 		}
 	}
+	// A millimetre's dead band (a bank generated on the line does not chatter in float), slump_rate of the
+	// excess a step, never below bedrock; the apply pass cuts and loosens it.
+	fail = fail > 1e-3 ? min(pc.slump_rate * fail, max(s - imageLoad(w_bedrock, t).r, 0.0)) : 0.0;
+	imageStore(flux_fail, t, vec4(fail));
 	float tw = out_w[0] + out_w[1] + out_w[2] + out_w[3];
 	for (int k = 0; k < 4; k++) {
 		if (tw > d) {
@@ -258,16 +323,6 @@ void flux(ivec2 c, ivec2 t) {
 	imageStore(flux_pore, t, vec4(pore[0], pore[1], pore[2], pore[3]) / 255.0);
 }
 
-// Sets bit 1 of the slot of cell c + d when that neighbour lies in another tile (c is texel g of its own)
-// that is in the window.
-void wake(ivec2 c, ivec2 g, ivec2 d) {
-	ivec2 gn = g + d;
-	ivec2 tn;
-	if ((gn.x < 0 || gn.y < 0 || gn.x >= TILE || gn.y >= TILE) && texel(offset(c, d), tn)) {
-		atomicOr(stats[slot_word(tn)], 2u);
-	}
-}
-
 void apply(ivec2 c, ivec2 t, ivec2 g) {
 	float s = imageLoad(w_surface, t).r;
 	float L = imageLoad(w_loose, t).r;
@@ -276,6 +331,10 @@ void apply(ivec2 c, ivec2 t, ivec2 g) {
 	uint mat = byte(imageLoad(w_material, t).r);
 	float a = (pc.R - s) * pc.dtheta;
 	bool res = reservoir(imageLoad(w_water, t).r, s + L);
+	// The solid that failed (the flux pass's rule): as loose, the annulus it filled over the new surface's
+	// area, times the swell (the scoop's product form).
+	float f = imageLoad(flux_fail, t).r;
+	float gain = f > 0.0 ? 0.5 * f * (2.0 * (pc.R - s) + f) / (pc.R - s + f) * mt.swell[mat] : 0.0;
 	vec4 own = imageLoad(flux_loose, t) + imageLoad(flux_loose_d, t);
 	vec4 own_w = imageLoad(flux_water, t);
 	// A negative entry is the level this cell joins (the flux pass's rule), not a send.
@@ -309,7 +368,7 @@ void apply(ivec2 c, ivec2 t, ivec2 g) {
 		in_w = 0.0;
 		d_kept = 0.0;
 	}
-	float l2 = max(L + (in_l - (own.x + own.y + own.z + own.w)) / a, 0.0);
+	float l2 = max(L + gain + (in_l - (own.x + own.y + own.z + own.w)) / a, 0.0);
 	float d2 = max(d_kept + (in_w - (own_w.x + own_w.y + own_w.z + own_w.w)) / a, 0.0);
 	int q2 = int(q) + in_p - int(own_p.x + own_p.y + own_p.z + own_p.w);
 	if (pc.soak_tick != 0) {
@@ -325,15 +384,25 @@ void apply(ivec2 c, ivec2 t, ivec2 g) {
 	if (joins) {
 		imageStore(w_water, t, vec4(level));
 	}
+	if (f > 0.0) {
+		// The cut, the clay with it and the material by the strata, as the scoop does.
+		float s2 = s - f;
+		float ct = min(imageLoad(w_clay_top, t).r, s2);
+		imageStore(w_surface, t, vec4(s2));
+		imageStore(w_clay_bottom, t, vec4(min(imageLoad(w_clay_bottom, t).r, s2)));
+		imageStore(w_clay_top, t, vec4(ct));
+		imageStore(w_material, t, vec4(top_material(s2, imageLoad(w_bedrock, t).r, ct) / 255.0));
+	}
 	// Every change, however small, is stored: conservation.
-	if (l2 != L || d2 != d || q2 != int(q) || joins) {
+	if (l2 != L || d2 != d || q2 != int(q) || joins || f > 0.0) {
 		imageStore(w_loose, t, vec4(l2));
 		imageStore(w_depth, t, vec4(d2));
 		imageStore(w_saturation, t, vec4(float(q2) / 255.0));
 		imageStore(w_mask, t, vec4(1.0));
 	}
-	// The activity gate only; a cell that joined counts, its neighbours may follow next step.
-	if (abs(l2 - L) > pc.move_eps || abs(d2 - d) > pc.move_eps || q2 != int(q) || joins) {
+	// The activity gate only; a cell that joined counts, its neighbours may follow next step, and so does a
+	// cut (a wall that slumps away just what it loosens keeps its loose).
+	if (abs(l2 - L) > pc.move_eps || abs(d2 - d) > pc.move_eps || q2 != int(q) || joins || f > pc.move_eps) {
 		atomicOr(stats[slot_word(t)], 1u);
 		for (int k = 0; k < 4; k++) {
 			wake(c, g, DIR4[k]);
@@ -347,7 +416,7 @@ void main() {
 	ivec2 c = pc.tile * TILE + g;
 	ivec2 t = (pc.tile % pc.slots) * TILE + g;
 	if (pc.mode == 0) {
-		flux(c, t);
+		flux(c, t, g);
 	} else {
 		apply(c, t, g);
 	}

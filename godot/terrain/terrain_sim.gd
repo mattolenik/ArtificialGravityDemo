@@ -1,7 +1,8 @@
 ## The loose-dirt and sheet-water simulation (the terrain slice 3 plan, decisions 2, 3, 4 and 9): sim.glsl
 ## stepped at a fixed 1/60 s over the active tiles of the 1 m window only, slumping loose dirt to repose,
-## running sheet water down its surface, soaking it into the column and wetting dirt beside it, and letting
-## the water carry loose. Activity is flagged by the GPU per window slot in the edit layer's stats buffer
+## running sheet water down its surface, soaking it into the column and wetting dirt beside it, letting
+## the water carry loose, and caving in solid walls that stand too steep over disturbed ground (slope
+## stability: the material table, material_table). Activity is flagged by the GPU per window slot in the edit layer's stats buffer
 ## (stamps, the edit layer's apply of a blob holding loose or water, and every simulated cell that moved),
 ## read back after every frame that ran a list, a stamp or an apply, and at every window move before its
 ## slots change, and bookkept here per tile in seconds of quiet: a tile quiet for settle_time is handed back by step for Terrain to pack and leaves the active set.
@@ -61,6 +62,10 @@ var _flux_loose: RID
 var _flux_water: RID
 var _flux_pore: RID
 var _flux_loose_d: RID
+## Per window texel, the solid depth the flux pass found failing on the cell (slope stability), for the apply pass.
+var _flux_fail: RID
+## The Materials block of sim.glsl (material_table).
+var _materials: RID
 ## The edit layer's stats buffer and its size in bytes.
 var _stats: RID
 var _stats_size := 0
@@ -94,8 +99,10 @@ func _setup_rd(window: TerrainWindow, edits: EditLayer) -> void:
 	_flux_water = _flux_texture(window.size, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
 	_flux_pore = _flux_texture(window.size, RenderingDevice.DATA_FORMAT_R8G8B8A8_UNORM)
 	_flux_loose_d = _flux_texture(window.size, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
+	_flux_fail = _flux_texture(window.size, RenderingDevice.DATA_FORMAT_R32_SFLOAT)
+	_materials = _rd.storage_buffer_create(48, material_table())
 	# Binding 0..10 the window's fields in FIELDS order, 11..13 the flux textures, 14 the stats, 15 the diagonal
-	# loose flux.
+	# loose flux, 16 the failing solid, 17 the material table.
 	var images: Array[RID] = []
 	for field: String in TerrainWindow.FIELDS:
 		images.append(window.texture_rid(field))
@@ -117,6 +124,16 @@ func _setup_rd(window: TerrainWindow, edits: EditLayer) -> void:
 	d.binding = s.binding + 1
 	d.add_id(_flux_loose_d)
 	uniforms.append(d)
+	var f := RDUniform.new()
+	f.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+	f.binding = d.binding + 1
+	f.add_id(_flux_fail)
+	uniforms.append(f)
+	var m := RDUniform.new()
+	m.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	m.binding = f.binding + 1
+	m.add_id(_materials)
+	uniforms.append(m)
 	_set = _rd.uniform_set_create(uniforms, _shader, 0)
 
 
@@ -133,7 +150,7 @@ func _notification(what: int) -> void:
 	if what != NOTIFICATION_PREDELETE or _rd == null:
 		return
 	# Freeing the shader frees its pipeline and uniform set; the stats buffer is the edit layer's.
-	var rids: Array[RID] = [_shader, _flux_loose, _flux_water, _flux_pore, _flux_loose_d]
+	var rids: Array[RID] = [_shader, _flux_loose, _flux_water, _flux_pore, _flux_loose_d, _flux_fail, _materials]
 	RenderingServer.call_on_render_thread(TerrainWindow._free_rids.bind(_rd, rids))
 
 
@@ -338,4 +355,16 @@ func _params(window: TerrainWindow, tile: Vector2i, mode: int, soak_tick: int) -
 		b.encode_float(88 + 4 * m, materials.porosity[m] * params.soak_column)
 	b.encode_float(104, materials.wetting_distance[0])
 	b.encode_float(108, params.move_eps)
+	return b
+
+
+## The Materials block of sim.glsl (std430, 48 bytes): per material, tan of the solid's stand slope dry and
+## saturated (MaterialSet's stable slopes; the shader never fails rock) and the swell of its loose form.
+func material_table() -> PackedByteArray:
+	var b := PackedByteArray()
+	b.resize(48)
+	for m in 4:
+		b.encode_float(4 * m, tan(deg_to_rad(materials.stable_slope_dry[m])))
+		b.encode_float(16 + 4 * m, tan(deg_to_rad(materials.stable_slope_saturated[m])))
+		b.encode_float(32 + 4 * m, materials.swell_factor[m])
 	return b

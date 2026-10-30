@@ -72,5 +72,9 @@ func _initialize() -> void:
 			and b.decode_float(60) == 0.125 and absf(b.decode_float(76) - tan(deg_to_rad(35.0))) < 1e-6 \
 			and absf(b.decode_float(84) - tan(deg_to_rad(20.0))) < 1e-6 and absf(b.decode_float(88) - 0.2) < 1e-6 \
 			and b.decode_float(96) == 0.0 and b.decode_float(104) == 3.0 and absf(b.decode_float(108) - 1e-4) < 1e-10, "sim push constants")
+	# The Materials block: tan of the stand slopes dry and saturated per material, then the swell.
+	var m := sim.material_table()
+	check(m.size() == 48 and absf(m.decode_float(0) - tan(deg_to_rad(45.0))) < 1e-6 and absf(m.decode_float(4) - tan(deg_to_rad(70.0))) < 1e-5 \
+			and absf(m.decode_float(16) - tan(deg_to_rad(35.0))) < 1e-6 and m.decode_float(32) == 1.25 and absf(m.decode_float(44) - 1.6) < 1e-6, "sim material table")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

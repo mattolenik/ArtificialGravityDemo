@@ -1,6 +1,7 @@
-## Per-material values, indexed by material id (0 dirt, 1 clay, 2 rock, 3 rock face). Only `color` is
-## used in this slice; the rest are the research doc's starting points (section 6.4), carried here so
-## later slices read them from one place. Angles in degrees, lengths in m.
+## Per-material values, indexed by material id (0 dirt, 1 clay, 2 rock, 3 rock face). `color`, the swell,
+## the repose angles, porosity, wetting distance and the stable slopes are used; the rest are the research
+## doc's starting points (section 6.4), carried here so later slices read them from one place. Angles in
+## degrees, lengths in m.
 class_name MaterialSet
 extends Resource
 
@@ -24,8 +25,11 @@ const ROCK_FACE := 3
 ## Longest unsupported roof of the solid, dry and saturated.
 @export var roof_span_dry := PackedFloat32Array([4.0, 6.0, 20.0, 20.0])
 @export var roof_span_saturated := PackedFloat32Array([1.5, 2.0, 20.0, 20.0])
-## Steepest face the solid holds, dry and saturated.
-@export var stable_slope_dry := PackedFloat32Array([60.0, 70.0, 90.0, 90.0])
+## Steepest face the solid holds, dry and saturated: the simulation fails a steeper face toward disturbed
+## ground into loose (sim.glsl's slope stability; rock never). Dirt's dry slope is 45°, under the research
+## doc's 60°, so a hole dug at 1 m cells caves around its third scoop in one spot (60° stands a wall 1.7 m
+## over the next cell); this one number sets how a hole looks.
+@export var stable_slope_dry := PackedFloat32Array([45.0, 70.0, 90.0, 90.0])
 @export var stable_slope_saturated := PackedFloat32Array([35.0, 30.0, 90.0, 90.0])
 ## Servin compression index.
 @export var compression_index := PackedFloat32Array([0.05, 0.5, 0.005, 0.005])
