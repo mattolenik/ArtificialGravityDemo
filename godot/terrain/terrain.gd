@@ -257,17 +257,23 @@ func _process(delta: float) -> void:
 		_hold(b, not patch.covers(station.to_local(b.global_position)))
 
 
-## With persist_edits, packs the active tiles synchronously first, so a quit mid-slump keeps the pile; without,
-## nothing is saved, so the synchronous readback is skipped.
+## With persist_edits, packs the active tiles and the resident tiles holding an unpacked stamp synchronously
+## first, so a quit mid-slump keeps the pile and a stamp made just before the quit is saved; without, nothing
+## is saved, so the synchronous readback is skipped.
 func _exit_tree() -> void:
 	if persist_edits and window != null:
-		window.edits.pack_tiles_sync(window, sim.active_tiles())
+		var tiles := sim.active_tiles()
+		for t: Vector2i in window.edits.stamped:
+			if window.is_resident(t) and not tiles.has(t):
+				tiles.append(t)
+		window.edits.pack_tiles_sync(window, tiles)
 	_save_edits()
 
 
 ## Writes the tiles whose blobs have landed since the last save (all of window.edits.unsaved: no GPU wait,
-## so a tile still being read back is saved by the next call) and forgets them once written. A tile whose
-## readback lands after _exit_tree's save is lost: the exit does not wait for it.
+## so a tile still being read back is saved by the next call) and forgets them once written. A settle pack
+## whose readback lands after _exit_tree's save is lost: the exit does not wait for it (a stamp in flight is
+## packed synchronously there instead).
 func _save_edits() -> void:
 	_since_save = 0.0
 	if not persist_edits or window == null or window.edits.unsaved.is_empty():
@@ -340,7 +346,9 @@ func _move_window(center: Vector2i) -> void:
 		return
 	_center = center
 	var evicted := window.evicted_by(center)
-	var leaving: Array[Vector2i] = evicted.filter(sim.is_active)
+	# Active tiles, and tiles holding a stamp no pack has seen (its flag in flight, or landed but not yet
+	# settled): packed now, before the move regenerates their slots, so nothing stamped is lost.
+	var leaving: Array[Vector2i] = evicted.filter(func(t: Vector2i) -> bool: return sim.is_active(t) or window.edits.stamped.has(t))
 	window.edits.pack_tiles(window, leaving)
 	sim.drop(leaving)
 	var slots: Array[Vector2i] = []
