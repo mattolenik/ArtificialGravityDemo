@@ -9,7 +9,8 @@
 ## 3. reads the window's surface and edit_mask at the centre cell and 3 cells west, across the seam;
 ## 4. teleports 600 m spinward: both tiles must leave the window;
 ## 5. teleports back: both cells must come back bitwise equal and masked (the apply pass, from the blobs), and
-##    the collider must have the pit (the hole plus the edit shape); saves user://debug/edit_pit.png;
+##    the collider must have the pit (the hole plus the edit shape) at its centre's surface plus loose (the
+##    dig's sheer walls cave in, so rubble lies at the centre: slope stability); saves user://debug/edit_pit.png;
 ## 6. slides the box along the axis from the big patch alone, past the edit shape's edge and the hole's rim,
 ##    onto the edit shape alone (decision 8's one body, two shapes);
 ## 7. trench: after a 1 s run-up holds W for TRENCH s more digging under the player's own feet 10 times a
@@ -220,8 +221,9 @@ func _route() -> void:
 		_ok = false
 	var pit := _cell_point(c, dug[0].h)
 	var h_pit := Cyl.height_of(patch.surface_point(pit, 0.0), p.radius)
-	print("pit centre: collider %.3f m, window %.3f m" % [h_pit, dug[0].h])
-	_report("collider has the pit", absf(h_pit - dug[0].h) <= 0.3 and _in_hole(pit))
+	var ground: float = back[0].h + back[0].loose
+	print("pit centre: collider %.3f m, window %.3f m surface + %.3f m loose (the caved walls' rubble)" % [h_pit, back[0].h, back[0].loose])
+	_report("collider has the pit", absf(h_pit - ground) <= 0.3 and _in_hole(pit))
 
 	_player.look(Vector2(0.0, 300.0))  # tilt the camera down onto the pit
 	for i in 6:
@@ -520,17 +522,19 @@ func _settled() -> bool:
 	return true
 
 
-## The window's surface (m and its bits) and edit_mask (0..255) at each cell, read synchronously.
+## The window's surface (m and its bits), edit_mask (0..255) and loose (m) at each cell, read synchronously.
 func _read(cells: Array[Vector2i]) -> Array[Dictionary]:
 	var w := _terrain.window
 	var bytes: Array[PackedByteArray] = []
 	RenderingServer.call_on_render_thread(func() -> void:
 		var rd := RenderingServer.get_rendering_device()
 		bytes.append(rd.texture_get_data(w.texture_rid("surface"), 0))
-		bytes.append(rd.texture_get_data(w.texture_rid("edit_mask"), 0)))
+		bytes.append(rd.texture_get_data(w.texture_rid("edit_mask"), 0))
+		bytes.append(rd.texture_get_data(w.texture_rid("loose"), 0)))
 	var out: Array[Dictionary] = []
 	for c in cells:
 		# Tile t sits in slot t mod slots, so cell c is texel c mod size.
 		var k := posmod(c.y, w.size) * w.size + posmod(c.x, w.size)
-		out.append({"h": bytes[0].decode_float(4 * k), "bits": bytes[0].decode_u32(4 * k), "mask": bytes[1][k]})
+		out.append({"h": bytes[0].decode_float(4 * k), "bits": bytes[0].decode_u32(4 * k), "mask": bytes[1][k],
+				"loose": bytes[2].decode_float(4 * k)})
 	return out
