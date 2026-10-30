@@ -247,7 +247,7 @@ void flux(ivec2 c, ivec2 t, ivec2 g) {
 		if (!tile_active(tn)) {
 			// A wall over there that would fail toward this disturbed cell: its tile is woken, as it is not
 			// stepped until then.
-			if (masked && s_n - H > stand_tan(mat_n, imageLoad(w_saturation, tn).r) * w) {
+			if (masked && s_n - H > stand_tan(mat_n, imageLoad(w_saturation, tn).r) * w + 1e-3) {
 				wake(c, g, DIR4[k]);
 			}
 			continue;
@@ -368,8 +368,11 @@ void apply(ivec2 c, ivec2 t, ivec2 g) {
 		in_w = 0.0;
 		d_kept = 0.0;
 	}
-	float l2 = max(L + gain + (in_l - (own.x + own.y + own.z + own.w)) / a, 0.0);
-	float d2 = max(d_kept + (in_w - (own_w.x + own_w.y + own_w.z + own_w.w)) / a, 0.0);
+	// The loose and the sheet already here and their net inflows keep their volume over the cut's wider cell
+	// (R - s + f); the pore water is a byte of the top material's capacity, left as it is.
+	float wider = (pc.R - s) / (pc.R - s + f);
+	float l2 = max((L + (in_l - (own.x + own.y + own.z + own.w)) / a) * wider + gain, 0.0);
+	float d2 = max((d_kept + (in_w - (own_w.x + own_w.y + own_w.z + own_w.w)) / a) * wider, 0.0);
 	int q2 = int(q) + in_p - int(own_p.x + own_p.y + own_p.z + own_p.w);
 	if (pc.soak_tick != 0) {
 		// One quantum of the sheet into the column, while it holds water and is not saturated.

@@ -76,8 +76,9 @@
 ##    the lake). Picked up and settled (at most 15 s): the window's sheet, pore and absorbed water add up to
 ##    what was pumped within 2 %, the levels kept (the shore's cells under the lake's level join it), every cell
 ##    whose saturation rose dirt-topped
-##    and within 3.05 m of a cell that was wet or a reservoir. A water read every 0.5 s marks the wet cells, as
-##    in sheet.
+##    and within 3.05 m of a cell that was wet or a reservoir, and the window's surface bitwise unchanged (no
+##    wetted bank caved: the generated banks hold at the saturated stand slope). A water read every 0.5 s
+##    marks the wet cells, as in sheet.
 ## lake: a bore at the shore cell S, the first dry cell outward from the pump's lake cell A along its column
 ##    (found now: the pump phase let the shore's cells under the level join the lake), its five-cell plus cut
 ##    in one stamp to 0.5 m under the lake's level (the level of the wet cell before S): settled (at
@@ -1086,13 +1087,19 @@ func _pump() -> bool:
 		dirt = dirt and (_f(loose, c) > 0.01 or _b(material, c) == 0)
 		far = maxf(far, _nearest(c, near, surface))
 	var lake_kept := _levels_kept(ws0, _read("water_surface"), surface0, loose0, surface, loose)
+	# No bank caved: the wetted banks stand at the saturated stand slope, so the surface is bitwise unchanged.
+	var s0 := surface0.to_float32_array()
+	var s1 := surface.to_float32_array()
+	var cut_cells := 0
+	for k in s1.size():
+		cut_cells += int(s1[k] != s0[k])
 	print("pump: at %s, spoil at %s; mode %s, %d ticks, pumped %.6f m³; settled in %.2f s; sheet %+.6f, pore %+.6f, absorbed %+.6f m³: %.6f for %.6f (%+.3f %%)" % [
 			a, spoil, mode, ticks, pumped, waited, sheet, pore, absorbed, total, pumped, _residual("pump", total, pumped)])
-	print("pump: %d cells wet or reservoir by A, %d saturation rose (%d in the window), all dirt-topped: %s, farthest from a wet or reservoir cell %.3f m; levels kept: %s (%d cells joined the lake); %d cells held sheet water as the pump stopped, mean ground %.3f m, the spoil disc's %.3f m" % [
-			near.size(), risen.size(), risen_all, dirt, far, lake_kept, _joined, held, held_ground, spoil_ground])
+	print("pump: %d cells wet or reservoir by A, %d saturation rose (%d in the window), all dirt-topped: %s, farthest from a wet or reservoir cell %.3f m; levels kept: %s (%d cells joined the lake), %d cells' surface changed; %d cells held sheet water as the pump stopped, mean ground %.3f m, the spoil disc's %.3f m" % [
+			near.size(), risen.size(), risen_all, dirt, far, lake_kept, _joined, cut_cells, held, held_ground, spoil_ground])
 	_report("pumped water runs downhill, soaks dirt within 3 m, lake unchanged", mode == "pump" and pumped >= 8.0
 			and absf(total - pumped) <= 0.02 * pumped and lake_kept and not risen.is_empty() and risen.size() == risen_all
-			and dirt and far <= 3.05 and held > 0 and held_ground <= spoil_ground)
+			and dirt and far <= 3.05 and held > 0 and held_ground <= spoil_ground and cut_cells == 0)
 	return true
 
 
@@ -1434,8 +1441,9 @@ func _restart_mid_bore(s7: Vector2i) -> bool:
 	var waited := await _settled(spoil, 20.0)
 	var surface1 := _read("surface")
 	var hole1 := _f(surface1, s7)
+	var shaft := _disc(s7, t.bore_radius)
 	var walls: Array[Vector2i] = []
-	walls.assign(box.filter(func(c: Vector2i) -> bool: return not _disc(s7, t.bore_radius).has(c)))
+	walls.assign(box.filter(func(c: Vector2i) -> bool: return not shaft.has(c)))
 	var caved := _removed(surface, surface1, walls) * _terrain.materials.swell_factor[0]
 	var l1 := _vol(_read("loose"), surface1, box) - caved
 	var w1 := _water()
