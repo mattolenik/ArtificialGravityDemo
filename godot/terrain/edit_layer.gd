@@ -71,9 +71,11 @@ var unsaved := {}
 ## Set when a stamp or an apply ran since TerrainSim last asked for the stats: the buffer may hold activity
 ## flags not yet read back (TerrainSim.step reads and clears it).
 var stats_pending := false
-## Tiles a stamp that left packing to the settle pack has touched since a pack was last issued for them, so
-## Terrain can pack them before a window move evicts them and at exit (a stamp within the stats readback's
-## latency of a move is not lost).
+## Tiles a stamp that left packing to the settle pack has touched, each with the count of stats readbacks
+## asked when it was stamped (TerrainSim.stats_reads), so Terrain can pack them before a window move evicts
+## them and at exit: a stamp within the stats readback's latency of a move is not lost. A tile is forgotten
+## once a pack is issued for it, or once a later readback has landed without the tile going active (the
+## stamp changed nothing, as the feet's pushes over bare ground do sixty times a second: forget_quiet).
 var stamped := {}
 
 var _rd: RenderingDevice
@@ -167,15 +169,17 @@ func stamp(window: TerrainWindow, cell: Vector2i, radius: int, dh: float) -> voi
 ## around op.cell, then, when op.pack, a pack of every tile of that box read back into `blobs`. A counted op
 ## (a bore) clears the counter before the list and reads it back into op.counted after it. Every tile of the
 ## box must be resident (Terrain.can_stamp checks).
-func stamp_op(window: TerrainWindow, op: Op) -> void:
+func stamp_op(window: TerrainWindow, op: Op, asked := 0) -> void:
 	assert(op.mode not in [MODE_BORE, MODE_PUSH] or box_groups(op.reach()) == 1, "a bore or push must fit one workgroup")
 	var touched := stamp_tiles(window, op.cell, op.reach())
 	var tiles: Array[Vector2i] = []
 	if op.pack:
 		tiles = touched
+		for t in touched:
+			stamped.erase(t)
 	else:
 		for t in touched:
-			stamped[t] = true
+			stamped[t] = asked
 	# Built here, so the residency the shader tests is the window's as of this call.
 	var blocks: Array[PackedByteArray] = [_params(window, op, Vector2i.ZERO, disc_cells(op.radius))]
 	for k in tiles.size():
@@ -235,9 +239,12 @@ func pack_tiles_sync(window: TerrainWindow, tiles: Array[Vector2i]) -> void:
 		RenderingServer.call_on_render_thread(_pack_rd.bind(tiles, _pack_blocks(window, tiles), true))
 
 
-## Those of tiles that hold a stamp no pack has seen yet.
-func unpacked(tiles: Array[Vector2i]) -> Array[Vector2i]:
-	return tiles.filter(func(t: Vector2i) -> bool: return stamped.has(t))
+## Forgets the stamps a readback asked after them has landed (`landed`: TerrainSim.stats_landed) without
+## their tile going active (`is_active`: TerrainSim.is_active): they changed nothing, so no pack is owed.
+func forget_quiet(landed: int, is_active: Callable) -> void:
+	for t in stamped.keys():
+		if stamped[t] < landed and not is_active.call(t):
+			stamped.erase(t)
 
 
 func _pack_blocks(window: TerrainWindow, tiles: Array[Vector2i]) -> Array[PackedByteArray]:

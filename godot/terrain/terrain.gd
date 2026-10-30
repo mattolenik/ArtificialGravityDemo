@@ -246,6 +246,8 @@ func _process(delta: float) -> void:
 	var settled := sim.step(window, delta)
 	if not settled.is_empty():
 		window.edits.pack_tiles(window, settled)
+	# A stamp whose later readback landed with its tile still quiet changed nothing: no pack is owed for it.
+	window.edits.forget_quiet(sim.stats_landed, sim.is_active)
 	_retouch(sim.is_active(window.tile_of_cell(_last_tool.x, _last_tool.y)), Engine.get_process_frames())
 	_flush_collider(Time.get_ticks_msec() / 1000.0)
 	var p := station.to_local(viewer.global_position)
@@ -339,7 +341,8 @@ func _on_live(_center: Vector2) -> void:
 
 
 ## Moves the window to the tiles around center and points every tile node at its tile, if center changed.
-## Active tiles the move evicts are packed first and leave the simulation, so a pile mid-slump is kept; the
+## Active tiles and tiles holding an unpacked stamp that the move evicts are packed first (the active ones leave
+## the simulation), so a pile mid-slump and a stamp within the readback latency are kept; the
 ## evicted tiles' slots are invalidated in the simulation's activity flags.
 func _move_window(center: Vector2i) -> void:
 	if center == _center:
@@ -445,7 +448,7 @@ func stamp_tool(op: EditLayer.Op) -> bool:
 		return false
 	op.obstacle = _obstacle
 	op.obstacle_radius = _obstacle_radius
-	window.edits.stamp_op(window, op)
+	window.edits.stamp_op(window, op, sim.stats_reads)
 	_last_tool = op.cell
 	_last_reach = op.reach()
 	_last_frame = Engine.get_process_frames()

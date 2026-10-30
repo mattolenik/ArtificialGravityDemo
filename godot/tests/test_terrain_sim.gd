@@ -50,6 +50,7 @@ func _initialize() -> void:
 	sim.drop(sim.active_tiles())
 	sim._on_stats(stale, 1)
 	check(sim.settle(w, 0.0, sim._flags).is_empty() and sim.is_active(w.tile_at(Vector2i(0, 0))), "a current landing counts")
+	check(sim.stats_landed == 2, "landings are counted")
 	sim.drop(sim.active_tiles())
 	# A flag on a slot with no resident tile is ignored.
 	w._resident.clear()

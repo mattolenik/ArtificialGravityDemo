@@ -91,10 +91,11 @@
 ##    volume is kept within 0.1 % at once (its blob re-applied) and within 0.5 % once settled, at repose; the
 ##    window's water (sheet plus pore water, the sheet phase's puddle among it), read before and after over the
 ##    same wanted set, within 2 %.
-## evict (S9: the first row from spawn_cell + (0, 60) outward whose five-cell plus is dry land, and S9' the same
-##    from 40 rows past it, both clear of the slump and scroll piles): a 1 m³ deposit of radius 1 at S9 and, in the same frame, the player 600 m antispinward (S9's tile
+## evict (S9: the first row from spawn_cell + (0, 60) outward whose five-cell plus is dry land, and S9' the
+##    same from 40 rows past it, both clear of the slump and scroll piles): a 1 m³ deposit of radius 1 at S9 and, in the same frame, the player 600 m antispinward (S9's tile
 ##    evicted with the stamp's flag in flight); the same at S9' with one frame between the stamp and the move.
-##    Six frames after each move no tile is active (the flag woke no entering tile); back at the spawn each
+##    Six frames after each move the tile that took the stamped tile's slot is quiet unless its own blob holds
+##    a pile (the flag in flight woke no entering tile); back at the spawn each
 ##    box of 6 has gained its 1 m³ within 0.1 % at once (its tile was packed as it left, the blob re-applied)
 ##    and once settled, over what it held before the stamp. The stats readbacks over the moves are printed, not asserted.
 ## restart (S7 = spawn_cell + (-6, 0)): an auger bores there, its spoil side (-1, 0); 8 s on, mid-bore (the hole
@@ -1330,8 +1331,7 @@ func _evict(from: Vector2i, spawn: Vector2i) -> bool:
 	var window := _terrain.window
 	var p := _terrain.params
 	var away := spawn - Vector2i(roundi(600.0 / (p.radius * p.dtheta())), 0)
-	var s9 := _dry_site(from)
-	var sites: Array[Vector2i] = [s9, _dry_site(from + Vector2i(0, 40))]
+	var sites: Array[Vector2i] = [_dry_site(from), _dry_site(from + Vector2i(0, 40))]
 	var evicted := true
 	var woke := 0
 	var reads := 0
@@ -1361,7 +1361,7 @@ func _evict(from: Vector2i, spawn: Vector2i) -> bool:
 		at_once.append(_vol(_read("loose"), _read("surface"), _box(site, 6)) - before)
 		var waited := await _settled(site)
 		settled.append(_vol(_read("loose"), _read("surface"), _box(site, 6)) - before if waited >= 0.0 else -1.0)
-	print("evict: stamps at %s (same frame) and %s (a frame before the move), 600 m away at %s, evicted: %s; active tiles 6 frames after the moves %d; back: the boxes gained %.6f and %.6f m³ at once (%+.4f %%, %+.4f %%), settled %.6f and %.6f m³; stats readbacks over the two moves %d" % [
+	print("evict: stamps at %s (same frame) and %s (a frame before the move), 600 m away at %s, evicted: %s; slot takers woken 6 frames after the moves %d; back: the boxes gained %.6f and %.6f m³ at once (%+.4f %%, %+.4f %%), settled %.6f and %.6f m³; stats readbacks over the two moves %d" % [
 			sites[0], sites[1], away, evicted, woke, at_once[0], at_once[1], _residual("evict same frame", at_once[0], 1.0),
 			_residual("evict a frame before", at_once[1], 1.0), settled[0], settled[1], reads])
 	_report("a stamp survives an eviction within its readback latency", evicted and woke == 0
@@ -1561,7 +1561,7 @@ func _quit_active(site: Vector2i) -> void:
 		await get_tree().process_frame
 	var tiles := _terrain.sim.active_tiles()
 	var edits := _terrain.window.edits
-	var stamped := edits.stamped.size()
+	var stamped := edits.stamped.keys().filter(func(t: Vector2i) -> bool: return _terrain.window.is_resident(t)).size()
 	for t in tiles:
 		edits.blobs.erase(t)
 	_terrain.tree_exited.connect(func() -> void:

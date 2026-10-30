@@ -3,8 +3,8 @@
 ## running sheet water down its surface, soaking it into the column and wetting dirt beside it, and letting
 ## the water carry loose. Activity is flagged by the GPU per window slot in the edit layer's stats buffer
 ## (stamps, the edit layer's apply of a blob holding loose or water, and every simulated cell that moved),
-## read back after every frame that ran a list, a stamp or an apply, and at every window move before its slots
-## change, and bookkept here per tile in seconds of quiet: a tile quiet for settle_time is handed back by step for Terrain to pack and leaves the active set.
+## read back after every frame that ran a list, a stamp or an apply, and at every window move before its
+## slots change, and bookkept here per tile in seconds of quiet: a tile quiet for settle_time is handed back by step for Terrain to pack and leaves the active set.
 ## The active mask is 64 bits, so the window is at most 1024 cells (8 x 8 slots). settle and the bookkeeping
 ## are CPU only (headless-safe); setup and step are the RenderingDevice entry points.
 class_name TerrainSim
@@ -44,9 +44,12 @@ var _accum := 0.0
 ## The process frame of the oldest stats readback not yet landed (-1: none), and of the latest asked.
 var _waiting_since := -1
 var _asked := -1
-## Stats readbacks asked (every path, a device or not) and the generation the last one was bound to.
+## Stats readbacks asked (every path, a device or not), the generation the last one was bound to, and the
+## readbacks landed (every landing, data or not): a stamp made at stats_reads n changed nothing once
+## stats_landed passes n with its tile still quiet (EditLayer.forget_quiet).
 var stats_reads := 0
 var last_asked_generation := -1
+var stats_landed := 0
 ## The window (setup's, then the one settle last saw), for activate's residency test.
 var _window: TerrainWindow
 var _rd: RenderingDevice
@@ -240,6 +243,7 @@ func _read_stats_rd(generation: int) -> void:
 ## is the process frame of the request: any request still waiting was made after it.
 func _on_stats(data: PackedByteArray, generation: int, asked := -1) -> void:
 	_waiting_since = -1 if asked == _asked else asked + 1
+	stats_landed += 1
 	if data.size() < 4:
 		return
 	absorbed += data.decode_u32(data.size() - 4) * 1e-6
@@ -257,10 +261,7 @@ func _on_stats(data: PackedByteArray, generation: int, asked := -1) -> void:
 ## is ending (one 68-byte request per move), so an evicted tile's flag in flight is consumed and ignored
 ## instead of riding the move frame's readback, at the new generation, onto the tile that takes its slot.
 func invalidate(slots: Array[Vector2i]) -> void:
-	if _rd == null:
-		_read_stats_rd(_generation)
-	else:
-		RenderingServer.call_on_render_thread(_read_stats_rd.bind(_generation))
+	RenderingServer.call_on_render_thread(_read_stats_rd.bind(_generation))
 	_generation += 1
 	var n := _window.slots * _window.slots
 	if _changed.size() != n:

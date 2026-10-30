@@ -99,14 +99,25 @@ func _initialize() -> void:
 	e.stamp_op(w, tool_op)
 	e.stamp_op(w, tool_op)
 	check(e.stamped.size() == 4 and e.stamped.has(Vector2i(0, 0)) and e.stamped.has(Vector2i(1, 1)), "a tool stamp marks its four tiles unpacked, once: %s" % [e.stamped.keys()])
-	check(e.unpacked([Vector2i(5, 5), Vector2i(0, 0), Vector2i(1, 0)]) == [Vector2i(0, 0), Vector2i(1, 0)], "unpacked keeps the marked tiles in order")
 	e.pack_tiles(w, [Vector2i(0, 0), Vector2i(1, 0)])
 	check(not e.stamped.has(Vector2i(0, 0)) and not e.stamped.has(Vector2i(1, 0)) and e.stamped.has(Vector2i(0, 1)) and e.stamped.has(Vector2i(1, 1)), "a pack forgets its tiles and keeps the others")
 	e.pack_tiles_sync(w, [Vector2i(0, 1), Vector2i(1, 1)])
 	check(e.stamped.is_empty(), "the sync pack forgets too")
+	# A stamp carries the count of readbacks asked when it was made and is forgotten once a later one has landed
+	# without its tile going active (it changed nothing); an active tile keeps its stamp for the settle pack.
+	e.stamp_op(w, tool_op, 3)
+	e.forget_quiet(3, func(_t: Vector2i) -> bool: return false)
+	check(e.stamped.size() == 4 and e.stamped[Vector2i(0, 0)] == 3, "nothing forgotten before a later readback lands")
+	e.forget_quiet(4, func(t: Vector2i) -> bool: return t == Vector2i(0, 0))
+	check(e.stamped.size() == 1 and e.stamped.has(Vector2i(0, 0)), "a landed readback forgets the quiet tiles and keeps the active one")
+	e.pack_tiles(w, [Vector2i(0, 0)])
 	var dig := EditLayer.Op.new()
 	dig.cell = Vector2i(200, 300); dig.radius = 5; dig.mode = EditLayer.MODE_RAISE; dig.amount = -0.25; dig.pack = true
 	e.stamp_op(w, dig)
 	check(e.stamped.is_empty(), "a stamp that packs itself marks nothing")
+	e.stamp_op(w, tool_op)
+	dig.cell = Vector2i(127, 127); dig.radius = 3
+	e.stamp_op(w, dig)
+	check(e.stamped.is_empty(), "a packing stamp forgets the earlier stamps on its tiles")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)
