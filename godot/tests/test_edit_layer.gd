@@ -89,5 +89,24 @@ func _initialize() -> void:
 			and pc.decode_s32(48) == 1 and pc.decode_s32(52) == 0 and pc.decode_s32(56) == 5 and pc.decode_s32(60) == 6 \
 			and absf(pc.decode_float(64) - 0.05) < 1e-7 and absf(pc.decode_float(68) - 0.03) < 1e-7 and pc.decode_float(76) == p.radius \
 			and absf(pc.decode_float(80) - p.dtheta()) < 1e-10, "edit push constants")
+	# Unpacked stamps are remembered per tile until a pack is issued for the tile (Terrain packs them before an
+	# eviction and at exit): a tool stamp (pack off) marks the tiles its reach touches, once each however often
+	# it is repeated; a debug stamp (pack on) packs itself and marks nothing. Headless: the stamp and pack
+	# dispatches return at the invalid uniform set, the bookkeeping runs.
+	var e := EditLayer.new()
+	var tool_op := EditLayer.Op.new()
+	tool_op.cell = Vector2i(127, 127); tool_op.radius = 3; tool_op.mode = EditLayer.MODE_DEPOSIT; tool_op.amount = 1.0; tool_op.pack = false
+	e.stamp_op(w, tool_op)
+	e.stamp_op(w, tool_op)
+	check(e.stamped.size() == 4 and e.stamped.has(Vector2i(0, 0)) and e.stamped.has(Vector2i(1, 1)), "a tool stamp marks its four tiles unpacked, once: %s" % [e.stamped.keys()])
+	check(e.unpacked([Vector2i(5, 5), Vector2i(0, 0), Vector2i(1, 0)]) == [Vector2i(0, 0), Vector2i(1, 0)], "unpacked keeps the marked tiles in order")
+	e.pack_tiles(w, [Vector2i(0, 0), Vector2i(1, 0)])
+	check(not e.stamped.has(Vector2i(0, 0)) and not e.stamped.has(Vector2i(1, 0)) and e.stamped.has(Vector2i(0, 1)) and e.stamped.has(Vector2i(1, 1)), "a pack forgets its tiles and keeps the others")
+	e.pack_tiles_sync(w, [Vector2i(0, 1), Vector2i(1, 1)])
+	check(e.stamped.is_empty(), "the sync pack forgets too")
+	var dig := EditLayer.Op.new()
+	dig.cell = Vector2i(200, 300); dig.radius = 5; dig.mode = EditLayer.MODE_RAISE; dig.amount = -0.25; dig.pack = true
+	e.stamp_op(w, dig)
+	check(e.stamped.is_empty(), "a stamp that packs itself marks nothing")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

@@ -4,7 +4,10 @@
 ## copies each touched tile into a slot of a download buffer, read back into `blobs` a few frames later; an
 ## apply copies a tile's blob over the detail pass's output whenever the tile enters the window, so an edit
 ## survives the window scrolling away and back. Blobs move as whole PackedByteArrays, never looped here.
-## Limit (decision 4): a stamped tile evicted and re-entered before its readback lands gets its old blob.
+## A tile a non-packing stamp touched is remembered in `stamped` until a pack is issued for it, so Terrain packs
+## it before a window move evicts it and at exit: the edits plan's decision 4 limit (a stamped tile evicted and
+## re-entered before its pack landed got its old blob) is closed, and a settle pack still in flight at quit is
+## the remaining loss.
 ## Slice 3 adds the tool stamps (stamp_op: bore, deposit, push, tamp, spill, scoop), a counter read back after
 ## each counted stamp (a bore or a scoop), and a stats buffer of one activity flag per window slot for
 ## TerrainSim. The apply flags every entering tile that holds loose or water (a pile mid-slump resumes), so at
@@ -68,6 +71,10 @@ var unsaved := {}
 ## Set when a stamp or an apply ran since TerrainSim last asked for the stats: the buffer may hold activity
 ## flags not yet read back (TerrainSim.step reads and clears it).
 var stats_pending := false
+## Tiles a stamp that left packing to the settle pack has touched since a pack was last issued for them, so
+## Terrain can pack them before a window move evicts them and at exit (a stamp within the stats readback's
+## latency of a move is not lost).
+var stamped := {}
 
 var _rd: RenderingDevice
 var _shader: RID
@@ -162,9 +169,13 @@ func stamp(window: TerrainWindow, cell: Vector2i, radius: int, dh: float) -> voi
 ## box must be resident (Terrain.can_stamp checks).
 func stamp_op(window: TerrainWindow, op: Op) -> void:
 	assert(op.mode not in [MODE_BORE, MODE_PUSH] or box_groups(op.reach()) == 1, "a bore or push must fit one workgroup")
+	var touched := stamp_tiles(window, op.cell, op.reach())
 	var tiles: Array[Vector2i] = []
 	if op.pack:
-		tiles = stamp_tiles(window, op.cell, op.reach())
+		tiles = touched
+	else:
+		for t in touched:
+			stamped[t] = true
 	# Built here, so the residency the shader tests is the window's as of this call.
 	var blocks: Array[PackedByteArray] = [_params(window, op, Vector2i.ZERO, disc_cells(op.radius))]
 	for k in tiles.size():
@@ -210,14 +221,23 @@ func _counted(data: PackedByteArray, cb: Callable) -> void:
 ## Packs `tiles` (resident) into `blobs`: lists of at most DOWN_SLOTS pack dispatches, each list's readbacks
 ## requested right after it. A readback copies `_down` when it is requested, so the next list reuses the slots.
 func pack_tiles(window: TerrainWindow, tiles: Array[Vector2i]) -> void:
+	for t in tiles:
+		stamped.erase(t)
 	if not tiles.is_empty():
 		RenderingServer.call_on_render_thread(_pack_rd.bind(tiles, _pack_blocks(window, tiles), false))
 
 
 ## pack_tiles with synchronous readbacks: `blobs` holds every tile when it returns (Terrain._exit_tree).
 func pack_tiles_sync(window: TerrainWindow, tiles: Array[Vector2i]) -> void:
+	for t in tiles:
+		stamped.erase(t)
 	if not tiles.is_empty():
 		RenderingServer.call_on_render_thread(_pack_rd.bind(tiles, _pack_blocks(window, tiles), true))
+
+
+## Those of tiles that hold a stamp no pack has seen yet.
+func unpacked(tiles: Array[Vector2i]) -> Array[Vector2i]:
+	return tiles.filter(func(t: Vector2i) -> bool: return stamped.has(t))
 
 
 func _pack_blocks(window: TerrainWindow, tiles: Array[Vector2i]) -> Array[PackedByteArray]:
