@@ -29,12 +29,16 @@ const MODE_SCOOP := 8
 
 ## Per cell: five float32 heights (surface, bedrock_top, clay_bottom, clay_top, water_surface), then one
 ## uint32 material | compaction << 8 | saturation << 16 | mask << 24; mask 255 where edited, else 0; then
-## float32 loose and water_depth.
-const CELL_BYTES := 32
+## float32 loose and water_depth; then (tunnels, version 3) the four gap bottoms, four tops and four loose as
+## float32 and one uint32 gap_material0 | gap_material1 << 8 | gap_material2 << 16 | gap_material3 << 24.
+const CELL_BYTES := 84
 const BLOB_SIZE := TerrainWindow.TILE * TerrainWindow.TILE * CELL_BYTES
 ## A version 1 blob's cell: the first 24 bytes of this one, no loose or water_depth.
 const V1_CELL_BYTES := 24
 const V1_BLOB_SIZE := TerrainWindow.TILE * TerrainWindow.TILE * V1_CELL_BYTES
+## A version 2 blob's cell: the first 32 bytes of this one, no gaps.
+const V2_CELL_BYTES := 32
+const V2_BLOB_SIZE := TerrainWindow.TILE * TerrainWindow.TILE * V2_CELL_BYTES
 ## Tiles one stamp can touch, radius at most 64 cells (Terrain.edit refuses more): the download buffer's slots.
 const DOWN_SLOTS := 4
 
@@ -120,8 +124,8 @@ func _setup_rd(window: TerrainWindow) -> void:
 	_stats_size = (window.slots * window.slots + 1) * 4
 	zeros.resize(_stats_size)
 	_stats = _rd.storage_buffer_create(_stats_size, zeros)
-	# Binding 0 _up, 1 _down, 2..12 the window's fields in FIELDS order, 13 _counter, 14 _stats.
-	var buffers := {0: _up, 1: _down, 13: _counter, 14: _stats}
+	# Binding 0 _up, 1 _down, 2..28 the window's fields in FIELDS order, 29 _counter, 30 _stats.
+	var buffers := {0: _up, 1: _down, 2 + TerrainWindow.FIELDS.size(): _counter, 3 + TerrainWindow.FIELDS.size(): _stats}
 	var uniforms: Array[RDUniform] = []
 	for i in 2 + TerrainWindow.FIELDS.size() + 2:
 		var u := RDUniform.new()
@@ -136,7 +140,7 @@ func _setup_rd(window: TerrainWindow) -> void:
 	_set = _rd.uniform_set_create(uniforms, _shader, 0)
 
 
-## The stats buffer (bound at 14 here; TerrainSim binds it too) and its size in bytes, (slots² + 1) · 4.
+## The stats buffer (bound after the fields here; TerrainSim binds it too) and its size in bytes, (slots² + 1) · 4.
 func stats_rid() -> RID:
 	return _stats
 
@@ -388,14 +392,24 @@ static func stamp_tiles(window: TerrainWindow, cell: Vector2i, radius: int) -> A
 	return out
 
 
-## A version 1 blob (V1_BLOB_SIZE) in this layout: each cell's 24 bytes, then loose and water_depth 0.
-## Load time only (WorldIO.load_edits), so it may loop over the cells.
+## A version 1 blob (V1_BLOB_SIZE) in this layout: each cell's 24 bytes, then loose, water_depth and the gaps 0.
 static func upgrade_v1(blob: PackedByteArray) -> PackedByteArray:
+	return _pad_cells(blob, V1_CELL_BYTES)
+
+
+## A version 2 blob (V2_BLOB_SIZE) in this layout: each cell's 32 bytes, then the gap words 0.
+static func upgrade_v2(blob: PackedByteArray) -> PackedByteArray:
+	return _pad_cells(blob, V2_CELL_BYTES)
+
+
+## Each `from` bytes of blob padded with zeros to CELL_BYTES. Load time only (WorldIO.load_edits), so it may
+## loop over the cells.
+static func _pad_cells(blob: PackedByteArray, from: int) -> PackedByteArray:
 	var pad := PackedByteArray()
-	pad.resize(CELL_BYTES - V1_CELL_BYTES)
+	pad.resize(CELL_BYTES - from)
 	var out := PackedByteArray()
-	for o in range(0, blob.size(), V1_CELL_BYTES):
-		out.append_array(blob.slice(o, o + V1_CELL_BYTES))
+	for o in range(0, blob.size(), from):
+		out.append_array(blob.slice(o, o + from))
 		out.append_array(pad)
 	return out
 
@@ -409,7 +423,13 @@ static func cell_offset(i: int, j: int) -> int:
 static func decode(blob: PackedByteArray, i: int, j: int) -> Dictionary:
 	var o := cell_offset(i, j)
 	var w := blob.decode_u32(o + 20)
+	var gm := blob.decode_u32(o + 80)
+	var gaps := []
+	for word in [32, 48, 64]:
+		gaps.append(PackedFloat32Array([blob.decode_float(o + word), blob.decode_float(o + word + 4), blob.decode_float(o + word + 8), blob.decode_float(o + word + 12)]))
 	return {"surface": blob.decode_float(o), "bedrock_top": blob.decode_float(o + 4), "clay_bottom": blob.decode_float(o + 8),
 			"clay_top": blob.decode_float(o + 12), "water_surface": blob.decode_float(o + 16),
 			"material": w & 255, "compaction": (w >> 8) & 255, "saturation": (w >> 16) & 255, "mask": w >> 24,
-			"loose": blob.decode_float(o + 24), "water_depth": blob.decode_float(o + 28)}
+			"loose": blob.decode_float(o + 24), "water_depth": blob.decode_float(o + 28),
+			"gap_bottom": gaps[0], "gap_top": gaps[1], "gap_loose": gaps[2],
+			"gap_material": PackedInt32Array([gm & 255, (gm >> 8) & 255, (gm >> 16) & 255, gm >> 24])}

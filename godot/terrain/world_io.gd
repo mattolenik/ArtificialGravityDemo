@@ -1,10 +1,13 @@
 ## Saves and loads a generated world under user://worlds/<name>/: params.tres, maps.res and tiles/, which
-## holds one <ti>_<tj>.edit file per edited tile: u32 version (2), u32 raw size (EditLayer.BLOB_SIZE), then
-## the tile's edit blob zstd-compressed. A version 1 file (raw size EditLayer.V1_BLOB_SIZE, 393,216: cells
-## without loose and water_depth) still loads, padded by EditLayer.upgrade_v1; saves are always version 2.
+## holds one <ti>_<tj>.edit file per edited tile: u32 version (3), u32 raw size (EditLayer.BLOB_SIZE), then
+## the tile's edit blob zstd-compressed. A version 1 file (raw size EditLayer.V1_BLOB_SIZE: cells without
+## loose and water_depth) and a version 2 file (EditLayer.V2_BLOB_SIZE: no gaps) still load, padded by
+## EditLayer.upgrade_v1 / upgrade_v2; saves are always version 3.
 class_name WorldIO
 
-const EDIT_VERSION := 2
+const EDIT_VERSION := 3
+## Raw blob size by file version.
+const RAW_SIZE := {1: EditLayer.V1_BLOB_SIZE, 2: EditLayer.V2_BLOB_SIZE, 3: EditLayer.BLOB_SIZE}
 
 
 static func _dir(name: String) -> String:
@@ -61,8 +64,8 @@ static func save_edits(name: String, blobs: Dictionary) -> Error:
 
 
 ## Wrapped tile Vector2i -> blob of EditLayer.BLOB_SIZE, for every tiles/*.edit of the world that is version
-## 2 of EditLayer.BLOB_SIZE raw, or version 1 of EditLayer.V1_BLOB_SIZE raw (upgraded), and decompresses to
-## its raw size; any other file is skipped with a warning naming it.
+## 3 of EditLayer.BLOB_SIZE raw, or version 1 or 2 of its raw size (upgraded), and decompresses to its raw
+## size; any other file is skipped with a warning naming it.
 static func load_edits(name: String) -> Dictionary:
 	var dir := _dir(name) + "/tiles"
 	var out := {}
@@ -73,14 +76,17 @@ static func load_edits(name: String) -> Dictionary:
 		var xy := file.get_basename().split("_")
 		var f := FileAccess.open(path, FileAccess.READ)
 		var version := f.get_32() if f != null and f.get_length() >= 8 else 0
-		var raw := EditLayer.V1_BLOB_SIZE if version == 1 else EditLayer.BLOB_SIZE
-		if xy.size() != 2 or not xy[0].is_valid_int() or not xy[1].is_valid_int() \
-				or (version != 1 and version != EDIT_VERSION) or f.get_32() != raw:
+		var raw: int = RAW_SIZE.get(version, 0)
+		if xy.size() != 2 or not xy[0].is_valid_int() or not xy[1].is_valid_int() or raw == 0 or f.get_32() != raw:
 			push_warning("Skipping edit file %s: not a version %d tile of %d bytes" % [path, EDIT_VERSION, EditLayer.BLOB_SIZE])
 			continue
 		var blob := f.get_buffer(f.get_length() - 8).decompress(raw, FileAccess.COMPRESSION_ZSTD)
 		if blob.size() != raw:
 			push_warning("Skipping edit file %s: its body does not decompress to %d bytes" % [path, raw])
 			continue
-		out[Vector2i(xy[0].to_int(), xy[1].to_int())] = EditLayer.upgrade_v1(blob) if version == 1 else blob
+		if version == 1:
+			blob = EditLayer.upgrade_v1(blob)
+		elif version == 2:
+			blob = EditLayer.upgrade_v2(blob)
+		out[Vector2i(xy[0].to_int(), xy[1].to_int())] = blob
 	return out

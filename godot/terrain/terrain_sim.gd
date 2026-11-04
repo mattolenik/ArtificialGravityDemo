@@ -101,10 +101,10 @@ func _setup_rd(window: TerrainWindow, edits: EditLayer) -> void:
 	_flux_loose_d = _flux_texture(window.size, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
 	_flux_fail = _flux_texture(window.size, RenderingDevice.DATA_FORMAT_R32_SFLOAT)
 	_materials = _rd.storage_buffer_create(48, material_table())
-	# Binding 0..10 the window's fields in FIELDS order, 11..13 the flux textures, 14 the stats, 15 the diagonal
-	# loose flux, 16 the failing solid, 17 the material table.
+	# Binding 0..10 the window's column fields in COLUMN_FIELDS order, 11..13 the flux textures, 14 the stats,
+	# 15 the diagonal loose flux, 16 the failing solid, 17 the material table.
 	var images: Array[RID] = []
-	for field: String in TerrainWindow.FIELDS:
+	for field: String in TerrainWindow.COLUMN_FIELDS:
 		images.append(window.texture_rid(field))
 	images.append_array([_flux_loose, _flux_water, _flux_pore])
 	var uniforms: Array[RDUniform] = []

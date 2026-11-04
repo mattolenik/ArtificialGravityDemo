@@ -29,6 +29,23 @@ layout(set = 1, binding = 7, r8) uniform restrict writeonly image2D o_saturation
 layout(set = 1, binding = 8, r8) uniform restrict writeonly image2D o_mask;  // edit_mask: no edit here
 layout(set = 1, binding = 9, r32f) uniform restrict writeonly image2D o_loose;  // no loose dirt
 layout(set = 1, binding = 10, r32f) uniform restrict writeonly image2D o_depth;  // water_depth: no spilled water
+// Tunnels: the gap fields (TerrainWindow.GAP_FIELDS), no gaps here.
+layout(set = 1, binding = 11, r32f) uniform restrict writeonly image2D o_gap_bottom0;
+layout(set = 1, binding = 12, r32f) uniform restrict writeonly image2D o_gap_bottom1;
+layout(set = 1, binding = 13, r32f) uniform restrict writeonly image2D o_gap_bottom2;
+layout(set = 1, binding = 14, r32f) uniform restrict writeonly image2D o_gap_bottom3;
+layout(set = 1, binding = 15, r32f) uniform restrict writeonly image2D o_gap_top0;
+layout(set = 1, binding = 16, r32f) uniform restrict writeonly image2D o_gap_top1;
+layout(set = 1, binding = 17, r32f) uniform restrict writeonly image2D o_gap_top2;
+layout(set = 1, binding = 18, r32f) uniform restrict writeonly image2D o_gap_top3;
+layout(set = 1, binding = 19, r32f) uniform restrict writeonly image2D o_gap_loose0;
+layout(set = 1, binding = 20, r32f) uniform restrict writeonly image2D o_gap_loose1;
+layout(set = 1, binding = 21, r32f) uniform restrict writeonly image2D o_gap_loose2;
+layout(set = 1, binding = 22, r32f) uniform restrict writeonly image2D o_gap_loose3;
+layout(set = 1, binding = 23, r8) uniform restrict writeonly image2D o_gap_material0;
+layout(set = 1, binding = 24, r8) uniform restrict writeonly image2D o_gap_material1;
+layout(set = 1, binding = 25, r8) uniform restrict writeonly image2D o_gap_material2;
+layout(set = 1, binding = 26, r8) uniform restrict writeonly image2D o_gap_material3;
 
 layout(push_constant, std430) uniform Params {
 	ivec2 tile;            // tile index (theta, z), theta already wrapped
@@ -360,4 +377,20 @@ void main() {
 	imageStore(o_mask, o, vec4(0.0));
 	imageStore(o_loose, o, vec4(0.0));
 	imageStore(o_depth, o, vec4(0.0));
+	imageStore(o_gap_bottom0, o, vec4(0.0));
+	imageStore(o_gap_bottom1, o, vec4(0.0));
+	imageStore(o_gap_bottom2, o, vec4(0.0));
+	imageStore(o_gap_bottom3, o, vec4(0.0));
+	imageStore(o_gap_top0, o, vec4(0.0));
+	imageStore(o_gap_top1, o, vec4(0.0));
+	imageStore(o_gap_top2, o, vec4(0.0));
+	imageStore(o_gap_top3, o, vec4(0.0));
+	imageStore(o_gap_loose0, o, vec4(0.0));
+	imageStore(o_gap_loose1, o, vec4(0.0));
+	imageStore(o_gap_loose2, o, vec4(0.0));
+	imageStore(o_gap_loose3, o, vec4(0.0));
+	imageStore(o_gap_material0, o, vec4(0.0));
+	imageStore(o_gap_material1, o, vec4(0.0));
+	imageStore(o_gap_material2, o, vec4(0.0));
+	imageStore(o_gap_material3, o, vec4(0.0));
 }

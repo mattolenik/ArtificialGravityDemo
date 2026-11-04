@@ -11,7 +11,7 @@ func _initialize() -> void:
 	var p := WorldParams.new()
 	var w := TerrainWindow.new()
 	w.configure(p, 512, 1.0)
-	check(EditLayer.BLOB_SIZE == 128 * 128 * 32 and EditLayer.cell_offset(3, 2) == (2 * 128 + 3) * 32, "blob layout")
+	check(EditLayer.BLOB_SIZE == 128 * 128 * 84 and EditLayer.cell_offset(3, 2) == (2 * 128 + 3) * 84, "blob layout")
 	# A disc inside one tile; one straddling the seam at theta = 0; one at the station's first rows; one over four tiles.
 	var one := EditLayer.stamp_tiles(w, Vector2i(200, 300), 5)
 	check(one.size() == 1 and one[0] == Vector2i(1, 2), "one tile %s" % [one])
@@ -34,6 +34,10 @@ func _initialize() -> void:
 	# 0.02 is not a float32: it reads back as the nearest one, so approx.
 	check(d.surface == 412.5 and d.bedrock_top == 400.0 and d.material == 2 and d.mask == 255 and d.loose == 0.75 and is_equal_approx(d.water_depth, 0.02), "decode %s" % d)
 	check(EditLayer.decode(blob, 6, 7).mask == 0, "untouched cell")
+	# Tunnels: the gap words (bottoms at 32, tops at 48, loose at 64, the four material bytes packed at 80).
+	blob.encode_float(o + 32, 405.0); blob.encode_float(o + 48, 407.5); blob.encode_float(o + 64, 0.25); blob.encode_u32(o + 80, 1 << 8)
+	d = EditLayer.decode(blob, 5, 7)
+	check(d.gap_bottom[0] == 405.0 and d.gap_top[0] == 407.5 and d.gap_loose[0] == 0.25 and d.gap_material[1] == 1 and d.gap_material[0] == 0 and d.gap_bottom[3] == 0.0, "decode gaps %s" % d)
 	# Edits round-trip through the world files, one zstd file per tile; a corrupt file is skipped.
 	check(WorldIO.save_edits("test_world", {Vector2i(5, 7): blob, Vector2i(127, 3): blob}) == OK, "save edits")
 	var loaded := WorldIO.load_edits("test_world")
@@ -44,8 +48,12 @@ func _initialize() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://worlds/test_world/tiles/9_9.edit"))
 	# Slice 3: FIELDS name the two new float fields; a version 1 blob pads to the 32-byte cell and a version 1
 	# file loads that way; saves are version 2.
-	check(TerrainWindow.FIELDS.size() == 11 and TerrainWindow.FIELDS[9] == "loose" and TerrainWindow.FIELDS[10] == "water_depth", "fields %s" % [TerrainWindow.FIELDS])
+	check(TerrainWindow.FIELDS.size() == 27 and TerrainWindow.FIELDS[9] == "loose" and TerrainWindow.FIELDS[10] == "water_depth" \
+			and TerrainWindow.FIELDS[11] == "gap_bottom0" and TerrainWindow.FIELDS[26] == "gap_material3", "fields %s" % [TerrainWindow.FIELDS])
 	check(TerrainWindow.field_format("loose") == RenderingDevice.DATA_FORMAT_R32_SFLOAT and TerrainWindow.field_format("edit_mask") == RenderingDevice.DATA_FORMAT_R8_UNORM, "field formats")
+	# Tunnels: the gap fields (floats, the materials bytes) follow the eleven column fields the sim and collider bind.
+	check(TerrainWindow.field_format("gap_loose2") == RenderingDevice.DATA_FORMAT_R32_SFLOAT and TerrainWindow.field_format("gap_material0") == RenderingDevice.DATA_FORMAT_R8_UNORM, "gap formats")
+	check(TerrainWindow.COLUMN_FIELDS.size() == 11 and TerrainWindow.COLUMN_FIELDS[10] == "water_depth" and TerrainWindow.GAPS == 4, "column fields")
 	var v1 := PackedByteArray(); v1.resize(128 * 128 * 24)
 	v1.encode_float((7 * 128 + 5) * 24, 412.5); v1.encode_u32((7 * 128 + 5) * 24 + 20, 2 | (255 << 24))
 	var up := EditLayer.upgrade_v1(v1)
@@ -57,8 +65,20 @@ func _initialize() -> void:
 	var mixed := WorldIO.load_edits("test_world")
 	check(mixed.size() == 3 and mixed[Vector2i(8, 8)] == up, "a version 1 tile loads padded")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://worlds/test_world/tiles/8_8.edit"))
+	# A version 2 blob (32-byte cells) pads to the 84-byte cell with its gap words zero, and a version 2 file loads that way.
+	var v2 := PackedByteArray(); v2.resize(EditLayer.V2_BLOB_SIZE)
+	v2.encode_float((7 * 128 + 5) * 32, 412.5); v2.encode_u32((7 * 128 + 5) * 32 + 20, 2 | (255 << 24)); v2.encode_float((7 * 128 + 5) * 32 + 24, 0.75)
+	var up2 := EditLayer.upgrade_v2(v2)
+	var u2 := EditLayer.decode(up2, 5, 7)
+	check(up2.size() == EditLayer.BLOB_SIZE and up2.slice(EditLayer.cell_offset(5, 7), EditLayer.cell_offset(5, 7) + 32) == v2.slice((7 * 128 + 5) * 32, (7 * 128 + 5) * 32 + 32) \
+			and u2.surface == 412.5 and u2.loose == 0.75 and u2.gap_bottom[0] == 0.0 and u2.gap_top[3] == 0.0 and u2.gap_material[0] == 0, "v2 upgrade %s" % u2)
+	var old2 := FileAccess.open("user://worlds/test_world/tiles/8_8.edit", FileAccess.WRITE)
+	old2.store_32(2); old2.store_32(v2.size()); old2.store_buffer(v2.compress(FileAccess.COMPRESSION_ZSTD)); old2.close()
+	var mixed2 := WorldIO.load_edits("test_world")
+	check(mixed2.size() == 3 and mixed2[Vector2i(8, 8)] == up2, "a version 2 tile loads padded")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://worlds/test_world/tiles/8_8.edit"))
 	var saved := FileAccess.open("user://worlds/test_world/tiles/5_7.edit", FileAccess.READ)
-	check(saved.get_32() == 2 and saved.get_32() == EditLayer.BLOB_SIZE, "saved as version 2")
+	check(saved.get_32() == 3 and saved.get_32() == EditLayer.BLOB_SIZE, "saved as version 3")
 	saved.close()
 	var w2 := TerrainWindow.new(); w2.configure(p, 512, 1.0)
 	w2.center_tile = Vector2i(10, 20)

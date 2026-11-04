@@ -11,9 +11,18 @@ signal tiles_generated(tiles: Array[Vector2i])
 
 ## edit_mask is 1 where an edit overrides the generator (EditLayer); the detail pass writes 0, as it does to
 ## loose (m of loose dirt on the surface) and water_depth (m of spilled water on the ground).
-const FIELDS := ["surface", "bedrock_top", "clay_bottom", "clay_top", "water_surface", "material", "compaction", "saturation", "edit_mask", "loose", "water_depth"]
+## The column fields: what the sim and the collider bake bind (the tunnels design's columns without gaps).
+const COLUMN_FIELDS := ["surface", "bedrock_top", "clay_bottom", "clay_top", "water_surface", "material", "compaction", "saturation", "edit_mask", "loose", "water_depth"]
+## Tunnels: up to GAPS gaps per column, each a bottom and a top height (m), the loose on its floor (m) and a
+## material byte (0 air; a pillar later); all zero where a column was never tunnelled. The detail pass writes 0.
+const GAPS := 4
+const GAP_FIELDS := ["gap_bottom0", "gap_bottom1", "gap_bottom2", "gap_bottom3", "gap_top0", "gap_top1", "gap_top2", "gap_top3",
+		"gap_loose0", "gap_loose1", "gap_loose2", "gap_loose3", "gap_material0", "gap_material1", "gap_material2", "gap_material3"]
+const FIELDS := COLUMN_FIELDS + GAP_FIELDS
 ## The fields held as R32_SFLOAT metres; the rest are R8_UNORM bytes.
-const FLOAT_FIELDS := ["surface", "bedrock_top", "clay_bottom", "clay_top", "water_surface", "loose", "water_depth"]
+const FLOAT_FIELDS := ["surface", "bedrock_top", "clay_bottom", "clay_top", "water_surface", "loose", "water_depth",
+		"gap_bottom0", "gap_bottom1", "gap_bottom2", "gap_bottom3", "gap_top0", "gap_top1", "gap_top2", "gap_top3",
+		"gap_loose0", "gap_loose1", "gap_loose2", "gap_loose3"]
 const TILE := 128
 ## Heights are R32_SFLOAT metres above the hull, so a texel times HEIGHT_SCALE is metres.
 const HEIGHT_SCALE := 1.0

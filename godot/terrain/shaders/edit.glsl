@@ -17,9 +17,10 @@
 // Every stamp mode flags the slot of each cell it changes in `stats` (bit 0: TerrainSim's activity), and so
 // does apply for a cell whose blob holds loose dirt or water, so a pile re-entering the window resumes while
 // a plain edited tile does not wake the simulation.
-// A blob cell (i, j) is eight uints at (j * 128 + i) * 8: the five heights' float bits, then
+// A blob cell (i, j) is 21 uints at (j * 128 + i) * 21: the five heights' float bits, then
 // material | compaction << 8 | saturation << 16 | mask << 24, each byte round(unorm * 255), then loose's and
-// water_depth's float bits.
+// water_depth's float bits, then the tunnels' gap fields: four bottoms, four tops, four loose (float bits) and
+// gap_material0 | gap_material1 << 8 | gap_material2 << 16 | gap_material3 << 24.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -36,11 +37,28 @@ layout(set = 0, binding = 9, r8) uniform restrict image2D w_saturation;
 layout(set = 0, binding = 10, r8) uniform restrict image2D w_mask;
 layout(set = 0, binding = 11, r32f) uniform restrict image2D w_loose;
 layout(set = 0, binding = 12, r32f) uniform restrict image2D w_depth;
+// Tunnels: the gap fields (TerrainWindow.GAP_FIELDS), moved by pack and apply only.
+layout(set = 0, binding = 13, r32f) uniform restrict image2D w_gap_bottom0;
+layout(set = 0, binding = 14, r32f) uniform restrict image2D w_gap_bottom1;
+layout(set = 0, binding = 15, r32f) uniform restrict image2D w_gap_bottom2;
+layout(set = 0, binding = 16, r32f) uniform restrict image2D w_gap_bottom3;
+layout(set = 0, binding = 17, r32f) uniform restrict image2D w_gap_top0;
+layout(set = 0, binding = 18, r32f) uniform restrict image2D w_gap_top1;
+layout(set = 0, binding = 19, r32f) uniform restrict image2D w_gap_top2;
+layout(set = 0, binding = 20, r32f) uniform restrict image2D w_gap_top3;
+layout(set = 0, binding = 21, r32f) uniform restrict image2D w_gap_loose0;
+layout(set = 0, binding = 22, r32f) uniform restrict image2D w_gap_loose1;
+layout(set = 0, binding = 23, r32f) uniform restrict image2D w_gap_loose2;
+layout(set = 0, binding = 24, r32f) uniform restrict image2D w_gap_loose3;
+layout(set = 0, binding = 25, r8) uniform restrict image2D w_gap_material0;
+layout(set = 0, binding = 26, r8) uniform restrict image2D w_gap_material1;
+layout(set = 0, binding = 27, r8) uniform restrict image2D w_gap_material2;
+layout(set = 0, binding = 28, r8) uniform restrict image2D w_gap_material3;
 // A bore tick: m^3 cut or lifted in units of 1e-6, then 1 when it pumped; a scoop: loose-equivalent m^3 taken,
 // in units of 1e-6. Cleared before each counted stamp.
-layout(set = 0, binding = 13, std430) restrict buffer Counter { uint counter[2]; };
+layout(set = 0, binding = 29, std430) restrict buffer Counter { uint counter[2]; };
 // One activity word per window slot (slot y * slots + x), then TerrainSim's absorbed water.
-layout(set = 0, binding = 14, std430) restrict buffer Stats { uint stats[]; };
+layout(set = 0, binding = 30, std430) restrict buffer Stats { uint stats[]; };
 
 layout(push_constant, std430) uniform Params {
 	ivec2 cell;           // stamp centre (theta index wrapped, z index)
@@ -356,14 +374,14 @@ void main() {
 		return;
 	}
 	ivec2 t = (pc.tile % pc.slots) * TILE + g;
-	int i = (g.y * TILE + g.x) * 8;
+	int i = (g.y * TILE + g.x) * 21;
 	if (pc.mode == 1) {
-		int o = pc.slot * TILE * TILE * 8 + i;
+		int o = pc.slot * TILE * TILE * 21 + i;
 		uint mask = byte(imageLoad(w_mask, t).r);
 		// An unedited cell packs as zeros (mask 0, which apply skips), so a tile with a few pits compresses
 		// to kilobytes.
 		if (mask == 0u) {
-			for (int k = 0; k < 8; k++) {
+			for (int k = 0; k < 21; k++) {
 				down[o + k] = 0u;
 			}
 			return;
@@ -377,6 +395,20 @@ void main() {
 				| byte(imageLoad(w_saturation, t).r) << 16 | mask << 24;
 		down[o + 6] = floatBitsToUint(imageLoad(w_loose, t).r);
 		down[o + 7] = floatBitsToUint(imageLoad(w_depth, t).r);
+		down[o + 8] = floatBitsToUint(imageLoad(w_gap_bottom0, t).r);
+		down[o + 9] = floatBitsToUint(imageLoad(w_gap_bottom1, t).r);
+		down[o + 10] = floatBitsToUint(imageLoad(w_gap_bottom2, t).r);
+		down[o + 11] = floatBitsToUint(imageLoad(w_gap_bottom3, t).r);
+		down[o + 12] = floatBitsToUint(imageLoad(w_gap_top0, t).r);
+		down[o + 13] = floatBitsToUint(imageLoad(w_gap_top1, t).r);
+		down[o + 14] = floatBitsToUint(imageLoad(w_gap_top2, t).r);
+		down[o + 15] = floatBitsToUint(imageLoad(w_gap_top3, t).r);
+		down[o + 16] = floatBitsToUint(imageLoad(w_gap_loose0, t).r);
+		down[o + 17] = floatBitsToUint(imageLoad(w_gap_loose1, t).r);
+		down[o + 18] = floatBitsToUint(imageLoad(w_gap_loose2, t).r);
+		down[o + 19] = floatBitsToUint(imageLoad(w_gap_loose3, t).r);
+		down[o + 20] = byte(imageLoad(w_gap_material0, t).r) | byte(imageLoad(w_gap_material1, t).r) << 8
+				| byte(imageLoad(w_gap_material2, t).r) << 16 | byte(imageLoad(w_gap_material3, t).r) << 24;
 		return;
 	}
 	uint w5 = up[i + 5];
@@ -394,6 +426,22 @@ void main() {
 	imageStore(w_mask, t, vec4(1.0));
 	imageStore(w_loose, t, vec4(uintBitsToFloat(up[i + 6])));
 	imageStore(w_depth, t, vec4(uintBitsToFloat(up[i + 7])));
+	imageStore(w_gap_bottom0, t, vec4(uintBitsToFloat(up[i + 8])));
+	imageStore(w_gap_bottom1, t, vec4(uintBitsToFloat(up[i + 9])));
+	imageStore(w_gap_bottom2, t, vec4(uintBitsToFloat(up[i + 10])));
+	imageStore(w_gap_bottom3, t, vec4(uintBitsToFloat(up[i + 11])));
+	imageStore(w_gap_top0, t, vec4(uintBitsToFloat(up[i + 12])));
+	imageStore(w_gap_top1, t, vec4(uintBitsToFloat(up[i + 13])));
+	imageStore(w_gap_top2, t, vec4(uintBitsToFloat(up[i + 14])));
+	imageStore(w_gap_top3, t, vec4(uintBitsToFloat(up[i + 15])));
+	imageStore(w_gap_loose0, t, vec4(uintBitsToFloat(up[i + 16])));
+	imageStore(w_gap_loose1, t, vec4(uintBitsToFloat(up[i + 17])));
+	imageStore(w_gap_loose2, t, vec4(uintBitsToFloat(up[i + 18])));
+	imageStore(w_gap_loose3, t, vec4(uintBitsToFloat(up[i + 19])));
+	imageStore(w_gap_material0, t, vec4(float((up[i + 20] >> 0) & 255u) / 255.0));
+	imageStore(w_gap_material1, t, vec4(float((up[i + 20] >> 8) & 255u) / 255.0));
+	imageStore(w_gap_material2, t, vec4(float((up[i + 20] >> 16) & 255u) / 255.0));
+	imageStore(w_gap_material3, t, vec4(float((up[i + 20] >> 24) & 255u) / 255.0));
 	if (uintBitsToFloat(up[i + 6]) > 0.0 || uintBitsToFloat(up[i + 7]) > 0.0) {
 		flag(t);
 	}
