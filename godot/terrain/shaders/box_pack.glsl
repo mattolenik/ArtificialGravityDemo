@@ -6,7 +6,7 @@
 // (a full voxel over its whole height; a partial flagged hanging, or under solid with air under it, from
 // its ceiling, any other on its floor), merged with the stored runs outside the box's range, the
 // loose on each run converted back to m over the run's top; the top run's top to surface, its loose and
-// compaction, the gaps under it (at most four: beyond that the lowest two merge, the sliver between lost,
+// compaction, the gaps under it (at most four: beyond that the lowest two merge, the sliver between turned to loose on the merged gap's floor by its swell,
 // counted in box_stats[1024]), the material by the strata at the surface, the clay clamped to it, edit_mask
 // set, the tile's activity flagged in the edit layer's stats (so the settle pack saves it); the dirty flag
 // cleared. A column the box never changed is never packed, so its heights stay bit for bit.
@@ -63,6 +63,7 @@ layout(push_constant, std430) uniform Params {
 	float dtheta;
 	float h_max;
 	float pad0, pad1, pad2;
+	vec4 swell;  // the materials' swell factor, to 96 bytes
 } pc;
 
 #include "box_column.glslh"
@@ -77,8 +78,13 @@ int pcm[RUNS];
 int np = 0;
 bool over = false;
 
+Col col;  // the column being packed (read in main)
+
 void drop_run_1() {
-	pl[0] += pl[1];
+	// The solid between the two lowest gaps (run 1) becomes loose on the merged gap's floor by its material's
+	// swell: nothing is lost (VoxelColumn.pack).
+	float mid = 0.5 * (pb[1] + pt[1]);
+	pl[0] += pl[1] + (pt[1] - pb[1]) * (pc.R - mid) * pc.swell[material_at(mid, col)];
 	for (int i = 1; i < np - 1; i++) {
 		pb[i] = pb[i + 1];
 		pt[i] = pt[i + 1];
@@ -156,7 +162,7 @@ void main() {
 			flg[i] = (w1 >> 24) & 1u;
 		}
 	}
-	Col col = read_col(t);
+	col = read_col(t);
 	Runs st = runs_of(col);
 	float fk0 = float(k0);
 	float topk = float(k0 + K);

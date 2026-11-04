@@ -217,7 +217,7 @@ func _unpack(spawn: Vector2i) -> bool:
 			var cell := Vector2i(posmod(brick.x * VoxelBox.BRICK + x, _terrain.params.n_theta()), brick.y * VoxelBox.BRICK + z)
 			var col := _col_at(after, cell)
 			var vox := _column_vox(stack, cell)
-			var back := VoxelColumn.pack(vox, k0, col)
+			var back := VoxelColumn.pack(vox, k0, col, _terrain.materials.swell_factor)
 			worst = maxf(worst, absf(back.surface - col.surface))
 			if absf(back.surface - col.surface) > 1e-4 or back.gap_top[0] != 0.0 or absf(back.loose - col.loose) > 2.0 / VoxelColumn.FRACTION_ONE:
 				bad_pack += 1

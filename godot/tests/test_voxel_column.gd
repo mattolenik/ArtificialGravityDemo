@@ -114,11 +114,13 @@ func _initialize() -> void:
 	vox.solid[10] = 0; vox.solid[11] = 0; vox.solid[9] = 32768
 	p = VoxelColumn.pack(vox, 400, clay)
 	check(p.surface == 409.5 and p.clay_top == 409.5 and p.clay_bottom == 405.0 and p.bedrock_top == 300.0 and p.material == 1, "strata clamped %s" % p)
-	# test_cap: five gaps pack to four, the lowest two merged, flagged.
+	# test_cap: five gaps pack to four, the lowest two merged, flagged; the solid between them (402..403, dirt)
+	# becomes loose on the merged gap's floor by its material's swell (nothing is lost).
 	vox = VoxelColumn.unpack(col(399.0), 400, 16)
 	for k in [0, 2, 4, 6, 8, 10]: vox.solid[k] = ONE
-	p = VoxelColumn.pack(vox, 400, col(411.0))
-	check(p.overflow and p.surface == 411.0 and p.gap_bottom[0] == 409.0 and p.gap_top[0] == 410.0 and p.gap_bottom[3] == 401.0 and p.gap_top[3] == 404.0, "cap %s" % p)
+	p = VoxelColumn.pack(vox, 400, col(411.0), PackedFloat32Array([1.2, 1.35, 1.6, 1.6]))
+	check(p.overflow and p.surface == 411.0 and p.gap_bottom[0] == 409.0 and p.gap_top[0] == 410.0 and p.gap_bottom[3] == 401.0 and p.gap_top[3] == 404.0 \
+			and p.gap_loose[3] == f32(1.2 * (R - 402.5) / (R - 401.0)), "cap %s" % p)
 	# test_material_at: rock to bedrock_top inclusive, clay through the lens, dirt elsewhere.
 	check(VoxelColumn.material_at(299.0, plain) == 2 and VoxelColumn.material_at(300.0, plain) == 2 and VoxelColumn.material_at(300.5, plain) == 0, "rock")
 	check(VoxelColumn.material_at(350.0, plain) == 1 and VoxelColumn.material_at(352.0, plain) == 1 and VoxelColumn.material_at(352.01, plain) == 0 and VoxelColumn.material_at(349.9, plain) == 0, "clay and dirt")

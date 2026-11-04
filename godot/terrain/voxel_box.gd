@@ -53,7 +53,7 @@ const MESH_VERTS := 8192
 const MESH_INDS := MESH_VERTS * 6
 const MESH_CELLS := 21 * 21 * 64
 ## The Params block of box_unpack.glsl and box_pack.glsl, std430.
-const PC_BYTES := 80
+const PC_BYTES := 96
 const MODE_FREE := 0
 const MODE_MARK := 1
 const MODE_ALLOCATE := 2
@@ -675,6 +675,8 @@ func _pc(o: Vector3i, mode: int, old: Vector3i, count: int) -> PackedByteArray:
 	b.encode_float(56, params.radius)
 	b.encode_float(60, params.dtheta())
 	b.encode_float(64, params.h_sea + params.h_mtn())
+	for m in 4:
+		b.encode_float(80 + 4 * m, materials.swell_factor[m])
 	return b
 
 

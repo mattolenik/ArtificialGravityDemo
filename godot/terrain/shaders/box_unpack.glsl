@@ -67,7 +67,8 @@ layout(push_constant, std430) uniform Params {
 	float R;           // hull radius in m
 	float dtheta;      // rad per cell around
 	float h_max;
-	float pad0, pad1, pad2;  // to 80 bytes
+	float pad0, pad1, pad2;
+	vec4 swell;              // the materials' swell factor (the pack's), to 96 bytes
 } pc;
 
 #include "box_column.glslh"

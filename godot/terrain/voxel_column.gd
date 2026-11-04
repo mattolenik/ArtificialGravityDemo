@@ -119,7 +119,9 @@ static func unpack(col: Dictionary, k0: int, n: int) -> Dictionary:
 ## that range: a copy of col with surface, loose, the gaps, material (by the strata at the surface), compaction
 ## (the top loose's) and the clay clamped to the surface, plus "overflow": true when five or more gaps had to
 ## merge into four (the lowest two, the sliver between them lost).
-static func pack(vox: Dictionary, k0: int, col: Dictionary) -> Dictionary:
+## `swell` is the materials' swell factor (Materials.swell_factor), for the solid a fifth gap's merge turns to
+## loose; 1 for every material when empty.
+static func pack(vox: Dictionary, k0: int, col: Dictionary, swell := PackedFloat32Array()) -> Dictionary:
 	var R: float = col.R
 	var s: PackedInt32Array = vox.solid
 	var l: PackedInt32Array = vox.loose
@@ -188,7 +190,11 @@ static func pack(vox: Dictionary, k0: int, col: Dictionary) -> Dictionary:
 		out.overflow = true
 		var b: Array = gaps.pop_back()
 		var a: Array = gaps[-1]
-		gaps[-1] = [b[0], a[1], (a[2] * (R - a[0]) + b[2] * (R - b[0])) / (R - b[0])]
+		# The solid between the two (a sliver no fifth tunnel may keep) becomes loose on the merged gap's floor
+		# by its material's swell: nothing is lost.
+		var mid: float = 0.5 * (b[1] + a[0])
+		var sw: float = swell[material_at(mid, col)] if swell.size() > 0 else 1.0
+		gaps[-1] = [b[0], a[1], (a[2] * (R - a[0]) + b[2] * (R - b[0]) + sw * (a[0] - b[1]) * (R - mid)) / (R - b[0])]
 	out.surface = f32(runs[0][1])
 	out.loose = f32(runs[0][2] / (R - runs[0][1]))
 	out.compaction = runs[0][3]
