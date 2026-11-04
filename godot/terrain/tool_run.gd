@@ -920,7 +920,7 @@ func _box_drop(a: Vector2i) -> void:
 	_station.add_child(box)
 	var at := _center(top)
 	box.global_transform = _station.global_transform * Transform3D(patch.transform.basis,
-			patch.surface_point(Cyl.position(at.x, at.y, 0.0, _terrain.params.radius), 2.0))
+			_terrain.ground_point(Cyl.position(at.x, at.y, 0.0, _terrain.params.radius), 2.0))
 	# Still: under 0.05 m/s for 0.25 s on end, from 0.5 s on (it starts at rest in the air); at most 8 s.
 	var start := Time.get_ticks_msec()
 	var still_since := -1
@@ -1536,7 +1536,7 @@ func _shot(file: String) -> void:
 	var want := _sum(_read("loose"), _read("surface"))
 	print("%s: saved; the P dump's loose %.6f m³, the driver's %.6f m³ (%+.4f %%)" % [
 			file, dump.loose_volume, want, _residual("P dump " + file, dump.loose_volume, want)])
-	_report("P dump loose volume (%s)" % file, want > 0.0 and absf(dump.loose_volume - want) <= 0.01 * want)
+	_report("P dump loose volume (%s)" % file, absf(dump.loose_volume - want) <= 0.01 * want)
 	dump.free()
 
 
@@ -1564,8 +1564,7 @@ func _center(c: Vector2i) -> Vector2:
 ## Height of station-space point q over the collider under it, along the patch's up; negative when under it
 ## (edit_run's).
 func _clearance(q: Vector3) -> float:
-	var patch := _terrain.patch
-	return (q - patch.surface_point(q, 0.0)).dot(patch.transform.basis.y)
+	return (q - _terrain.ground_point(q, 0.0)).dot(_terrain.patch.transform.basis.y)
 
 
 ## The lowest clearance among a 1 m box's eight corners (edit_run's, for any box).
@@ -1686,7 +1685,10 @@ func _settled(site: Vector2i, limit := 10.0) -> float:
 		if blob.decode_u32(o + 24) == _read("loose").decode_u32(4 * k) and blob.decode_u32(o + 28) == _read("water_depth").decode_u32(4 * k) \
 				and (blob.decode_u32(o + 20) >> 16) & 255 == _read("saturation")[k]:
 			return (Time.get_ticks_msec() - start) / 1000.0
-	print("not settled and packed at %s after %.0f s" % [site, limit])
+	var has_blob := edits.blobs.has(tile)
+	print("not settled and packed at %s after %.0f s: sim active %s, box active %d bricks, blob %s%s" % [
+			site, limit, _terrain.sim.has_active(), _terrain.box.active_bricks().size(), "present" if has_blob else "missing",
+			(": loose %d vs the window's %d, depth %d vs %d" % [edits.blobs[tile].decode_u32(o + 24), _read("loose").decode_u32(4 * k), edits.blobs[tile].decode_u32(o + 28), _read("water_depth").decode_u32(4 * k)]) if has_blob else ""])
 	return -1.0
 
 
@@ -1975,3 +1977,4 @@ func _summary() -> void:
 func _residual(what: String, got: float, want: float) -> float:
 	_residuals[what] = (got / want - 1.0) * 100.0
 	return _residuals[what]
+

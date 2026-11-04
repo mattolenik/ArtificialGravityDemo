@@ -51,6 +51,14 @@ int slot_index(ivec3 s) {
 	return (s.z * 16 + s.y) * 16 + s.x;
 }
 
+// The box_stats word of the 16 m chunk (a brick column) of world cell c (theta wrapped, on the station): a
+// word per chunk slot, chunk mod 32 along each axis, after the slots and the counters (VoxelBox.CHUNK_WORDS).
+// Bit 0: a column in the chunk was packed (its mesh is stale); bit 1: a packed or unpacked column in it holds
+// a gap within the box's height range (the chunk is touched: drawn and collided by its mesh).
+int chunk_word(ivec2 c) {
+	return SLOTS + 3 + ((c.y / 16) % 32) * 32 + ((c.x / 16) % 32);
+}
+
 // The world cell of box column slot s (0..255 each) under origin o (bricks; o.x may be unwrapped), theta
 // wrapped; ok false when the row is off the station.
 ivec2 cell_of_slot(ivec2 s, ivec3 o, out bool ok) {

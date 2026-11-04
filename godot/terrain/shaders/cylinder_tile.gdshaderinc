@@ -21,6 +21,13 @@ uniform int window_size;
 // (theta, z) of the centre and the half extents, rad and m, of the area a finer level draws. Zero half
 // extents (the default) discard nothing.
 uniform vec4 hole;
+// The voxel box's chunks drawn by their meshes (the tunnels design): a byte per 16 m chunk slot of the
+// window (chunk mod 32 along each axis), the station-local z of row 0, the box's top (a chunk is drawn by
+// its mesh only under it) and the chunks around the circumference. Unset (black) for the far ring.
+uniform sampler2D chunk_mask : hint_default_black, filter_nearest;
+uniform float z0 = 0.0;
+uniform float box_top = 1e9;
+uniform int n_chunks = 1;
 
 // Station-local (theta, z) of the fragment, for the hole.
 varying vec2 theta_z;
@@ -90,4 +97,34 @@ bool in_hole(vec2 p, float margin) {
 vec3 unbend_normal(float x, vec3 n) {
 	float a = (framed(x, 0.0).x + 0.5) * cell * dtheta;
 	return vec3(n.x * cos(a) - n.y * sin(a), n.x * sin(a) + n.y * cos(a), n.z);
+}
+
+// The signed Chebyshev distance in cells from station-local (theta, z) p to the nearest drawn chunk of the
+// voxel box (negative inside one), over the nine chunks around p's; 1e9 with none, or at a ground height h
+// over the box's top. The ground tile sinks a quarter cell within 2 cells of a chunk and is discarded within
+// 1: the chunk's mesh reaches 2 cells past it, over the sunk ring.
+float chunk_dist(vec2 p, float h) {
+	if (h >= box_top) {
+		return 1e9;
+	}
+	vec2 cf = vec2(p.x / (dtheta * 16.0), (p.y - z0) / 16.0);
+	ivec2 c = ivec2(floor(cf));
+	ivec2 ms = textureSize(chunk_mask, 0);
+	float best = 1e9;
+	for (int dy = -1; dy <= 1; dy++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			ivec2 n = c + ivec2(dx, dy);
+			if (n.y < 0) {
+				continue;
+			}
+			ivec2 w = ivec2((n.x % n_chunks + n_chunks) % n_chunks, n.y);
+			if (texelFetch(chunk_mask, w % ms, 0).r < 0.5) {
+				continue;
+			}
+			vec2 l = (cf - vec2(n)) * 16.0;
+			vec2 e = max(-l, l - 16.0);
+			best = min(best, max(e.x, e.y));
+		}
+	}
+	return best;
 }

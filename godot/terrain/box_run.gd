@@ -32,6 +32,16 @@
 ## rock (the noise report's rock site): a scoop on the first cell within 6 of the player's cell + (0, 4)
 ##    whose ball footprint is bare rock (every cell's surface at its bedrock_top) holds nothing and changes
 ##    no surface; the footprint's cells and their top voxels are printed.
+## tunnel (T, flat ground, the pit and the tunnel inside one chunk): scoops over a 2 x 2 pit until it is 3 m
+##    deep (a ball on a cell's centre clears that column and slivers of its neighbours: a walkable shaft or
+##    tunnel takes two scoops abreast), the player teleported into it, 28 scoops along +z into its wall, two
+##    abreast, two rows high and every half metre (a tunnel 2 m wide, 2.5 m tall, 4 m long under a roof half a metre
+##    thick): the wall's chunk is touched and its mesh lands within 1 s (a ChunkMesh with faces) under an
+##    unchanged surface (the roof top); the player walks into the tunnel by W for 2 s with one more scoop at
+##    its end half way (a remesh under the feet): never held, the feet over ground every frame
+##    (Terrain.covered, and a ray down from the feet within 0..0.3 m), at least 3 m walked; a shot from inside
+##    looking back out (user://debug/box_tunnel.png); the remesh lists' GPU time against 0.5 ms a chunk and the
+##    trimesh build CPU ms against 2 ms, printed.
 ## The GPU time of the unpack lists (the first fill, the moves, the reload) and the pack lists is printed
 ## against 0.5 ms per brick allocated.
 extends "res://terrain/tool_run.gd"
@@ -44,36 +54,21 @@ func _route() -> void:
 	var spawn := p.cell_of(_terrain.maps.spawn.x, _terrain.maps.spawn.y)
 	await _frames(10)
 	_listening = true
-	_phase = "unpack"
-	if not await _unpack(spawn):
-		return
-	_phase = "move"
-	if not await _move(spawn):
-		return
-	_phase = "seam"
-	if not await _seam_move(spawn):
-		return
-	_phase = "reload"
-	if not await _reload(spawn + Vector2i(0, 40)):
-		return
-	_phase = "shovel"
-	if not await _shovel_box(spawn + Vector2i(0, 80)):
-		return
-	_phase = "rock"
-	if not await _rock_box():
-		return
-	_phase = "sand"
-	if not await _sand(spawn + Vector2i(0, -40)):
-		return
-	_phase = "edge"
-	if not await _edge(spawn):
-		return
-	_phase = "cave"
-	if not await _cave(spawn + Vector2i(0, -80)):
-		return
-	_phase = "pickup"
-	if not await _pickup_box(spawn + Vector2i(40, 0)):
-		return
+	# BOX_PHASE=<name> in the environment runs that phase alone.
+	var only := OS.get_environment("BOX_PHASE")
+	var t_site := spawn + Vector2i(0, 120)
+	@warning_ignore("integer_division")
+	var phases := {
+		"unpack": _unpack.bind(spawn), "move": _move.bind(spawn), "seam": _seam_move.bind(spawn), "reload": _reload.bind(spawn + Vector2i(0, 40)),
+		"shovel": _shovel_box.bind(spawn + Vector2i(0, 80)), "rock": _rock_box, "sand": _sand.bind(spawn + Vector2i(0, -40)), "edge": _edge.bind(spawn),
+		"cave": _cave.bind(spawn + Vector2i(0, -80)), "pickup": _pickup_box.bind(spawn + Vector2i(40, 0)),
+		"tunnel": _tunnel.bind(Vector2i(t_site.x / 16 * 16 + 8, t_site.y / 16 * 16 + 5))}
+	for phase: String in phases:
+		if not only.is_empty() and phase != only:
+			continue
+		_phase = phase
+		if not await phases[phase].call():
+			return
 	_phase = ""
 	await _frames(6)
 	_box_summary()
@@ -375,6 +370,14 @@ func _pickup_box(a: Vector2i) -> bool:
 		return _quit("The auger did not stop in 40 s.")
 	var waited := await _settled(auger.spoil_cell())
 	var cells := _box(a, 12)
+	var gb := _read("gap_bottom0")
+	var gt := _read("gap_top0")
+	var sf := _read("surface")
+	var gaps := {}
+	for x in cells:
+		if _f(gt, x) > _f(gb, x):
+			gaps[x] = "[%.3f, %.3f] under %.3f" % [_f(gb, x), _f(gt, x), _f(sf, x)]
+	print("DBG after the bore: touched %s; columns with a gap over the box of 12: %s" % [_terrain.box.touched.keys(), gaps])
 	var w_loose0 := _vol(_read("loose"), _read("surface"), cells) + _gap_loose(cells)
 	var w_solid0 := _solid_volume(cells)
 	var b0 := _box_volumes(cells)
@@ -566,6 +569,119 @@ func _box_summary() -> void:
 		print("  %-11s per list %s" % [pass_name, Smoke._stat(ms, BOX_BUDGET * bricks)])
 		if not ms.is_empty():
 			print("  %-11s the longest list per brick allocated %.4f ms (budget %.2f)" % [pass_name, ms.max() / bricks, BOX_BUDGET])
-	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup"]:
+	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup", "tunnel"]:
 		var st := _stat_of(phase)
+		if st.cpu.is_empty():
+			continue
 		print("  %-6s %5.1f s; %s; %d reads" % [phase, st.time, Smoke._times(st.cpu, st.gpu), st.reads])
+
+
+## Phase tunnel at T (see the header). False after quitting on a timeout.
+func _tunnel(c: Vector2i) -> bool:
+	if not await _teleport(c + Vector2i(5, 0)):
+		return false
+	var p := _terrain.params
+	var box := _terrain.box
+	# A 2 x 2 pit: a ball on a cell's centre clears that column and slivers of its neighbours, so a walkable
+	# shaft or tunnel takes two scoops abreast.
+	var pit: Array[Vector2i] = [c, c + Vector2i(1, 0), c + Vector2i(0, 1), c + Vector2i(1, 1)]
+	var top := _f(_read("surface"), c)
+	var scoops := 0
+	while top - _f(_read("surface"), c) < 3.0 and scoops < 24:
+		for x in pit:
+			await _scoop(x)
+			scoops += 1
+		await _frames(15)
+	var depth := top - _f(_read("surface"), c)
+	var waited := await _settled(c)
+	# Into the pit, over its first cell: the tunnel's floor is cut from that cell's floor.
+	_terrain.teleport((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5)
+	if not await _settled_patch():
+		return false
+	var floor_h := _f(_read("surface"), c) + _f(_read("loose"), c)
+	var s0 := _read("surface")
+	var tunnel: Array[Vector2i] = []
+	for row in range(2, 6):
+		tunnel.append(c + Vector2i(0, row))
+		tunnel.append(c + Vector2i(1, row))
+	# A ball at x cells across the pit's first column, d cells along +z from its centre, h over the floor.
+	var aim := func(x: int, d: float, h: float) -> Vector3:
+		return Cyl.position((c.x + x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5 + d, floor_h + h, p.radius)
+	var held0 := _tools.held
+	# Two columns and two rows of balls, 1 m and 1.5 m over the floor, every half metre along (a ball a metre
+	# leaves scallops the feet climb): a tunnel 2 m wide and 2.5 m tall under a roof half a metre thick.
+	var balls := 0
+	for k in 7:
+		for x in 2:
+			await _scoop_at(aim.call(x, 1.5 + 0.5 * k, 1.0))
+			await _scoop_at(aim.call(x, 1.5 + 0.5 * k, 1.5))
+			balls += 2
+	var ch := VoxelBox.chunk_of_cell(c + Vector2i(0, 3))
+	var start := Time.get_ticks_msec()
+	var landed := -1.0
+	while Time.get_ticks_msec() - start < 3000:
+		await get_tree().process_frame
+		if _chunk_faces(ch) > 0:
+			landed = (Time.get_ticks_msec() - start) / 1000.0
+			break
+	var s1 := _read("surface")
+	var roof := tunnel.all(func(x: Vector2i) -> bool: return _f(s1, x) == _f(s0, x))
+	print("tunnel: %d scoops over the 2 x 2 pit at %s, %.2f m deep, settled in %.2f s; %d scoops into its +z wall at %.2f and %.2f m took %.6f m³; chunk %s touched: %s, its mesh landed in %.2f s with %d faces; the surface over the tunnel's cells unchanged: %s" % [
+			scoops, c, depth, waited, balls, floor_h + 1.0, floor_h + 1.5, _tools.held - held0, ch, box.touched.has(ch), landed, _chunk_faces(ch), roof])
+	_report("a tunnel's chunk is touched and meshed within 1 s under an unchanged surface", depth >= 3.0 and waited >= 0.0 and _tools.held > held0 and landed >= 0.0 and landed <= 1.0 and roof)
+	# The collider's hole over the chunk: an edit bake after the mask changed.
+	await _frames(20)
+	_face(Vector3(0, 0, 1))
+	await _frames(2)
+	var z0 := _station.to_local(_player.global_position).z
+	var remeshes0 := box.remeshes
+	var held := 0
+	var uncovered := 0
+	var low := INF
+	var high := -INF
+	_press(KEY_W, true)
+	for i in 120:
+		await get_tree().process_frame
+		if i == 60:
+			_tools.scoop(aim.call(0, 5.5, 1.0))
+		held += int(_player.process_mode == Node.PROCESS_MODE_DISABLED)
+		uncovered += int(not _terrain.covered(_station.to_local(_player.global_position - _player.up_direction)))
+		var hit := _ray_down()
+		if hit.is_empty():
+			uncovered += 1
+			continue
+		var clear: float = hit.position.distance_to(_player.global_position) - 1.0
+		low = minf(low, clear)
+		high = maxf(high, clear)
+	_press(KEY_W, false)
+	var walked := _station.to_local(_player.global_position).z - z0
+	print("tunnel: walked %.2f m along +z in 2 s; held %d frames, the feet uncovered %d frames, the ray down from the feet %.3f..%.3f m; %d remeshes landed on the way" % [
+			walked, held, uncovered, low, high, box.remeshes - remeshes0])
+	_report("the player walks the tunnel on its trimesh through a remesh", walked >= 3.0 and held == 0 and uncovered == 0 and low >= -0.05 and high <= 0.3 and box.remeshes - remeshes0 >= 1)
+	_face(Vector3(0, 0, -1))
+	await _shot("box_tunnel")
+	var ms: Array[float] = []
+	for t in _timed:
+		if t.name == "box_mesh":
+			ms.append(t.ms)
+	var build := 0.0
+	for st: Dictionary in box.touched.values():
+		if st.node != null:
+			build = maxf(build, st.node.build_ms)
+	print("tunnel: the remesh lists %s; the longest trimesh build %.2f ms (budget 2)" % [Smoke._stat(ms, 0.5), build])
+	return true
+
+
+## The faces of a chunk's landed mesh, 0 with none.
+func _chunk_faces(ch: Vector2i) -> int:
+	var st: Dictionary = _terrain.box.touched.get(ch, {})
+	return st.node.faces if not st.is_empty() and st.node != null else 0
+
+
+## The first hit under the player within 3 m (the player excluded), global.
+func _ray_down() -> Dictionary:
+	var from := _player.global_position
+	var ray := PhysicsRayQueryParameters3D.create(from, from - _player.up_direction * 3.0)
+	ray.exclude = [_player.get_rid()]
+	return _player.get_world_3d().direct_space_state.intersect_ray(ray)
+

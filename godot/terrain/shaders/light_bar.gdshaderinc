@@ -11,6 +11,11 @@ global uniform vec2 light_bar_edge;
 varying vec3 bar_up;
 
 void light() {
-	float day = smoothstep(light_bar_edge.x, light_bar_edge.y, cos(theta_z.x - light_bar_theta));
-	DIFFUSE_LIGHT += day * clamp(dot(NORMAL, normalize(bar_up)), 0.0, 1.0) * ATTENUATION * LIGHT_COLOR;
+	if (LIGHT_IS_DIRECTIONAL) {
+		float day = smoothstep(light_bar_edge.x, light_bar_edge.y, cos(theta_z.x - light_bar_theta));
+		DIFFUSE_LIGHT += day * clamp(dot(NORMAL, normalize(bar_up)), 0.0, 1.0) * ATTENUATION * LIGHT_COLOR;
+	} else {
+		// The headlamp (the tunnels design): an ordinary light.
+		DIFFUSE_LIGHT += clamp(dot(NORMAL, LIGHT), 0.0, 1.0) * ATTENUATION * LIGHT_COLOR;
+	}
 }

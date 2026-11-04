@@ -153,6 +153,16 @@ void main() {
 		Col col = read_col(t);
 		sat = uint(col.sat);
 		column_voxels(col, k0);
+		if (pc.mode == 3) {
+			// A gap within the box's range touches the chunk (its mesh is owed).
+			Runs r = runs_of(col);
+			for (int j = 0; j < r.n - 1; j++) {
+				if (r.b[j] < float(k0 + K) && r.t[j + 1] > float(k0)) {
+					atomicOr(box_stats[chunk_word(c)], 3u);
+					break;
+				}
+			}
+		}
 	} else {
 		clear_column();
 	}
@@ -194,3 +204,4 @@ void main() {
 		}
 	}
 }
+// (A change to box_column.glslh does not reimport this file: edit it to pick the include up.)

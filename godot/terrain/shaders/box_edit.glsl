@@ -385,8 +385,10 @@ void tamp_column(ivec2 cxz) {
 		if (room <= 0) {
 			continue;
 		}
-		uint q = min(c.fs[i], uint(float(room) * vol(pc.first.z + i - 1) / vol(pc.first.z + i)));
-		uint qd = uint(roundh(float(q) * vol(pc.first.z + i) / vol(pc.first.z + i - 1)));
+		// The voxel under fills exactly, or the whole piece moves: a count of rounding between two partials
+		// would pack as a gap.
+		uint qd = min(uint(room), uint(roundh(float(c.fs[i]) * vol(pc.first.z + i) / vol(pc.first.z + i - 1))));
+		uint q = qd < uint(room) ? c.fs[i] : min(c.fs[i], uint(roundh(float(qd) * vol(pc.first.z + i - 1) / vol(pc.first.z + i))));
 		c.fs[i] -= q;
 		c.fs[i - 1] = min(c.fs[i - 1] + qd, uint(ONE));
 		if (c.fs[i] == 0u) {
@@ -729,3 +731,4 @@ void main() {
 		spoil_column(ck.xy);
 	}
 }
+// (A change to box_column.glslh does not reimport this file: edit it to pick the include up.)

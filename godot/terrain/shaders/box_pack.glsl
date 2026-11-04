@@ -241,8 +241,17 @@ void main() {
 	float material = col.bt >= surf - 0.01 ? 2.0 : (ct >= surf - 0.01 ? 1.0 : 0.0);
 	imageStore(w_material, t, vec4(material / 255.0));
 	imageStore(w_mask, t, vec4(1.0));
+	// The chunk's word: packed, and touched when a gap lies within the box's range.
+	uint cw = 1u;
+	for (int i = 0; i < np - 1; i++) {
+		if (pt[i] < topk && pb[i + 1] > fk0) {
+			cw |= 2u;
+		}
+	}
+	atomicOr(box_stats[chunk_word(c)], cw);
 	flag(t);
 	if (over) {
 		atomicAdd(box_stats[SLOTS], 1u);
 	}
 }
+// (A change to box_column.glslh does not reimport this file: edit it to pick the include up.)

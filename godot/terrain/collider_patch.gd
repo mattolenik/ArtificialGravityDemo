@@ -63,6 +63,8 @@ var _issued_zone := NO_HOLE
 var _n_theta := 0
 ## Set by the first set_frame; until then the patch has no ground.
 var _framed := false
+## The voxel box's top, m (Terrain): a touched chunk's mesh is the ground under it, the bake NaN there.
+var box_top := INF
 
 
 func _init() -> void:
@@ -229,9 +231,9 @@ static func half_n(mid: int, p: WorldParams) -> int:
 func _bake(window: TerrainWindow, cell: Vector2i, n: int, staging: RID, set: RID, stamp: String, hole: bool, landed: Callable) -> void:
 	var p := window.params
 	var first := window.wanted_origin(window.center_tile)
-	# The Params block of collider_bake.glsl: std430, 64 bytes.
+	# The Params block of collider_bake.glsl: std430, 80 bytes.
 	var b := PackedByteArray()
-	b.resize(64)
+	b.resize(80)
 	b.encode_s32(0, cell.x)
 	b.encode_s32(4, cell.y)
 	b.encode_s32(8, first.x)
@@ -249,6 +251,7 @@ func _bake(window: TerrainWindow, cell: Vector2i, n: int, staging: RID, set: RID
 	b.encode_s32(52, zone.y)
 	b.encode_s32(56, HOLE_HALF if hole else -1)
 	b.encode_float(60, p.h_sea + p.h_mtn())
+	b.encode_float(64, box_top)
 	_rd.capture_timestamp(stamp + "_begin")
 	var list := _rd.compute_list_begin()
 	_rd.compute_list_bind_compute_pipeline(list, _pipeline)
@@ -326,8 +329,8 @@ func _setup_rd(window: TerrainWindow) -> bool:
 	return true
 
 
-## collider_bake.glsl's set 0: the window's surface, the macro surface, staging as the output, and the
-## window's loose.
+## collider_bake.glsl's set 0: the window's surface, the macro surface, staging as the output, the window's
+## loose and its chunk mask.
 func _uniform_set(window: TerrainWindow, staging: RID) -> RID:
 	var w := RDUniform.new()
 	w.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
@@ -346,5 +349,9 @@ func _uniform_set(window: TerrainWindow, staging: RID) -> RID:
 	l.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
 	l.binding = 3
 	l.add_id(window.texture_rid("loose"))
-	var uniforms: Array[RDUniform] = [w, m, o, l]
+	var c := RDUniform.new()
+	c.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+	c.binding = 4
+	c.add_id(window.texture_rid("chunk_mask"))
+	var uniforms: Array[RDUniform] = [w, m, o, l, c]
 	return _rd.uniform_set_create(uniforms, _shader, 0)

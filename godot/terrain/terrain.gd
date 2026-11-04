@@ -67,6 +67,8 @@ var _live := false
 var _body: Node3D
 ## Set by teleport() while the body waits, held, for a patch at its new place; cleared once stood on one.
 var _teleporting := false
+## The box's top as last sent to the ground tiles' material and the patch.
+var _box_top := -1
 ## Where the viewer was stood at the spawn site, in station space.
 var _spawn_at: Vector3
 ## Seconds since the edits were last saved.
@@ -110,6 +112,9 @@ func _ready() -> void:
 	sim.setup(window, window.edits)
 	box = VoxelBox.new()
 	box.setup(window, window.edits, materials, tool_params)
+	box.chunk_root = self
+	box.chunk_material = _chunk_material()
+	box.on_mask_changed = _on_chunk_mask
 	# Before the first move_to, so the spawn tiles get their edits in their first dispatch.
 	window.edits.blobs = WorldIO.load_edits(world_name)
 	if not window.edits.blobs.is_empty():
@@ -160,6 +165,10 @@ static func make_tiles(parent: Node3D, w: TerrainWindow) -> Array[MeshInstance3D
 	ground.set_shader_parameter("material_color", preload("res://terrain/materials.tres").color)
 	ground.set_shader_parameter("n_theta", w.params.n_theta())
 	ground.set_shader_parameter("saturation_tex", w.texture_rd("saturation"))
+	ground.set_shader_parameter("chunk_mask", w.texture_rd("chunk_mask"))
+	ground.set_shader_parameter("z0", -w.params.length / 2.0)
+	@warning_ignore("integer_division")
+	ground.set_shader_parameter("n_chunks", w.params.n_theta() / VoxelBox.CHUNK)
 	var water := _material(preload("res://terrain/shaders/water.gdshader"), w)
 	var tiles: Array[MeshInstance3D] = []
 	for i in w.slots * w.slots:
@@ -253,6 +262,11 @@ func _process(delta: float) -> void:
 	box.follow(q + Vector3(q.x, q.y, 0.0).normalized())
 	box.step(delta)
 	box.pack_dirty(sim.stats_reads)
+	box.remesh_dirty(Time.get_ticks_msec() / 1000.0)
+	if box.exists() and box.top() != _box_top:
+		_box_top = box.top()
+		_tiles[0].material_override.set_shader_parameter("box_top", float(_box_top))
+		patch.box_top = float(_box_top)
 	# Settled tiles are packed after the step's lists, so the pack sees the last apply.
 	var settled := sim.step(window, delta)
 	if not settled.is_empty():
@@ -266,9 +280,9 @@ func _process(delta: float) -> void:
 	patch.issue_again(window)
 	if patch.needs_rebuild(p):
 		patch.rebuild(window, Cyl.theta_of(p), p.z)
-	_hold_body(not patch.covers(station.to_local(_body.global_position)))
+	_hold_body(not covered(station.to_local(_body.global_position)))
 	for b: Node3D in get_tree().get_nodes_in_group(GROUND_GROUP):
-		_hold(b, not patch.covers(station.to_local(b.global_position)))
+		_hold(b, not covered(station.to_local(b.global_position)))
 
 
 ## With persist_edits, packs the active tiles and the resident tiles holding an unpacked stamp synchronously
@@ -327,7 +341,7 @@ func teleport(theta: float, z: float) -> void:
 		return
 	var p := Cyl.position(theta, z, height_at(theta, z) + 2.0, params.radius)
 	if patch.covers(p):
-		p = patch.surface_point(p, 2.0)
+		p = ground_point(p, 2.0)
 	else:
 		_teleporting = true
 		_hold_body(true)
@@ -349,7 +363,7 @@ func _on_live(_center: Vector2) -> void:
 	if not patch.covers(p):
 		return
 	_teleporting = false
-	_body.global_position = station.global_transform * patch.surface_point(p, 2.0)
+	_body.global_position = station.global_transform * ground_point(p, 2.0)
 
 
 ## Moves the window to the tiles around center and points every tile node at its tile, if center changed.
@@ -486,6 +500,50 @@ func touch(cell: Vector2i, reach: int, now := true) -> void:
 	_last_active = false
 	if now:
 		_collider_touch(cell, reach)
+
+
+## Whether station-space p is over ground that collides: the patch covers it, or a touched chunk of the box
+## holds the column under it with its mesh landed (the tunnels design).
+func covered(p: Vector3) -> bool:
+	return patch.covers(p) or box.covers(p)
+
+
+## The station-space point `lift` m over the ground under station-space p: the patch's surface where it has
+## one; where it has none (over a chunk drawn by its mesh the bake is NaN) the first collider a ray down
+## from 20 m over the macro surface meets within 100 m, the body itself excluded; p when nothing is under it.
+func ground_point(p: Vector3, lift: float) -> Vector3:
+	if patch.covers(p):
+		var q := patch.surface_point(p, lift)
+		if q.is_finite():
+			return q
+	var theta := Cyl.theta_of(p)
+	var up := Vector3(-sin(theta), cos(theta), 0.0)
+	var from := Cyl.position(theta, p.z, height_at(theta, p.z) + 20.0, params.radius)
+	var ray := PhysicsRayQueryParameters3D.create(station.global_transform * from, station.global_transform * (from - up * 100.0))
+	if _body is PhysicsBody3D:
+		ray.exclude = [(_body as PhysicsBody3D).get_rid()]
+	var hit := get_world_3d().direct_space_state.intersect_ray(ray)
+	if hit.is_empty():
+		return p
+	return station.to_local(hit.position) + up * lift
+
+
+## The touched chunks' material (chunk.gdshader): the tiles' colours and speckle on the box's meshes.
+func _chunk_material() -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = preload("res://terrain/shaders/chunk.gdshader")
+	m.set_shader_parameter("material_color", materials.color)
+	m.set_shader_parameter("dtheta", params.dtheta())
+	m.set_shader_parameter("z0", -params.length / 2.0)
+	m.set_shader_parameter("n_theta", params.n_theta())
+	return m
+
+
+## A chunk's mesh landed or went: the collider over it follows (the bake takes NaN there).
+func _on_chunk_mask(ch: Vector2i) -> void:
+	@warning_ignore("integer_division")
+	var half := VoxelBox.CHUNK / 2
+	_collider_touch(Vector2i(posmod(ch.x * VoxelBox.CHUNK + half, params.n_theta()), ch.y * VoxelBox.CHUNK + half), half)
 
 
 ## Keeps tool stamps and the simulation from moving loose dirt or water into the cells within radius cells

@@ -29,6 +29,7 @@ layout(set = 0, binding = 0, r32f) uniform restrict readonly image2D w_surface; 
 layout(set = 0, binding = 1) uniform sampler2D m_surface;  // the macro surface; texelFetch only
 layout(set = 0, binding = 2, r32f) uniform restrict writeonly image2D o_patch;
 layout(set = 0, binding = 3, r32f) uniform restrict readonly image2D w_loose;  // the window's loose dirt, m
+layout(set = 0, binding = 4, r8) uniform restrict readonly image2D chunk_mask;  // the window's chunks drawn by their box meshes, a byte per 16 m chunk slot
 
 layout(push_constant, std430) uniform Params {
 	ivec2 center;      // centre cell (theta index wrapped, z index)
@@ -44,7 +45,9 @@ layout(push_constant, std430) uniform Params {
 	ivec2 hole_cell;   // centre cell of the hole (theta wrapped, z)
 	int hole_half;     // the hole's half width in cells; -1 for no hole
 	float h_max;       // the highest ground, h_sea + h_mtn
-} pc;  // 64 bytes
+	float box_top;     // the voxel box's top, m: a chunk's mesh is the ground only under it
+	float pad1, pad2, pad3;
+} pc;  // 80 bytes
 
 const int TILE = 128;
 const float NONE = -1e30;
@@ -142,6 +145,14 @@ void main() {
 			&& abs(wrap(pc.center.x + best_k - pc.hole_cell.x + half_around, pc.n_theta) - half_around) <= pc.hole_half
 			&& abs(row - pc.hole_cell.y) <= pc.hole_half) {
 		best = uintBitsToFloat(0x7fc00000u);  // NaN: a hole
+	}
+	// A touched chunk of the voxel box with its mesh landed: NaN as well, its trimesh is the ground there
+	// (the tunnels design).
+	if (!isnan(best) && row >= 0 && surface(best_k, row) < pc.box_top) {
+		ivec2 cc = ivec2(wrap(pc.center.x + best_k, pc.n_theta), row) / 16;
+		if (imageLoad(chunk_mask, cc % imageSize(chunk_mask)).r > 0.5) {
+			best = uintBitsToFloat(0x7fc00000u);
+		}
 	}
 	imageStore(o_patch, ij, vec4(best));
 }

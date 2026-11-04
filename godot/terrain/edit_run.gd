@@ -154,7 +154,7 @@ func _route() -> void:
 	_box.setup(1.0, 8.0, 0.0)
 	_station.add_child(_box)
 	var spinward := patch.transform.basis.x
-	_box.global_position = _station.to_global(patch.surface_point(_local(_player) + spinward * 2.0, 3.0))
+	_box.global_position = _station.to_global(_terrain.ground_point(_local(_player) + spinward * 2.0, 3.0))
 	_box.global_rotation = _station.global_rotation
 	await get_tree().create_timer(2.0).timeout
 	var box_slept := _box.sleeping
@@ -220,7 +220,7 @@ func _route() -> void:
 		print("survived the scroll: FAILED, %s then %s" % [dug, back])
 		_ok = false
 	var pit := _cell_point(c, dug[0].h)
-	var h_pit := Cyl.height_of(patch.surface_point(pit, 0.0), p.radius)
+	var h_pit := Cyl.height_of(_terrain.ground_point(pit, 0.0), p.radius)
 	var ground: float = back[0].h + back[0].loose
 	print("pit centre: collider %.3f m, window %.3f m surface + %.3f m loose (the caved walls' rubble)" % [h_pit, back[0].h, back[0].loose])
 	_report("collider has the pit", absf(h_pit - ground) <= 0.3 and _in_hole(pit))
@@ -252,7 +252,7 @@ func _route() -> void:
 func _rim(c: Vector2i) -> void:
 	var patch := _terrain.patch
 	var start := _cell_point(c, 0.0) + Vector3(0, 0, RIM_START)
-	_box.global_transform = _station.global_transform * Transform3D(patch.transform.basis, patch.surface_point(start, 0.55))
+	_box.global_transform = _station.global_transform * Transform3D(patch.transform.basis, _terrain.ground_point(start, 0.55))
 	_box.linear_velocity = _station.global_basis * Vector3(0, 0, -RIM_SPEED)
 	_box.angular_velocity = Vector3.ZERO
 	var slick := PhysicsMaterial.new()
@@ -415,7 +415,7 @@ func _cell_point(cell: Vector2i, h: float) -> Vector3:
 ## Height of station-space point q over the collider under it, along the patch's up; negative when under it.
 func _clearance(q: Vector3) -> float:
 	var patch := _terrain.patch
-	return (q - patch.surface_point(q, 0.0)).dot(patch.transform.basis.y)
+	return (q - _terrain.ground_point(q, 0.0)).dot(patch.transform.basis.y)
 
 
 ## The lowest clearance among the box's eight corners.

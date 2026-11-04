@@ -104,6 +104,14 @@ func _setup_rd() -> void:
 		u.binding = i
 		u.add_id(rid)
 		window_uniforms.append(u)
+	# The mask of the voxel box's chunks drawn and collided by their meshes (VoxelBox._set_mask): a byte per
+	# 32 m chunk slot of the window, 0 until a mesh lands.
+	@warning_ignore("integer_division")
+	var chunks := maxi(size / VoxelBox.CHUNK, 1)
+	var mask := PackedByteArray()
+	mask.resize(chunks * chunks)
+	_textures["chunk_mask"] = _rd.texture_create(_format(chunks, chunks, RenderingDevice.DATA_FORMAT_R8_UNORM,
+			usage | RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT), RDTextureView.new(), [mask])
 	_sets = [macro_set, _rd.uniform_set_create(window_uniforms, _shader, 1)]
 
 

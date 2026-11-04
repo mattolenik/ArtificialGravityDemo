@@ -61,5 +61,18 @@ func _initialize() -> void:
 	b.drop(b.active_bricks())
 	b.activate_cells([Vector2i(100, 200)])
 	check(b.active_bricks().size() == 4 and b.is_active(Vector3i(6, 12, 23)) and b.is_active(Vector3i(6, 12, 26)), "activate_cells wakes a column's four bricks")
+	# Chunks of 16 m (the tunnels design's drawing and colliding; a brick column): the chunk of a cell, and the
+	# touched chunks from the chunk words the pack and the unpack flag (a word per chunk slot, chunk mod 32
+	# along each axis; bit 1 a column with a gap in the box's height range), resolved to world chunks within
+	# the box, theta wrapped: the box under the origin (-2, 4, 23) spans the chunks [-2, 14) x [4, 20).
+	check(VoxelBox.chunk_of_cell(Vector2i(100, 200)) == Vector2i(6, 12) and VoxelBox.chunk_of_cell(Vector2i(31, 63)) == Vector2i(1, 3), "chunk of cell")
+	var words := PackedInt32Array()
+	words.resize(VoxelBox.CHUNK_SLOTS)
+	words[6 * 32 + 3] = 2
+	words[9 * 32 + 30] = 3
+	words[9 * 32 + 14] = 2  # chunk 14: outside the box
+	words[0] = 1  # packed without a gap: not touched
+	var touched := b.touched_from(words)
+	check(touched.size() == 2 and touched[0] == Vector2i(3, 6) and touched[1] == Vector2i(1022, 9), "touched chunks %s" % [touched])
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

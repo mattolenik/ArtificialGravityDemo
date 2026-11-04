@@ -27,3 +27,9 @@ spring_length = 6.0
 [node name="Camera3D" type="Camera3D" parent="CameraPivot"]
 current = true
 far = 35000.0
+
+[node name="Headlamp" type="SpotLight3D" parent="CameraPivot/Camera3D"]
+light_energy = 2.0
+light_cull_mask = 2
+spot_range = 16.0
+spot_angle = 35.0

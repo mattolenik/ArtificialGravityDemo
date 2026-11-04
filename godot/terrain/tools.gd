@@ -173,17 +173,16 @@ func shovel_hit() -> Dictionary:
 	return {"position": q, "normal": terrain.station.global_basis.inverse() * hit.normal}
 
 
-## The station-local point of cell c's centre on the collider (the macro surface where no patch covers it).
-## The probe starts at the macro height: the patch projects along its own up, so a probe on the hull lands
-## columns away from a tall cell's centre (3.6 m at 1500 m, six cells from the patch's middle).
+## The station-local point of cell c's centre on the collider (Terrain.ground_point: the patch, or a chunk's
+## mesh; the macro surface where neither covers it). The probe starts at the macro height: the patch projects
+## along its own up, so a probe on the hull lands columns away from a tall cell's centre (3.6 m at 1500 m,
+## six cells from the patch's middle).
 func surface_point(c: Vector2i) -> Vector3:
 	var p := terrain.params
 	var theta := (c.x + 0.5) * p.dtheta()
 	var z := -p.length / 2.0 + c.y + 0.5
 	var probe := Cyl.position(theta, z, terrain.height_at(theta, z), p.radius)
-	if terrain.patch.covers(probe):
-		return terrain.patch.surface_point(probe, 0.0)
-	return probe
+	return terrain.ground_point(probe, 0.0)
 
 
 ## Scoops the ball at station-local `aim`, or at the crosshair's hit within shovel_reach when none is given;
@@ -353,9 +352,9 @@ func _clear_of(c: Vector2i, v: float) -> void:
 		return
 	off = off.normalized() * keep
 	var to := Cyl.position(centre.x + off.x / r, centre.y + off.y, Cyl.height_of(me, p.radius), p.radius)
-	if not terrain.patch.covers(to):
+	if not terrain.covered(to):
 		return
-	player.global_position = terrain.station.global_transform * terrain.patch.surface_point(to, 1.0 + STAND)
+	player.global_position = terrain.station.global_transform * terrain.ground_point(to, 1.0 + STAND)
 
 
 func _show_held() -> void:

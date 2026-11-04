@@ -13,9 +13,12 @@
 ## holding loose flags its slot in box_stats (bit 0, bit 1 from a neighbour across a face), read back after
 ## every frame that stepped, and settles out after settle_time quiet, at most MAX_ACTIVE_BRICKS at once
 ## (settle, the window's bookkeeping lifted to bricks). The surface cave-in with the free height runs there
-## too (material_table, wall_fails). configure, settle and the static helpers are arithmetic
-## (headless-safe); setup is the RenderingDevice entry point. Drivers read bricks back with read_brick
-## (synchronous).
+## too (material_table, wall_fails). A 16 m chunk of the box (a brick column) is touched once a packed or unpacked column in it
+## holds a gap within the box's height range (the pack's and the unpack's chunk words): it is drawn and
+## collided by a surface-nets mesh of its voxels (box_mesh.glsl, remesh_dirty, one chunk at a time, read back
+## into a ChunkMesh under Terrain) and the tiles and the collider patch step back from it (the window's
+## chunk mask, _set_mask). configure, settle and the static helpers are arithmetic (headless-safe); setup is
+## the RenderingDevice entry point. Drivers read bricks back with read_brick (synchronous).
 class_name VoxelBox
 extends RefCounted
 
@@ -36,8 +39,19 @@ const FAR := Vector3i(1 << 20, 1 << 20, 1 << 20)
 const LIST_MAX := 65536
 ## box_stats: one activity word per brick slot, the pack's gap overflow count at SLOTS, the pool running dry
 ## at SLOTS + 1, the sand's arrivals clipped at a voxel's room at SLOTS + 2 (counts; a leak when not 0), then
-## one word per 32 m chunk (Task 7).
-const STATS_WORDS := SLOTS + 3 + 256
+## a word per chunk slot (box_column.glslh's chunk_word: chunk mod 32 along each axis; bit 0 a column in it
+## was packed, bit 1 a packed or unpacked column in it holds a gap within the box's height range). A chunk is
+## 16 m, a brick column: a remesh and its trimesh build stay small.
+const CHUNK := 16
+const CHUNK_SLOTS := 1024
+const CHUNK_WORDS := SLOTS + 3
+const STATS_WORDS := CHUNK_WORDS + CHUNK_SLOTS
+## box_mesh.glsl: its Params block, the most vertices and indices a chunk mesh holds (read back whole, with
+## the counts, in one flush), its dual cells.
+const MESH_PC_BYTES := 64
+const MESH_VERTS := 8192
+const MESH_INDS := MESH_VERTS * 6
+const MESH_CELLS := 21 * 21 * 64
 ## The Params block of box_unpack.glsl and box_pack.glsl, std430.
 const PC_BYTES := 80
 const MODE_FREE := 0
@@ -114,6 +128,28 @@ var _flags := PackedInt32Array()
 var _accum := 0.0
 ## Set when an op or an unpack may have flagged a slot since the last readback.
 var _stats_pending := false
+## Touched chunks in the box: world chunk (theta chunk wrapped, z chunk) -> {dirty: the frame it went stale,
+## 0 when its mesh is current; at: the time of its last remesh; node: ChunkMesh or null}. A chunk is touched by
+## the chunk words and leaves the set with the box; its node goes under chunk_root with chunk_material (Terrain
+## sets both).
+var touched := {}
+var chunk_root: Node3D
+var chunk_material: Material
+## Called with a chunk whose mask bit changed (its mesh landed with faces, or it went): the collider follows.
+var on_mask_changed: Callable
+## Chunk meshes landed, for the drivers.
+var remeshes := 0
+var _mesh_shader: RID
+var _mesh_pipeline: RID
+var _mesh_set: RID
+var _mesh_verts: RID
+var _mesh_inds: RID
+var _mesh_vmap: RID
+var _mesh_counts: RID
+## The chunk words landed since the last take, ORed.
+var _chunk_flags := PackedInt32Array()
+## The remesh in flight: its chunk, then its counts and arrays as they land; empty between.
+var _remesh := {}
 
 
 ## Arithmetic only.
@@ -131,6 +167,7 @@ func setup(w: TerrainWindow, e: EditLayer, m: MaterialSet, t: ToolParams = null)
 	materials = m
 	tool_params = t if t != null else ToolParams.new()
 	_flags.resize(SLOTS)
+	_chunk_flags.resize(CHUNK_SLOTS)
 	RenderingServer.call_on_render_thread(_setup_rd)
 
 
@@ -143,12 +180,14 @@ func _setup_rd() -> void:
 	_pack_shader = _compile("res://terrain/shaders/box_pack.glsl")
 	_edit_shader = _compile("res://terrain/shaders/box_edit.glsl")
 	_sand_shader = _compile("res://terrain/shaders/box_sand.glsl")
-	if not _unpack_shader.is_valid() or not _pack_shader.is_valid() or not _edit_shader.is_valid() or not _sand_shader.is_valid():
+	_mesh_shader = _compile("res://terrain/shaders/box_mesh.glsl")
+	if not _unpack_shader.is_valid() or not _pack_shader.is_valid() or not _edit_shader.is_valid() or not _sand_shader.is_valid() or not _mesh_shader.is_valid():
 		return
 	_unpack_pipeline = _rd.compute_pipeline_create(_unpack_shader)
 	_pack_pipeline = _rd.compute_pipeline_create(_pack_shader)
 	_edit_pipeline = _rd.compute_pipeline_create(_edit_shader)
 	_sand_pipeline = _rd.compute_pipeline_create(_sand_shader)
+	_mesh_pipeline = _rd.compute_pipeline_create(_mesh_shader)
 	_pool = _rd.storage_buffer_create(POOL_BRICKS * BRICK_BYTES)
 	var none := PackedInt32Array()
 	none.resize(SLOTS)
@@ -181,6 +220,12 @@ func _setup_rd() -> void:
 	var sand_buffers: Array[RID] = buffers.duplicate()
 	sand_buffers.append_array([_flux, _active_table, _materials])
 	_sand_set = _uniform_set(_sand_shader, sand_buffers)
+	_mesh_verts = _rd.storage_buffer_create(MESH_VERTS * 32)
+	_mesh_inds = _rd.storage_buffer_create(MESH_INDS * 4)
+	_mesh_vmap = _rd.storage_buffer_create(MESH_CELLS * 4)
+	zeros.resize(16)
+	_mesh_counts = _rd.storage_buffer_create(16, zeros)
+	_mesh_set = _buffer_set(_mesh_shader, [_pool, _index, _mesh_verts, _mesh_inds, _mesh_vmap, _mesh_counts])
 
 
 func _compile(path: String) -> RID:
@@ -208,10 +253,23 @@ func _uniform_set(shader: RID, buffers: Array[RID]) -> RID:
 	return _rd.uniform_set_create(uniforms, shader, 0)
 
 
+## Storage buffers at bindings 0.. only (box_mesh.glsl).
+func _buffer_set(shader: RID, buffers: Array[RID]) -> RID:
+	var uniforms: Array[RDUniform] = []
+	for i in buffers.size():
+		var u := RDUniform.new()
+		u.binding = i
+		u.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+		u.add_id(buffers[i])
+		uniforms.append(u)
+	return _rd.uniform_set_create(uniforms, shader, 0)
+
+
 func _notification(what: int) -> void:
 	if what != NOTIFICATION_PREDELETE or _rd == null:
 		return
-	var rids: Array[RID] = [_unpack_shader, _pack_shader, _edit_shader, _sand_shader, _pool, _index, _dirty, _box_stats, _free, _needed, _cells, _counter, _flux, _active_table, _materials]
+	var rids: Array[RID] = [_unpack_shader, _pack_shader, _edit_shader, _sand_shader, _mesh_shader, _pool, _index, _dirty, _box_stats, _free, _needed, _cells, _counter, _flux, _active_table, _materials,
+			_mesh_verts, _mesh_inds, _mesh_vmap, _mesh_counts]
 	RenderingServer.call_on_render_thread(TerrainWindow._free_rids.bind(_rd, rids))
 
 
@@ -366,22 +424,26 @@ func _step_rd(lists: Array[Array], alloc_block: PackedByteArray) -> void:
 	_read_stats_rd()
 
 
-## The activity readback (box_stats' slot words), then their clear (the request copies the buffer before the
-## clear runs).
+## The readback of box_stats (the slot words and the chunk words; the counters between ride along), then
+## their clear (the request copies the buffer before the clear runs).
 func _read_stats_rd() -> void:
-	var err := _rd.buffer_get_data_async(_box_stats, _on_stats, 0, SLOTS * 4)
+	var err := _rd.buffer_get_data_async(_box_stats, _on_stats, 0, STATS_WORDS * 4)
 	if err != OK:
 		push_error("box stats readback: %s" % error_string(err))
 	_rd.buffer_clear(_box_stats, 0, SLOTS * 4)
+	_rd.buffer_clear(_box_stats, CHUNK_WORDS * 4, CHUNK_SLOTS * 4)
 
 
-## Inside the device's readback flush: ORs the landed activity words into _flags (settle reads them).
+## Inside the device's readback flush: ORs the landed activity words into _flags (settle reads them) and the
+## chunk words into _chunk_flags (remesh_dirty takes them).
 func _on_stats(data: PackedByteArray) -> void:
-	var flags := data.to_int32_array()
-	if _flags.size() != flags.size():
-		_flags.resize(flags.size())
-	for i in flags.size():
-		_flags[i] |= flags[i]
+	var words := data.to_int32_array()
+	if words.size() < STATS_WORDS:
+		return
+	for i in SLOTS:
+		_flags[i] |= words[i]
+	for i in CHUNK_SLOTS:
+		_chunk_flags[i] |= words[CHUNK_WORDS + i]
 
 
 ## The Params block of box_sand.glsl (std430, SAND_PC_BYTES) for brick (world index) at active index `active`.
@@ -454,6 +516,11 @@ func bottom() -> int:
 	return _origin.z * BRICK
 
 
+## The height index past the box's highest voxel.
+func top() -> int:
+	return bottom() + BRICKS_UP * BRICK
+
+
 func exists() -> bool:
 	return _origin != FAR
 
@@ -472,6 +539,13 @@ func follow(feet: Vector3) -> void:
 	# Bricks that leave the box leave the active set; landed flags name slots that change hands.
 	drop(active_bricks().filter(func(b: Vector3i) -> bool: return not in_box(b)))
 	_flags.fill(0)
+	# Chunks that leave the box go, with their meshes; a move up or down changes what the others hold.
+	for ch: Vector2i in touched.keys():
+		if not chunk_in_box(ch):
+			_free_chunk(ch)
+		elif o.z != old.z:
+			_stale(ch)
+	_chunk_flags.fill(0)
 	_stats_pending = true
 	RenderingServer.call_on_render_thread(_move_rd.bind(old, o, _pc(old, 0, FAR, 0)))
 
@@ -545,6 +619,8 @@ func pack_dirty(asked := 0) -> void:
 	for b in active_bricks():
 		edits.stamped[window.tile_of_cell(posmod(b.x * BRICK, params.n_theta()), b.y * BRICK)] = asked
 		edits.stamped[window.tile_of_cell(posmod(b.x * BRICK + BRICK - 1, params.n_theta()), b.y * BRICK + BRICK - 1)] = asked
+	# The pack's chunk words land with the next readback.
+	_stats_pending = true
 	pack_all_sync()
 
 
@@ -835,3 +911,217 @@ static func voxel(brick: PackedByteArray, x: int, y: int, z: int) -> Dictionary:
 	var w1 := brick.decode_u32(o + 4)
 	return {"solid": w0 & 0xFFFF, "loose": w0 >> 16, "material": w1 & 255, "compaction": (w1 >> 8) & 255,
 			"saturation": (w1 >> 16) & 255, "hanging": (w1 >> 24) & 1}
+
+
+## The 32 m chunk of a cell.
+static func chunk_of_cell(cell: Vector2i) -> Vector2i:
+	return Vector2i(floori(cell.x / float(CHUNK)), floori(cell.y / float(CHUNK)))
+
+
+## The chunks the box spans along an axis from its origin brick o: the first (theta in the origin's frame)
+## and the count (a chunk is a brick column).
+static func _chunk_span(o: int) -> Vector2i:
+	return Vector2i(o, BRICKS_ACROSS)
+
+
+## Whether a world chunk (theta chunk wrapped, z chunk) lies in the box.
+func chunk_in_box(ch: Vector2i) -> bool:
+	var sx := _chunk_span(_origin.x)
+	var sy := _chunk_span(_origin.y)
+	@warning_ignore("integer_division")
+	var n := params.n_theta() / CHUNK
+	return posmod(ch.x - sx.x, n) < sx.y and ch.y - sy.x >= 0 and ch.y - sy.x < sy.y
+
+
+## The chunks in the box (and on the station) whose words have `bit`: each chunk slot (x mod 32, y mod 32)
+## resolved in the box's span, theta wrapped.
+func touched_from(words: PackedInt32Array, bit := 2) -> Array[Vector2i]:
+	var sx := _chunk_span(_origin.x)
+	var sy := _chunk_span(_origin.y)
+	@warning_ignore("integer_division")
+	var n := params.n_theta() / CHUNK
+	@warning_ignore("integer_division")
+	var rows := params.n_z() / CHUNK
+	var out: Array[Vector2i] = []
+	for i in CHUNK_SLOTS:
+		if (words[i] & bit) == 0:
+			continue
+		var cx := sx.x + posmod(i % 32 - sx.x, 32)
+		@warning_ignore("integer_division")
+		var cy := sy.x + posmod(i / 32 - sy.x, 32)
+		if cx - sx.x < sx.y and cy - sy.x < sy.y and cy >= 0 and cy < rows:
+			out.append(Vector2i(posmod(cx, n), cy))
+	return out
+
+
+## Whether a touched chunk with a landed mesh holds the column under station-space p, within the box's height
+## range: its trimesh is the ground there (Terrain.covered).
+func covers(p: Vector3) -> bool:
+	var h := Cyl.height_of(p, params.radius)
+	if not exists() or h < bottom() or h >= top():
+		return false
+	var st: Dictionary = touched.get(chunk_of_cell(params.cell_of(Cyl.theta_of(p), p.z)), {})
+	return not st.is_empty() and st.node != null and st.node.faces > 0
+
+
+## The landed chunk words: a chunk with a gap in range is touched (dirty), a touched chunk with a packed
+## column is dirty.
+func _take_chunk_flags() -> void:
+	for ch in touched_from(_chunk_flags, 2):
+		if not touched.has(ch):
+			touched[ch] = {"dirty": 0, "at": -INF, "node": null}
+			_stale(ch)
+	for ch in touched_from(_chunk_flags, 1):
+		if touched.has(ch):
+			_stale(ch)
+	_chunk_flags.fill(0)
+
+
+## Marks a touched chunk's mesh stale from this frame on (the oldest stale chunk is remeshed first, so a scoop
+## at a corner of four chunks starves none).
+func _stale(ch: Vector2i) -> void:
+	if touched[ch].dirty == 0:
+		touched[ch].dirty = maxi(1, Engine.get_process_frames())
+
+
+## One chunk mesh at a time (Terrain._process, after pack_dirty): the chunk words landed are taken up, a
+## remesh whose counts and arrays landed is given to its chunk's node (the mask follows), else the stale
+## chunk that has waited longest, collider_edit_interval or more after its own last remesh, is meshed by
+## box_mesh.glsl.
+func remesh_dirty(now: float) -> void:
+	if not exists() or chunk_root == null:
+		return
+	_take_chunk_flags()
+	if not _remesh.is_empty():
+		_remesh_landing()
+		return
+	var pick := Vector2i.ZERO
+	var oldest := 0
+	for ch: Vector2i in touched:
+		var st: Dictionary = touched[ch]
+		if st.dirty > 0 and (oldest == 0 or st.dirty < oldest) and now - st.at >= tool_params.collider_edit_interval:
+			oldest = st.dirty
+			pick = ch
+	if oldest == 0:
+		return
+	touched[pick].dirty = 0
+	touched[pick].at = now
+	_remesh = {"chunk": pick}
+	RenderingServer.call_on_render_thread(_mesh_rd.bind(_mesh_pc(pick, 0), _mesh_pc(pick, 1)))
+
+
+func _remesh_landing() -> void:
+	if not (_remesh.has("counts") and _remesh.has("verts") and _remesh.has("inds")):
+		return
+	var ch: Vector2i = _remesh.chunk
+	var counts: PackedByteArray = _remesh.counts
+	var nv := mini(counts.decode_u32(0), MESH_VERTS)
+	var ni := mini(counts.decode_u32(4), MESH_INDS)
+	if counts.decode_u32(8) != 0:
+		push_warning("chunk %s: the mesh buffers filled (%d vertices, %d indices)" % [ch, nv, ni])
+	if touched.has(ch):
+		_land_chunk(ch, _remesh.verts.slice(0, nv * 32), _remesh.inds.slice(0, ni * 4))
+	_remesh = {}
+
+
+## Inside the device's readback flush: stores only.
+func _on_mesh_data(data: PackedByteArray, key: String) -> void:
+	if not _remesh.is_empty():
+		_remesh[key] = data
+
+
+## The landed arrays into the chunk's node (made under chunk_root on its first landing); the mask follows a
+## mesh appearing or going empty.
+func _land_chunk(ch: Vector2i, vdata: PackedByteArray, idata: PackedByteArray) -> void:
+	var st: Dictionary = touched[ch]
+	if st.node == null:
+		st.node = ChunkMesh.new(chunk_material)
+		chunk_root.add_child(st.node)
+	var f := vdata.to_float32_array()
+	@warning_ignore("integer_division")
+	var n := f.size() / 8
+	var vs := PackedVector3Array()
+	var ns := PackedVector3Array()
+	var cs := PackedColorArray()
+	vs.resize(n)
+	ns.resize(n)
+	cs.resize(n)
+	for i in n:
+		var o := i * 8
+		vs[i] = Vector3(f[o], f[o + 1], f[o + 2])
+		ns[i] = Vector3(f[o + 4], f[o + 5], f[o + 6])
+		cs[i] = Color(f[o + 3] / 255.0, f[o + 7], 0.0, 1.0)
+	var had: bool = st.node.faces > 0
+	st.node.set_arrays(vs, ns, cs, idata.to_int32_array() if vs.size() > 0 else PackedInt32Array())
+	remeshes += 1
+	if (st.node.faces > 0) != had:
+		_set_mask(ch)
+
+
+func _free_chunk(ch: Vector2i) -> void:
+	var st: Dictionary = touched[ch]
+	var drawn: bool = st.node != null and st.node.faces > 0
+	if st.node != null:
+		st.node.queue_free()
+	touched.erase(ch)
+	if drawn:
+		_set_mask(ch)
+
+
+## Uploads the mask of the chunks drawn and collided by their meshes (a byte per chunk slot of the window),
+## then tells Terrain which chunk changed.
+func _set_mask(changed: Vector2i) -> void:
+	var bytes := PackedByteArray()
+	bytes.resize(CHUNK_SLOTS)
+	for ch: Vector2i in touched:
+		if touched[ch].node != null and touched[ch].node.faces > 0:
+			bytes[posmod(ch.y, 32) * 32 + posmod(ch.x, 32)] = 255
+	var rid := window.texture_rid("chunk_mask")
+	RenderingServer.call_on_render_thread(func() -> void: _rd.texture_update(rid, 0, bytes))
+	if on_mask_changed.is_valid():
+		on_mask_changed.call(changed)
+
+
+## The two dispatches of box_mesh.glsl over a chunk, timed, and the readbacks of their counts and arrays
+## (whole: they land in one flush).
+func _mesh_rd(pc0: PackedByteArray, pc1: PackedByteArray) -> void:
+	if not _mesh_set.is_valid():
+		return
+	_rd.buffer_clear(_mesh_counts, 0, 16)
+	_rd.capture_timestamp("box_mesh_begin")
+	var list := _rd.compute_list_begin()
+	_rd.compute_list_bind_compute_pipeline(list, _mesh_pipeline)
+	_rd.compute_list_bind_uniform_set(list, _mesh_set, 0)
+	_rd.compute_list_set_push_constant(list, pc0, pc0.size())
+	_rd.compute_list_dispatch(list, 3, 3, 16)
+	_rd.compute_list_add_barrier(list)
+	_rd.compute_list_set_push_constant(list, pc1, pc1.size())
+	_rd.compute_list_dispatch(list, 3, 3, 16)
+	_rd.compute_list_end()
+	_rd.capture_timestamp("box_mesh_end")
+	for r: Array in [[_mesh_counts, "counts", 16], [_mesh_verts, "verts", MESH_VERTS * 32], [_mesh_inds, "inds", MESH_INDS * 4]]:
+		var err := _rd.buffer_get_data_async(r[0], _on_mesh_data.bind(r[1]), 0, r[2])
+		if err != OK:
+			push_error("chunk mesh readback: %s" % error_string(err))
+
+
+## The Params block of box_mesh.glsl (std430, MESH_PC_BYTES) for a chunk, its first cell in the origin's frame.
+func _mesh_pc(ch: Vector2i, mode: int) -> PackedByteArray:
+	var x0 := _origin.x * BRICK
+	var b := PackedByteArray()
+	b.resize(MESH_PC_BYTES)
+	b.encode_s32(0, _origin.x)
+	b.encode_s32(4, _origin.y)
+	b.encode_s32(8, _origin.z)
+	b.encode_s32(12, mode)
+	b.encode_s32(16, x0 + posmod(ch.x * CHUNK - x0, params.n_theta()))
+	b.encode_s32(20, ch.y * CHUNK)
+	b.encode_s32(24, params.n_theta())
+	@warning_ignore("integer_division")
+	b.encode_s32(28, params.n_theta() / BRICK)
+	b.encode_float(32, params.radius)
+	b.encode_float(36, params.dtheta())
+	b.encode_float(40, -params.length / 2.0)
+	b.encode_s32(44, MESH_VERTS)
+	b.encode_s32(48, MESH_INDS)
+	return b
