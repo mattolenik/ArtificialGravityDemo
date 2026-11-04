@@ -6,9 +6,10 @@
 ## Unpack: a voxel's solid is the measure of its overlap with the runs; the loose on a run's top (the window's
 ## loose, m over the floor's area (R - floor)) fills the voxels from the floor up by the annulus volume
 ## (R - k - 0.5) of each, so the voxels hold the same volume the window says.
-## Pack: a full voxel is solid over its whole height; a partial voxel sits on its floor ([k, k + f]) when a full
-## voxel lies under it or nothing solid touches it, and hangs from its ceiling ([k + 1 - f, k + 1]) when a full
-## voxel lies over it and none under; touching pieces merge into runs; the air between runs is a gap; loose
+## Pack: a full voxel is solid over its whole height; a partial voxel hangs from its ceiling ([k + 1 - f, k + 1])
+## when flagged hanging (unpack flags a run's underside; the scoop what it leaves over a ball's centre) or
+## when solid lies over it and none under, and otherwise sits on its floor ([k, k + f]); touching pieces
+## merge into runs; the air between runs is a gap; loose
 ## goes to the run below it, converted back to m over that run's top. A run that continues past the box's
 ## range keeps the stored boundary and loose beyond it. Heights come back as float32 (what the window holds):
 ## exact for a height the window stored at 256 m and over, loose within a fraction step. Only this file and the
@@ -63,8 +64,9 @@ static func runs_of(col: Dictionary) -> Array:
 	return out
 
 
-## Voxels k0 .. k0 + n - 1 of col: solid and loose fractions, the solid's material (by the strata at its top)
-## and the loose's compaction (the column's byte on the top run's loose, 0 in a gap).
+## Voxels k0 .. k0 + n - 1 of col: solid and loose fractions, the solid's material (by the strata at its top),
+## the loose's compaction (the column's byte on the top run's loose, 0 in a gap) and the hanging flag (1 on a
+## partial holding a run's underside).
 static func unpack(col: Dictionary, k0: int, n: int) -> Dictionary:
 	var solid := PackedInt32Array()
 	solid.resize(n)
@@ -74,6 +76,8 @@ static func unpack(col: Dictionary, k0: int, n: int) -> Dictionary:
 	material.resize(n)
 	var compaction := PackedByteArray()
 	compaction.resize(n)
+	var hanging := PackedByteArray()
+	hanging.resize(n)
 	var R: float = col.R
 	var runs := runs_of(col)
 	for run in runs:
@@ -85,6 +89,9 @@ static func unpack(col: Dictionary, k0: int, n: int) -> Dictionary:
 				continue
 			if solid[k - k0] == 0:
 				material[k - k0] = material_at(min(hi, k + 1.0) - 0.01, col)
+				hanging[k - k0] = 1 if lo > k and hi >= k + 1.0 else 0
+			else:
+				hanging[k - k0] = 0
 			solid[k - k0] = mini(solid[k - k0] + roundi(m * FRACTION_ONE), FRACTION_ONE)
 	for run in runs:
 		# A run whose top is under the range keeps its loose stored (pack keeps it too); loose past the range's
@@ -105,7 +112,7 @@ static func unpack(col: Dictionary, k0: int, n: int) -> Dictionary:
 				compaction[k - k0] = run[3]
 				v -= q / float(FRACTION_ONE) * (R - k - 0.5)
 			k += 1
-	return {"solid": solid, "loose": loose, "material": material, "compaction": compaction}
+	return {"solid": solid, "loose": loose, "material": material, "compaction": compaction, "hanging": hanging}
 
 
 ## The column back from voxels k0 .. k0 + n - 1 (vox as unpack returns them), merged with col's runs outside
@@ -117,6 +124,9 @@ static func pack(vox: Dictionary, k0: int, col: Dictionary) -> Dictionary:
 	var s: PackedInt32Array = vox.solid
 	var l: PackedInt32Array = vox.loose
 	var n := s.size()
+	var hang: PackedByteArray = vox.get("hanging", PackedByteArray())
+	if hang.size() != n:
+		hang.resize(n)
 	var top_k := float(k0 + n)
 	# Solid pieces [bottom, top, loose_v (per unit dtheta, m²), compaction], bottom-up: the stored runs' parts
 	# under the range (their loose kept when it lies under the range too), each voxel's piece by the partial
@@ -135,9 +145,9 @@ static func pack(vox: Dictionary, k0: int, col: Dictionary) -> Dictionary:
 		var h := k0 + k
 		if f == FRACTION_ONE:
 			pieces.append([float(h), h + 1.0, 0.0, 0])
-		elif (k > 0 and s[k - 1] == FRACTION_ONE) or (k == 0 and solid_under):
+		elif hang[k] == 0 and ((k > 0 and s[k - 1] > 0) or (k == 0 and solid_under)):
 			pieces.append([float(h), h + f / float(FRACTION_ONE), 0.0, 0])
-		elif (k + 1 < n and s[k + 1] == FRACTION_ONE) or (k + 1 == n and _solid_at(stored, top_k)):
+		elif hang[k] != 0 or (k + 1 < n and s[k + 1] > 0) or (k + 1 == n and _solid_at(stored, top_k)):
 			pieces.append([h + 1.0 - f / float(FRACTION_ONE), h + 1.0, 0.0, 0])
 		else:
 			pieces.append([float(h), h + f / float(FRACTION_ONE), 0.0, 0])

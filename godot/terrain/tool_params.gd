@@ -26,8 +26,10 @@ extends Resource
 @export var scoop_volume := 2.5
 ## The scoop's disc radius in cells (1: the five-cell plus, like the bore).
 @export var scoop_radius := 1
-## How far from the player the crosshair may scoop or dump, in m.
-@export var shovel_reach := 3.0
+## How far from the player the crosshair may scoop or dump, in m (4: a roof overhead is in reach).
+@export var shovel_reach := 4.0
+## The radius in m of the ball the shovel scoops and dumps in the voxel box.
+@export var scoop_ball := 1.0
 ## Seconds between scoops while T is held.
 @export var scoop_interval := 0.25
 ## The feet's disc radius in cells (1: a five-cell plus).

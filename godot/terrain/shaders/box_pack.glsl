@@ -3,8 +3,8 @@
 
 // The voxel box's exit side (VoxelBox.pack_dirty): one invocation per box column; a column flagged dirty is
 // packed back into its window fields by VoxelColumn.pack's rule (box_column.glslh): the runs of its 64 voxels
-// (a full voxel over its whole height; a partial on its floor under a full one or alone, hanging from its
-// ceiling under a full one with none under it), merged with the stored runs outside the box's range, the
+// (a full voxel over its whole height; a partial flagged hanging, or under solid with air under it, from
+// its ceiling, any other on its floor), merged with the stored runs outside the box's range, the
 // loose on each run converted back to m over the run's top; the top run's top to surface, its loose and
 // compaction, the gaps under it (at most four: beyond that the lowest two merge, the sliver between lost,
 // counted in box_stats[1024]), the material by the strata at the surface, the clay clamped to it, edit_mask
@@ -144,13 +144,16 @@ void main() {
 				sol[i] = 0u;
 				loo[i] = 0u;
 				cmp[i] = 0u;
+				flg[i] = 0u;
 				continue;
 			}
 			int v = bidx * VOXELS_PER_BRICK * 2 + ((y * 16 + within.y) * 16 + within.x) * 2;
 			uint w0 = pool[v];
+			uint w1 = pool[v + 1];
 			sol[i] = w0 & 0xFFFFu;
 			loo[i] = w0 >> 16;
-			cmp[i] = (pool[v + 1] >> 8) & 255u;
+			cmp[i] = (w1 >> 8) & 255u;
+			flg[i] = (w1 >> 24) & 1u;
 		}
 	}
 	Col col = read_col(t);
@@ -172,9 +175,9 @@ void main() {
 		float ff = float(f) / ONE;
 		if (f == uint(ONE)) {
 			push(h, h + 1.0, 0.0, 0);
-		} else if ((i > 0 && sol[i - 1] == uint(ONE)) || (i == 0 && solid_under)) {
+		} else if (flg[i] == 0u && ((i > 0 && sol[i - 1] > 0u) || (i == 0 && solid_under))) {
 			push(h, h + ff, 0.0, 0);
-		} else if ((i + 1 < K && sol[i + 1] == uint(ONE)) || (i + 1 == K && solid_at(st, topk))) {
+		} else if (flg[i] != 0u || (i + 1 < K && sol[i + 1] > 0u) || (i + 1 == K && solid_at(st, topk))) {
 			push(h + 1.0 - ff, h + 1.0, 0.0, 0);
 		} else {
 			push(h, h + ff, 0.0, 0);

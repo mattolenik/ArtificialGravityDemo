@@ -1,15 +1,18 @@
-## The player's tools (the terrain slice 3 plan). The feet: walking pushes the loose dirt under them a little
-## toward where the player is going, and a hard landing tamps it, the fourth folding it into the solid
-## ground; every stamp goes through Terrain.stamp_tool, from Player's signals on the main thread after
-## move_and_slide, one stamp per signal. The auger: E places one where the crosshair hits the ground within
-## place_reach, its spoil on the far side from the player, and E within pickup_distance of it picks it up;
-## one at a time, and E does nothing while the fly camera is the viewer (it climbs on E). The shovel: T scoops
-## scoop_volume where the crosshair hits the ground within shovel_reach (loose first, then solid dirt and clay
-## with the swell) and, held, scoops again every scoop_interval, the scoops adding up in the hand; Y dumps what
-## it holds there as loose dirt. The held dirt shows on the HUD line and is not saved. The player is kept out
-## of the dirt: a dump moves a player nearer its cell than the pile's repose radius plus PILE_MARGIN out to
-## that distance, and every physics tick a player whose feet the collider has risen over (the dump on their
-## cell, a pile slumping under them) is stood on it.
+## The player's tools (the terrain slice 3 plan; the shovel of the tunnels design). The feet: walking pushes
+## the loose dirt under them a little toward where the player is going, and a hard landing tamps it, the
+## fourth folding it into the solid ground; every stamp goes through Terrain.stamp_tool, from Player's
+## signals on the main thread after move_and_slide, one stamp per signal. The auger: E places one where the
+## crosshair hits the ground within place_reach, its spoil on the far side from the player, and E within
+## pickup_distance of it picks it up; one at a time, and E does nothing while the fly camera is the viewer
+## (it climbs on E). The shovel: the crosshair's hit on the terrain colliders within shovel_reach (any
+## surface: floor, wall or roof) is the aim, shown as a ring decal (ShovelPatch) while there is one; T scoops
+## the ball of scoop_ball m there in the voxel box (loose first, then solid dirt and clay with the swell,
+## never rock) and, held, scoops again every scoop_interval, the scoops adding up in the hand; Y dumps what
+## it holds there as loose dirt, what does not fit the ball staying in the hand. The held dirt shows on the HUD
+## line and is not saved; under a litre left after a dump (the ball's voxels round down) counts as empty. The
+## player is kept out of the dirt: a dump moves a player nearer its point than the
+## pile's repose radius plus PILE_MARGIN out to that distance, and every physics tick a player whose feet the
+## collider has risen over (the dump on their cell, a pile slumping under them) is stood on it.
 class_name Tools
 extends Node
 
@@ -19,11 +22,15 @@ const PILE_MARGIN := 0.5
 ## Feet this far under the collider count as buried, in m; they are stood STAND over it.
 const BURIED := 0.1
 const STAND := 0.05
+## A hand holding less than this after a dump, in m³, is empty.
+const EMPTY := 1e-3
 
 @export var terrain: Terrain
 @export var player: Player
 ## The shovel's HUD line.
 @export var hud: Label
+## The ring shown at the shovel's aim.
+@export var patch: ShovelPatch
 
 ## Stamps made (accepted by stamp_tool), for the driver.
 var pushes := 0
@@ -32,13 +39,18 @@ var tamps := 0
 var auger: Auger
 ## m³ of loose dirt the shovel holds (a scoop's counter, solid ground times the swell); 0 when empty.
 var held := 0.0
-## Scoops and dumps made (accepted by stamp_tool), and times the player was stood on risen ground, for the driver.
+## Scoops and dumps made (dispatched to the box), and times the player was stood on risen ground, for the driver.
 var scoops := 0
 var dumps := 0
 var lifts := 0
-## Whether a scoop's counter is in flight, and its landing's m³ (-1 until it lands; _process consumes it).
+## Whether a scoop's counter is in flight, its landing's m³ (-1 until it lands; _process consumes it) and
+## whether the scoop was refused (a fifth gap).
 var _scoop_pending := false
 var _scoop_result := -1.0
+var _scoop_refused := false
+## The same for a dump: what the box placed.
+var _dump_pending := false
+var _dump_result := -1.0
 ## T's press: down, whether a scoop fired during it, and the last scoop's time (ms).
 var _t_down := false
 var _t_scooped := false
@@ -85,7 +97,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if key.keycode == KEY_Y:
 		if held <= 0.0:
 			print("The shovel is empty")
-		elif not _scoop_pending and not terrain.sim.stalled():
+		elif not _scoop_pending and not _dump_pending and not terrain.sim.stalled():
 			dump()
 		return
 	if key.keycode != KEY_E:
@@ -126,13 +138,8 @@ func place(theta: float, z: float, side: Vector2i) -> Auger:
 	if not (terrain.can_stamp(c, t.bore_radius) and terrain.can_stamp(Auger.spoil_cell_of(c, side, t.spoil_offset, p.n_theta()), t.spoil_radius)):
 		print("The auger cannot bore there")
 		return null
-	var theta_c := (c.x + 0.5) * p.dtheta()
-	var z_c := -p.length / 2.0 + c.y + 0.5
-	var hull := Cyl.position(theta_c, z_c, 0.0, p.radius)
-	var ground := Cyl.height_of(terrain.patch.surface_point(hull, 0.0), p.radius) if terrain.patch.covers(hull) \
-			else terrain.height_at(theta_c, z_c)
 	auger = AUGER.instantiate()
-	auger.setup(terrain, c, side, ground)
+	auger.setup(terrain, c, side, Cyl.height_of(surface_point(c), p.radius))
 	terrain.station.add_child(auger)
 	terrain.set_obstacle(c, t.bore_radius)
 	return auger
@@ -145,54 +152,123 @@ func pickup() -> void:
 	auger = null
 
 
-## Scoops scoop_volume at cell, or where the crosshair hits within shovel_reach when none is given; its counter
-## lands in _scooped. A line printed when there is no such hit or the stamp is refused.
-func scoop(cell := TerrainSim.NO_CELL) -> void:
-	var c := _shovel_cell(cell)
-	var op := _shovel_op(c, EditLayer.MODE_SCOOP, terrain.tool_params.scoop_volume)
-	op.counted = _scooped
-	if c != TerrainSim.NO_CELL and terrain.stamp_tool(op):
+## The shovel's aim: the crosshair's hit on the colliders (the player's body excluded) within shovel_reach of
+## the player, as station-local `position` and `normal`; empty when there is none.
+func shovel_hit() -> Dictionary:
+	var hit := DebugEdit.look_hit(get_viewport(), [player.get_rid()])
+	if hit.is_empty():
+		return {}
+	var q := terrain.station.to_local(hit.position)
+	if q.distance_to(terrain.station.to_local(player.global_position)) > terrain.tool_params.shovel_reach:
+		return {}
+	return {"position": q, "normal": terrain.station.global_basis.inverse() * hit.normal}
+
+
+## The station-local point of cell c's centre on the collider (the macro surface where no patch covers it).
+## The probe starts at the macro height: the patch projects along its own up, so a probe on the hull lands
+## columns away from a tall cell's centre (3.6 m at 1500 m, six cells from the patch's middle).
+func surface_point(c: Vector2i) -> Vector3:
+	var p := terrain.params
+	var theta := (c.x + 0.5) * p.dtheta()
+	var z := -p.length / 2.0 + c.y + 0.5
+	var probe := Cyl.position(theta, z, terrain.height_at(theta, z), p.radius)
+	if terrain.patch.covers(probe):
+		return terrain.patch.surface_point(probe, 0.0)
+	return probe
+
+
+## Scoops the ball at station-local `aim`, or at the crosshair's hit within shovel_reach when none is given;
+## its counter lands in _scooped. A line printed when there is no aim or the box refuses.
+func scoop(aim := Vector3.INF) -> void:
+	var p := _aim(aim)
+	if p.is_finite() and terrain.box.scoop(p, terrain.tool_params.scoop_ball, terrain.materials.swell_factor, _scooped):
 		_scoop_pending = true
 		scoops += 1
+		terrain.touch(_cell_of(p), ceili(terrain.tool_params.scoop_ball) + 1)
 	else:
 		print("Nothing to scoop there")
 
 
-## Deposits what the shovel holds as loose dirt at cell, or where the crosshair hits within shovel_reach when
-## none is given, and moves the player clear of the pile (_clear_of); the shovel keeps it, with a line printed,
-## when there is no such hit or the stamp is refused.
-func dump(cell := TerrainSim.NO_CELL) -> void:
-	var c := _shovel_cell(cell)
-	if c != TerrainSim.NO_CELL and terrain.stamp_tool(_shovel_op(c, EditLayer.MODE_DEPOSIT, held)):
+## Dumps what the shovel holds as loose dirt into the ball at `aim` (as scoop), and moves the player clear of
+## the pile (_clear_of); what the ball could not take stays in the hand (_placed). A line printed, nothing
+## dumped, when there is no aim or the box refuses.
+func dump(aim := Vector3.INF) -> void:
+	var p := _aim(aim)
+	if p.is_finite() and terrain.box.dump(p, terrain.tool_params.scoop_ball, held, _placed):
+		_dump_pending = true
+		var c := _cell_of(p)
 		_clear_of(c, held)
-		held = 0.0
-		dumps += 1
-		_show_held()
+		terrain.touch(c, ceili(terrain.tool_params.scoop_ball) + 1)
 	else:
 		print("Nowhere to dump the dirt")
 
 
+## The drivers' scoop and dump aimed at a cell: its centre on the collider.
+func scoop_cell(c: Vector2i) -> void:
+	scoop(surface_point(c))
+
+
+func dump_cell(c: Vector2i) -> void:
+	dump(surface_point(c))
+
+
+func _aim(aim: Vector3) -> Vector3:
+	if aim.is_finite():
+		return aim
+	return shovel_hit().get("position", Vector3.INF)
+
+
+func _cell_of(p: Vector3) -> Vector2i:
+	return terrain.params.cell_of(Cyl.theta_of(p), p.z)
+
+
 ## A scoop's counter landing, inside the readback flush: stores only (_process takes it up).
-func _scooped(volume: float, _wet: bool) -> void:
+func _scooped(volume: float, refused: bool) -> void:
 	_scoop_result = volume
+	_scoop_refused = refused
 
 
-## Takes up a landed scoop (what it took is held, or a scoop that found only rock says so), then scoops while
-## T is held: at once on the press, then every scoop_interval once the last scoop has landed. A refused scoop,
-## a scoop that found rock, or the viewer leaving the player ends the press's scooping, so a hold on the sky or
-## on rock does not print every interval.
+## A dump's counter landing: what the box placed.
+func _placed(volume: float, _flag: bool) -> void:
+	_dump_result = volume
+
+
+## Takes up a landed scoop (what it took is held, or a scoop that found only rock or a full column says so)
+## and a landed dump (what was placed leaves the hand), shows the aim's ring, then scoops while T is held: at
+## once on the press, then every scoop_interval once the last scoop has landed. A refused scoop, a scoop that
+## found rock, or the viewer leaving the player ends the press's scooping, so a hold on the sky or on rock does
+## not print every interval.
 func _process(_delta: float) -> void:
 	if _scoop_result >= 0.0:
 		_scoop_pending = false
-		if _scoop_result <= 1e-6:
+		if _scoop_refused:
+			print("No room for a fifth tunnel in this ground")
+			_t_down = false
+		elif _scoop_result <= 1e-6:
 			print("Nothing to scoop here")
 			_t_down = false
 		else:
 			held += _scoop_result
 		_scoop_result = -1.0
 		_show_held()
+	if _dump_result >= 0.0:
+		_dump_pending = false
+		if _dump_result > 0.0:
+			dumps += 1
+		held = maxf(held - _dump_result, 0.0)
+		if held < EMPTY:
+			held = 0.0
+		_dump_result = -1.0
+		_show_held()
 	if terrain.viewer != player:
 		_t_down = false
+		patch.visible = false
+	else:
+		var hit := shovel_hit()
+		if hit.is_empty():
+			patch.visible = false
+		else:
+			patch.show_at(hit.position, hit.normal, terrain.station)
 	if not _t_down or _scoop_pending or terrain.sim.stalled():
 		return
 	var now := Time.get_ticks_msec()
@@ -214,10 +290,10 @@ func _physics_process(_delta: float) -> void:
 		return
 	var up := player.up_direction
 	var feet := terrain.station.to_local(player.global_position - up)
-	var patch := terrain.patch
-	if not patch.covers(feet):
+	var ground := terrain.patch
+	if not ground.covers(feet):
 		return
-	var under := (patch.surface_point(feet, 0.0) - feet).dot(patch.transform.basis.y)
+	var under := (ground.surface_point(feet, 0.0) - feet).dot(ground.transform.basis.y)
 	if under > BURIED:
 		player.global_position += up * (under + STAND)
 		lifts += 1
@@ -227,6 +303,30 @@ func _physics_process(_delta: float) -> void:
 ## The radius in m of the cone a pile of v m³ settles into at repose_deg: v = π r² (r tan repose) / 3.
 static func pile_radius(v: float, repose_deg: float) -> float:
 	return pow(3.0 * v / (PI * tan(deg_to_rad(repose_deg))), 1.0 / 3.0)
+
+
+## The volume in m³ of the ball of radius m at grid point centre (theta index, z index, height) by the annuli
+## of its voxels at VoxelBox.SUB sub-samples per axis: what box_edit.glsl's coverage adds up to for a ball in
+## the open (the drivers' expectations).
+static func ball_volume(radius: float, centre: Vector3, R: float, dtheta: float) -> float:
+	var n := VoxelBox.SUB
+	var w := (R - centre.z) * dtheta
+	var v := 0.0
+	for k in range(floori(centre.z - radius), floori(centre.z + radius) + 1):
+		var vol := VoxelColumn.voxel_volume(k, R, dtheta)
+		for j in range(floori(centre.y - radius), floori(centre.y + radius) + 1):
+			for i in range(floori(centre.x - radius / w), floori(centre.x + radius / w) + 1):
+				var inside := 0
+				for c in n:
+					var h := k + (c + 0.5) / n
+					var dh := h - centre.z
+					for a in n:
+						var dx := (i + (a + 0.5) / n - centre.x) * (R - h) * dtheta
+						for b in n:
+							var dz := j + (b + 0.5) / n - centre.y
+							inside += int(dx * dx + dz * dz + dh * dh <= radius * radius)
+				v += inside / float(n * n * n) * vol
+	return v
 
 
 ## Moves the player clear of a dump of v m³ at cell c: off the dump's disc (on it the pile rises under them and
@@ -240,7 +340,7 @@ func _clear_of(c: Vector2i, v: float) -> void:
 	var r := p.radius - Cyl.height_of(me, p.radius)
 	var off := Vector2(wrapf(Cyl.theta_of(me) - centre.x, -PI, PI) * r, me.z - centre.y)
 	var keep := pile_radius(v, terrain.materials.repose_dry[0]) + PILE_MARGIN
-	if off.length() <= terrain.tool_params.scoop_radius + 0.5 or off.length() >= keep:
+	if off.length() <= terrain.tool_params.scoop_ball + 0.5 or off.length() >= keep:
 		return
 	off = off.normalized() * keep
 	var to := Cyl.position(centre.x + off.x / r, centre.y + off.y, Cyl.height_of(me, p.radius), p.radius)
@@ -251,20 +351,6 @@ func _clear_of(c: Vector2i, v: float) -> void:
 
 func _show_held() -> void:
 	hud.text = "Shovel: %.2f m³" % held if held > 0.0 else ""
-
-
-## aim when given, else the cell of the crosshair's hit (the player's body excluded) within shovel_reach of the
-## player; NO_CELL when there is none.
-func _shovel_cell(aim: Vector2i) -> Vector2i:
-	if aim != TerrainSim.NO_CELL:
-		return aim
-	var hit := DebugEdit.look_hit(get_viewport(), [player.get_rid()])
-	if hit.is_empty():
-		return TerrainSim.NO_CELL
-	var q := terrain.station.to_local(hit.position)
-	if q.distance_to(terrain.station.to_local(player.global_position)) > terrain.tool_params.shovel_reach:
-		return TerrainSim.NO_CELL
-	return terrain.params.cell_of(Cyl.theta_of(q), q.z)
 
 
 ## The cell of the player's origin.
@@ -294,12 +380,4 @@ func _foot(mode: int, amount: float, limit: float) -> EditLayer.Op:
 	op.amount = amount
 	op.limit = limit
 	op.pack = false
-	return op
-
-
-## A shovel stamp of mode at c over the scoop disc, its limit the swell (a deposit ignores it).
-func _shovel_op(c: Vector2i, mode: int, amount: float) -> EditLayer.Op:
-	var op := _foot(mode, amount, terrain.materials.swell_factor[0])
-	op.cell = c
-	op.radius = terrain.tool_params.scoop_radius
 	return op

@@ -83,6 +83,21 @@ func _initialize() -> void:
 	p = VoxelColumn.pack(vox, 400, tall)
 	check(p.surface == 500.0 and p.gap_bottom[0] == f32(403 + 19661.0 / ONE) and p.gap_top[0] == 408.0 \
 			and p.gap_bottom[1] == 402.0 and p.gap_top[1] == 403.0 and p.gap_top[2] == 0.0, "lone partial %s" % p)
+	# (d) a roof: a tunnel cut under the surface sliver leaves its underside hanging from that sliver (two
+	# partials, air under, nothing full over): one run, the surface unchanged, one gap under it.
+	var roof := col(404.37)
+	vox = VoxelColumn.unpack(roof, 400, 8)
+	vox.solid[2] = 0; vox.solid[3] = roundi(0.13 * ONE)
+	p = VoxelColumn.pack(vox, 400, roof)
+	check(p.surface == roof.surface and p.gap_bottom[0] == 402.0 and p.gap_top[0] == f32(404 - roundi(0.13 * ONE) / float(ONE)) and p.gap_top[1] == 0.0, "roof underside %s" % p)
+	# unpack flags a roof's underside hanging, and pack hangs a flagged partial even over solid (a remnant the
+	# scoop left over a ball's centre, with the floor's remnant under it): one gap, not two.
+	v = VoxelColumn.unpack(gapped, 380, 40)
+	check(v.hanging[27] == 1 and v.hanging[30] == 0 and v.hanging[24] == 0, "hanging flags %s" % [v.hanging.slice(24, 31)])
+	vox = VoxelColumn.unpack(col(412.0), 400, 16)
+	vox.solid[9] = roundi(0.4 * ONE); vox.solid[10] = roundi(0.3 * ONE); vox.hanging[10] = 1
+	p = VoxelColumn.pack(vox, 400, col(412.0))
+	check(p.surface == 412.0 and p.gap_bottom[0] == f32(409 + roundi(0.4 * ONE) / float(ONE)) and p.gap_top[0] == f32(411 - roundi(0.3 * ONE) / float(ONE)) and p.gap_top[1] == 0.0, "flagged remnant hangs %s" % p)
 	# Loose at the range's bottom with no solid under it in the range lands on the stored run below.
 	vox = VoxelColumn.unpack(col(399.0), 400, 8)
 	vox.loose[0] = 32768

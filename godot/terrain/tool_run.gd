@@ -41,12 +41,14 @@
 ## jumps (S4): stood on the pile's highest cell, the player jumps four times 1.2 s apart: at least four
 ##    tamps, the solid gained over the box above 0.1 m³ and, times the swell, the loose lost within 1 %, and
 ##    at least one cell folded (no loose, surface risen).
-## shovel (k = 4, S8, the player 4 cells spinward of it), through Tools.scoop and dump aimed at cells:
-## 1. a 20 m³ deposit of radius 2 settles (a cone 3 m wide at the base, deep enough under the plus for a
-##    scoop to take loose only); a scoop at S8 holds scoop_volume within 1 %, the loose over the box
+## shovel (k = 4, S8, the player 4 cells spinward of it), through Tools.scoop_cell and dump_cell (the ball of the
+## tunnels design, centred on the cell's collider point, in the voxel box; the pile is reloaded into the box
+## once settled):
+## 1. a 20 m³ deposit of radius 2 settles (a cone 3 m wide at the base, deep enough under the apex for a
+##    ball to take loose only); a scoop at S8 holds between 0.5 and 5 m³, the loose over the box
 ##    of 12 dropped by what it holds within 0.1 % and the surface is bitwise unchanged (loose first);
 ## 2. dumped at S8 + (0, 6), the shovel is empty and the loose over the box is back within 0.1 %;
-## 3. a scoop of the bare ground at B = S8 - (0, 6) holds scoop_volume within 1 %, the annulus cut over the box
+## 3. a scoop of the bare ground at B = S8 - (0, 6) holds between 0.5 and 5 m³, the annulus cut over the box
 ##    of 4 times the swell is what it holds within 0.1 %, the box's loose unchanged within 1e-6 m³, the disc's
 ##    surface lower and its clay at most the surface;
 ## 4. dumped back at B, the box's loose gains what was held within 0.1 % once settled; two scoops, two dumps.
@@ -734,6 +736,8 @@ func _shovel(s8: Vector2i) -> bool:
 	var box := _box(s8, 12)
 	_stamp(_op(s8, 2, EditLayer.MODE_DEPOSIT, 20.0))
 	var waited := await _settled(s8)
+	_terrain.box.reload(box)
+	await _frames(2)
 	var s0 := _read("surface")
 	var l0 := _vol(_read("loose"), s0, box)
 	var timed0 := _timed.size()
@@ -741,14 +745,11 @@ func _shovel(s8: Vector2i) -> bool:
 	var edit_ms := _timed.slice(timed0).filter(func(e: Dictionary) -> bool: return e.name == "edit").map(func(e: Dictionary) -> float: return e.ms)
 	var s1 := _read("surface")
 	var l1 := _vol(_read("loose"), s1, box)
-	print("shovel: a 20 m³ pile at %s settled in %.2f s; the scoop holds %.6f m³ (%+.4f %% of %.2f), the loose over the box of 12 dropped %.6f m³ (%+.4f %% of it), surface unchanged: %s; its edit list %s ms" % [
-			s8, waited, held, (held / t.scoop_volume - 1.0) * 100.0, t.scoop_volume, l0 - l1, _residual("scoop loose", l0 - l1, held),
-			s1 == s0, edit_ms])
-	_report("scoop takes loose first", waited >= 0.0 and absf(held - t.scoop_volume) <= 0.01 * t.scoop_volume
+	print("shovel: a 20 m³ pile at %s settled in %.2f s; the scoop holds %.6f m³, the loose over the box of 12 dropped %.6f m³ (%+.4f %% of it), surface unchanged: %s; its edit list %s ms" % [
+			s8, waited, held, l0 - l1, _residual("scoop loose", l0 - l1, held), s1 == s0, edit_ms])
+	_report("scoop takes loose first", waited >= 0.0 and held > 0.5 and held < 5.0
 			and absf(l0 - l1 - held) <= 1e-3 * held and s1 == s0)
-	_tools.dump(s8 + Vector2i(0, 6))
-	var emptied := _tools.held == 0.0
-	await _frames(3)
+	var emptied := await _dump(s8 + Vector2i(0, 6))
 	var l2 := _vol(_read("loose"), _read("surface"), box)
 	print("shovel: dumped at %s, empty: %s; the loose over the box %.6f m³, was %.6f before the scoop (%+.4f %%)" % [
 			s8 + Vector2i(0, 6), emptied, l2, l0, _residual("dump", l2, l0)])
@@ -768,10 +769,9 @@ func _shovel(s8: Vector2i) -> bool:
 		return _f(s1, c) < _f(s0, c) and _f(clay_top, c) <= _f(s1, c) and _f(clay_bottom, c) <= _f(s1, c))
 	print("shovel: settled in %.2f s; bare ground at %s: the scoop holds %.6f m³, the annulus cut %.6f m³ · %.2f = %.6f (%+.4f %%), the loose over the box of 4 %+.9f m³, the disc dented under its clay: %s" % [
 			waited2, b, bit, removed, swell, removed * swell, _residual("scoop solid", removed * swell, bit), lb1 - lb0, dented])
-	_report("scoop bites solid dirt with the swell", waited2 >= 0.0 and absf(bit - t.scoop_volume) <= 0.01 * t.scoop_volume
+	_report("scoop bites solid dirt with the swell", waited2 >= 0.0 and bit > 0.5 and bit < 5.0
 			and absf(removed * swell - bit) <= 1e-3 * bit and absf(lb1 - lb0) <= 1e-6 and dented)
-	_tools.dump(b)
-	emptied = _tools.held == 0.0
+	emptied = await _dump(b)
 	var waited3 := await _settled(b)
 	var lb2 := _vol(_read("loose"), _read("surface"), bbox)
 	print("shovel: dumped back at %s, empty: %s, settled in %.2f s: the loose over the box of 4 gained %.6f m³ for %.6f held (%+.4f %%); %d scoops, %d dumps" % [
@@ -781,16 +781,38 @@ func _shovel(s8: Vector2i) -> bool:
 	return true
 
 
-## Scoops at c through Tools.scoop, waits for its counter to land (at most 30 frames), then 3 frames: the m³ the
-## shovel holds.
+## Scoops at c through Tools.scoop_cell, waits for its counter to land (at most 30 frames), then 3 frames: the
+## m³ the shovel holds.
 func _scoop(c: Vector2i) -> float:
-	_tools.scoop(c)
+	_tools.scoop_cell(c)
+	return await _landed_scoop()
+
+
+## Scoops the ball at station-local p (Tools.scoop) and waits as _scoop does.
+func _scoop_at(p: Vector3) -> float:
+	_tools.scoop(p)
+	return await _landed_scoop()
+
+
+func _landed_scoop() -> float:
 	for i in 30:
 		if not _tools._scoop_pending:
 			break
 		await get_tree().process_frame
 	await _frames(3)
 	return _tools.held
+
+
+## Dumps at c through Tools.dump_cell and waits for the placing to land as _scoop does: whether the shovel is
+## empty.
+func _dump(c: Vector2i) -> bool:
+	_tools.dump_cell(c)
+	for i in 30:
+		if not _tools._dump_pending:
+			break
+		await get_tree().process_frame
+	await _frames(3)
+	return _tools.held == 0.0
 
 
 ## Phase bore at a: an auger bores to depth and heaps its spoil beside itself, conserved and clear of the rim,
@@ -1255,20 +1277,39 @@ func _rock_spill() -> void:
 	_report("rock does not soak", dry and absorbed == 0.0 and absf(water - 1.0) <= 0.02)
 
 
-## A scoop on the first scoop disc of bare rock (every cell's surface at its bedrock_top) within 3 cells of the
-## player's cell + (0, 4), _rock_spill's search: accepted, it holds nothing.
-func _rock_scoop() -> void:
+## The cells under the shovel's ball aimed at cell c's collider point (its bounding box in the voxel box;
+## more than three across on high ground, where cells are narrower).
+func _ball_footprint(c: Vector2i) -> Array[Vector2i]:
+	var box := _terrain.box
+	var bb := box.ball_box(box.grid_of(_tools.surface_point(c)), _terrain.tool_params.scoop_ball)
+	var out: Array[Vector2i] = []
+	for y in range(bb[0].y, bb[0].y + bb[1].y):
+		for x in range(bb[0].x, bb[0].x + bb[1].x):
+			out.append(Vector2i(posmod(x, _terrain.params.n_theta()), y))
+	return out
+
+
+## The first cell within 6 of `from` whose ball footprint is all bare rock (every cell's surface at its
+## bedrock_top), or NO_CELL.
+func _bare_rock_site(from: Vector2i) -> Vector2i:
 	var surface := _read("surface")
 	var bedrock := _read("bedrock_top")
-	var from := _tools.player_cell() + Vector2i(0, 4)
 	var bare := func(c: Vector2i) -> bool: return _f(surface, c) <= _f(bedrock, c)
-	var at := TerrainSim.NO_CELL
-	for c in _box(from, 3):
-		if _disc(c, _terrain.tool_params.scoop_radius).all(bare):
-			at = c
-			break
+	for c in _box(from, 6):
+		var foot := _ball_footprint(c)
+		if not foot.is_empty() and foot.all(bare):
+			return c
+	return TerrainSim.NO_CELL
+
+
+## A scoop on the first cell within 6 of the player's cell + (0, 4) whose ball footprint is bare rock (every
+## cell's surface at its bedrock_top): accepted, it holds nothing.
+func _rock_scoop() -> void:
+	var surface := _read("surface")
+	var from := _tools.player_cell() + Vector2i(0, 4)
+	var at := _bare_rock_site(from)
 	if at == TerrainSim.NO_CELL:
-		_report("rock gives nothing (no bare-rock disc within 3 cells of %s)" % from, false)
+		_report("rock gives nothing (no bare-rock ball footprint within 6 cells of %s)" % from, false)
 		return
 	var scoops0 := _tools.scoops
 	var held := await _scoop(at)

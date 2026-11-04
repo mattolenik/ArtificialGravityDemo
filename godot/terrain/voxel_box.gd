@@ -38,6 +38,12 @@ const MODE_FREE := 0
 const MODE_MARK := 1
 const MODE_ALLOCATE := 2
 const MODE_FILL := 3
+## The ball ops' modes of box_edit.glsl, and its Params block.
+const EDIT_SCOOP := 0
+const EDIT_DUMP := 1
+const EDIT_PC_BYTES := 112
+## Sub-samples per axis of a voxel for a ball's coverage (box_edit.glsl's SUB; Tools.ball_volume).
+const SUB := 8
 
 var params: WorldParams
 var window: TerrainWindow
@@ -62,6 +68,11 @@ var _unpack_set: RID
 var _pack_shader: RID
 var _pack_pipeline: RID
 var _pack_set: RID
+var _edit_shader: RID
+var _edit_pipeline: RID
+var _edit_set: RID
+## The ball ops' counter: m³ in units of 1e-6, then a refusal flag. Cleared before each op.
+var _counter: RID
 
 
 ## Arithmetic only.
@@ -87,10 +98,12 @@ func _setup_rd() -> void:
 	_rd = RenderingServer.get_rendering_device()
 	_unpack_shader = _compile("res://terrain/shaders/box_unpack.glsl")
 	_pack_shader = _compile("res://terrain/shaders/box_pack.glsl")
-	if not _unpack_shader.is_valid() or not _pack_shader.is_valid():
+	_edit_shader = _compile("res://terrain/shaders/box_edit.glsl")
+	if not _unpack_shader.is_valid() or not _pack_shader.is_valid() or not _edit_shader.is_valid():
 		return
 	_unpack_pipeline = _rd.compute_pipeline_create(_unpack_shader)
 	_pack_pipeline = _rd.compute_pipeline_create(_pack_shader)
+	_edit_pipeline = _rd.compute_pipeline_create(_edit_shader)
 	_pool = _rd.storage_buffer_create(POOL_BRICKS * BRICK_BYTES)
 	var none := PackedInt32Array()
 	none.resize(SLOTS)
@@ -108,8 +121,14 @@ func _setup_rd() -> void:
 	zeros.resize(SLOTS * 4)
 	_needed = _rd.storage_buffer_create(zeros.size(), zeros)
 	_cells = _rd.storage_buffer_create(LIST_MAX * 8)
-	_unpack_set = _uniform_set(_unpack_shader)
-	_pack_set = _uniform_set(_pack_shader)
+	zeros.resize(8)
+	_counter = _rd.storage_buffer_create(8, zeros)
+	var buffers: Array[RID] = [_pool, _index, _dirty, _box_stats, edits.stats_rid(), _free, _needed, _cells]
+	_unpack_set = _uniform_set(_unpack_shader, buffers)
+	_pack_set = _uniform_set(_pack_shader, buffers)
+	var edit_buffers: Array[RID] = buffers.duplicate()
+	edit_buffers.append(_counter)
+	_edit_set = _uniform_set(_edit_shader, edit_buffers)
 
 
 func _compile(path: String) -> RID:
@@ -120,10 +139,9 @@ func _compile(path: String) -> RID:
 	return _rd.shader_create_from_spirv(spirv)
 
 
-## Bindings 0 pool, 1 index, 2 dirty, 3 box_stats, 4 the edit layer's stats, 5 the free stack, 6 needed,
-## 7 the cell list, then the window's fields in FIELDS order.
-func _uniform_set(shader: RID) -> RID:
-	var buffers: Array[RID] = [_pool, _index, _dirty, _box_stats, edits.stats_rid(), _free, _needed, _cells]
+## The buffers at bindings 0.. (pool, index, dirty, box_stats, the edit layer's stats, the free stack, needed,
+## the cell list; the counter for the edit shader), then the window's fields in FIELDS order.
+func _uniform_set(shader: RID, buffers: Array[RID]) -> RID:
 	var uniforms: Array[RDUniform] = []
 	for i in buffers.size() + TerrainWindow.FIELDS.size():
 		var u := RDUniform.new()
@@ -141,7 +159,7 @@ func _uniform_set(shader: RID) -> RID:
 func _notification(what: int) -> void:
 	if what != NOTIFICATION_PREDELETE or _rd == null:
 		return
-	var rids: Array[RID] = [_unpack_shader, _pack_shader, _pool, _index, _dirty, _box_stats, _free, _needed, _cells]
+	var rids: Array[RID] = [_unpack_shader, _pack_shader, _edit_shader, _pool, _index, _dirty, _box_stats, _free, _needed, _cells, _counter]
 	RenderingServer.call_on_render_thread(TerrainWindow._free_rids.bind(_rd, rids))
 
 
@@ -319,6 +337,132 @@ func _pc(o: Vector3i, mode: int, old: Vector3i, count: int) -> PackedByteArray:
 	return b
 
 
+## The grid frame of station-local p: (theta index, z index, height), continuous.
+func grid_of(p: Vector3) -> Vector3:
+	return Vector3(Cyl.theta_of(p) / params.dtheta(), p.z + params.length / 2.0, Cyl.height_of(p, params.radius))
+
+
+## The bounding box of voxels of the ball of radius m at grid point g: [first, first + extent), the theta
+## index unwrapped near g.x; an extent of zero when it is not wholly inside the box (and the station).
+func ball_box(g: Vector3, radius: float) -> Array[Vector3i]:
+	var w := (params.radius - g.z) * params.dtheta()
+	var first := Vector3i(floori(g.x - radius / w), floori(g.y - radius), floori(g.z - radius))
+	var last := Vector3i(floori(g.x + radius / w), floori(g.y + radius), floori(g.z + radius))
+	var extent := last - first + Vector3i.ONE
+	@warning_ignore("integer_division")
+	var around := params.n_theta() / BRICK
+	var inside := first.y >= 0 and last.y < params.n_z() and first.z >= bottom() and last.z < bottom() + BRICKS_UP * BRICK \
+			and extent.x <= 8 and extent.y <= 8 and extent.z <= 8
+	for bx in [first.x, last.x]:
+		inside = inside and posmod(floori(bx / 16.0) - _origin.x, around) < BRICKS_ACROSS
+	for by in [first.y, last.y]:
+		inside = inside and floori(by / 16.0) - _origin.y >= 0 and floori(by / 16.0) - _origin.y < BRICKS_ACROSS
+	return [first, extent if inside else Vector3i.ZERO]
+
+
+## Scoops the ball of radius m at station-local p (box_edit.glsl's scoop): loose first, then solid but rock, by
+## the ball's coverage; counted(m3, refused) lands with the loose-equivalent m³ taken (solid times its
+## material's swell), refused when a column would get a fifth gap (nothing taken). False, nothing dispatched,
+## when the ball is not wholly in the box.
+func scoop(p: Vector3, radius: float, swell: PackedFloat32Array, counted: Callable) -> bool:
+	var g := grid_of(p)
+	var bb := ball_box(g, radius)
+	if bb[1] == Vector3i.ZERO:
+		return false
+	dirty_pending = true
+	RenderingServer.call_on_render_thread(_edit_rd.bind(_edit_pc(EDIT_SCOOP, bb[0], bb[1], g, radius, swell, 0.0), PackedInt32Array(), PackedByteArray(), counted))
+	return true
+
+
+## Dumps volume m³ of loose into the air of the ball of radius m at p, nearest the centre first (the ball's
+## bricks allocated first); placed(m3, false) lands with what fit, the rest stays in the hand. False, nothing
+## dispatched, when the ball is not wholly in the box.
+func dump(p: Vector3, radius: float, volume: float, placed: Callable) -> bool:
+	var g := grid_of(p)
+	var bb := ball_box(g, radius)
+	if bb[1] == Vector3i.ZERO:
+		return false
+	var slots := PackedInt32Array()
+	for bz in range(floori(bb[0].z / 16.0), floori((bb[0].z + bb[1].z - 1) / 16.0) + 1):
+		for by in range(floori(bb[0].y / 16.0), floori((bb[0].y + bb[1].y - 1) / 16.0) + 1):
+			for bx in range(floori(bb[0].x / 16.0), floori((bb[0].x + bb[1].x - 1) / 16.0) + 1):
+				slots.append(slot_index(slot_of(Vector3i(bx, by, bz))))
+	dirty_pending = true
+	RenderingServer.call_on_render_thread(_edit_rd.bind(_edit_pc(EDIT_DUMP, bb[0], bb[1], g, radius, PackedFloat32Array([1, 1, 1, 1]), volume),
+			slots, _pc(_origin, MODE_ALLOCATE, FAR, 0), placed))
+	return true
+
+
+## One ball op: the counter cleared, the listed slots flagged needed and allocated (a dump), the op dispatched
+## over its one workgroup, the counter read back into cb(m3, flag).
+func _edit_rd(block: PackedByteArray, slots: PackedInt32Array, alloc_block: PackedByteArray, cb: Callable) -> void:
+	if not _edit_set.is_valid():
+		return
+	_rd.buffer_clear(_counter, 0, 8)
+	var one := PackedByteArray([1, 0, 0, 0])
+	for e in slots:
+		_rd.buffer_update(_needed, e * 4, 4, one)
+	_rd.capture_timestamp("box_edit_begin")
+	var list := _rd.compute_list_begin()
+	if not slots.is_empty():
+		_rd.compute_list_bind_compute_pipeline(list, _unpack_pipeline)
+		_rd.compute_list_bind_uniform_set(list, _unpack_set, 0)
+		_rd.compute_list_set_push_constant(list, alloc_block, alloc_block.size())
+		@warning_ignore("integer_division")
+		_rd.compute_list_dispatch(list, SLOTS / 64, 1, 1)
+		_rd.compute_list_add_barrier(list)
+	_rd.compute_list_bind_compute_pipeline(list, _edit_pipeline)
+	_rd.compute_list_bind_uniform_set(list, _edit_set, 0)
+	_rd.compute_list_set_push_constant(list, block, block.size())
+	_rd.compute_list_dispatch(list, 1, 1, 1)
+	_rd.compute_list_end()
+	_rd.capture_timestamp("box_edit_end")
+	var err := _rd.buffer_get_data_async(_counter, _counted.bind(cb), 0, 8)
+	if err != OK:
+		push_error("box counter readback: %s" % error_string(err))
+
+
+## Inside the device's readback flush: hands the counter (m³, and whether the op was refused) to cb, which must
+## only store them.
+func _counted(data: PackedByteArray, cb: Callable) -> void:
+	if cb.is_valid():
+		cb.call(data.decode_u32(0) * 1e-6, data.decode_u32(4) != 0)
+
+
+## The Params block of box_edit.glsl (std430, EDIT_PC_BYTES).
+func _edit_pc(mode: int, first: Vector3i, extent: Vector3i, g: Vector3, radius: float, swell: PackedFloat32Array, amount: float) -> PackedByteArray:
+	var fst := window.wanted_origin(window.center_tile)
+	var b := PackedByteArray()
+	b.resize(EDIT_PC_BYTES)
+	b.encode_s32(0, _origin.x)
+	b.encode_s32(4, _origin.y)
+	b.encode_s32(8, _origin.z)
+	b.encode_s32(12, mode)
+	b.encode_s32(16, first.x)
+	b.encode_s32(20, first.y)
+	b.encode_s32(24, first.z)
+	b.encode_s32(28, params.n_theta())
+	b.encode_s32(32, extent.x)
+	b.encode_s32(36, extent.y)
+	b.encode_s32(40, extent.z)
+	b.encode_s32(44, window.slots)
+	b.encode_float(48, g.x)
+	b.encode_float(52, g.y)
+	b.encode_float(56, g.z)
+	b.encode_float(60, radius)
+	for m in 4:
+		b.encode_float(64 + 4 * m, swell[m] if m < swell.size() else 1.0)
+	b.encode_float(80, amount)
+	b.encode_float(84, params.radius)
+	b.encode_float(88, params.dtheta())
+	b.encode_s32(92, params.n_z())
+	b.encode_s32(96, fst.x)
+	b.encode_s32(100, fst.y)
+	@warning_ignore("integer_division")
+	b.encode_s32(104, params.n_theta() / BRICK)
+	return b
+
+
 ## The brick in `slot`, synchronously (a stall: drivers only); empty when the slot holds none.
 func read_brick(slot: Vector3i) -> PackedByteArray:
 	var out: Array[PackedByteArray] = []
@@ -353,4 +497,4 @@ static func voxel(brick: PackedByteArray, x: int, y: int, z: int) -> Dictionary:
 	var w0 := brick.decode_u32(o)
 	var w1 := brick.decode_u32(o + 4)
 	return {"solid": w0 & 0xFFFF, "loose": w0 >> 16, "material": w1 & 255, "compaction": (w1 >> 8) & 255,
-			"saturation": (w1 >> 16) & 255, "dirty": w1 >> 24}
+			"saturation": (w1 >> 16) & 255, "hanging": (w1 >> 24) & 1}

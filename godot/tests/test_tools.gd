@@ -34,7 +34,16 @@ func _initialize() -> void:
 	check(Auger.spoil_cell_of(Vector2i(10, 9), Vector2i(0, -1), 7, 16384) == Vector2i(10, 2), "spoil cell along the axis")
 	# The shovel: two and a half cubic metres a scoop over the five-cell plus, within 3 m; its stamp passes the
 	# disc's cell count as stamp_op does, so each cell takes its share.
-	check(t.scoop_volume == 2.5 and t.scoop_radius == 1 and t.shovel_reach == 3.0, "shovel numbers")
+	check(t.scoop_volume == 2.5 and t.scoop_radius == 1, "shovel numbers")
+	# Tunnels: the shovel reaches 4 m (a roof overhead) and scoops a ball of radius 1 m in the box; the ball's
+	# volume by the annuli of its voxels at the shader's sub-sampling is within 1 % of 4/3 pi wherever its
+	# centre lies in a voxel.
+	check(t.shovel_reach == 4.0 and t.scoop_ball == 1.0, "reach and ball")
+	var R := 3200.0
+	var dtheta := TAU / 16384
+	for centre: Vector3 in [Vector3(0.5, 0.5, 410.37), Vector3(0.0, 0.0, 410.5), Vector3(0.7, 0.2, 410.9)]:
+		var v := Tools.ball_volume(1.0, centre, R, dtheta)
+		check(absf(v - 4.0 / 3.0 * PI) <= 0.01 * 4.0 / 3.0 * PI, "ball volume at %s: %.4f" % [centre, v])
 	check(EditLayer.MODE_SCOOP == 8, "scoop mode")
 	var op := EditLayer.Op.new()
 	op.cell = Vector2i(7, 40); op.radius = t.scoop_radius; op.mode = EditLayer.MODE_SCOOP; op.amount = t.scoop_volume

@@ -468,6 +468,16 @@ func stamp_tool(op: EditLayer.Op) -> bool:
 	return true
 
 
+## A box op (Tools, through VoxelBox) changed the ground within reach cells of cell: the collider follows as it
+## does after a tool stamp (_collider_touch, and _retouch while the tile is active).
+func touch(cell: Vector2i, reach: int) -> void:
+	_last_tool = cell
+	_last_reach = reach
+	_last_frame = Engine.get_process_frames()
+	_last_active = false
+	_collider_touch(cell, reach)
+
+
 ## Keeps tool stamps and the simulation from moving loose dirt or water into the cells within radius cells
 ## of cell (the standing auger's shaft); a negative radius clears it. The tiles under the old obstacle are
 ## activated, so a pile held against it slumps on once it goes (decision 3).

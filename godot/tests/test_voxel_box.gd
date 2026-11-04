@@ -30,9 +30,9 @@ func _initialize() -> void:
 	brick.resize(VoxelBox.BRICK_BYTES)
 	var o := ((5 * 16 + 7) * 16 + 3) * 8
 	brick.encode_u32(o, 24248 | (1000 << 16))
-	brick.encode_u32(o + 4, 1 | (50 << 8) | (7 << 16))
+	brick.encode_u32(o + 4, 1 | (50 << 8) | (7 << 16) | (1 << 24))
 	var v := VoxelBox.voxel(brick, 3, 5, 7)
-	check(v.solid == 24248 and v.loose == 1000 and v.material == 1 and v.compaction == 50 and v.saturation == 7, "voxel %s" % v)
+	check(v.solid == 24248 and v.loose == 1000 and v.material == 1 and v.compaction == 50 and v.saturation == 7 and v.hanging == 1, "voxel %s" % v)
 	check(VoxelBox.voxel(brick, 4, 5, 7).solid == 0, "another voxel")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

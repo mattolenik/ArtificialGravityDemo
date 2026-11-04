@@ -1,4 +1,4 @@
-[gd_scene load_steps=14 format=3]
+[gd_scene load_steps=15 format=3]
 
 [ext_resource type="PackedScene" path="res://station.tscn" id="1"]
 [ext_resource type="Script" path="res://emitter.gd" id="2"]
@@ -11,6 +11,7 @@
 [ext_resource type="Script" path="res://light_bar.gd" id="9"]
 [ext_resource type="Script" path="res://terrain/debug_edit.gd" id="10"]
 [ext_resource type="Script" path="res://terrain/tools.gd" id="11"]
+[ext_resource type="PackedScene" path="res://terrain/shovel_patch.tscn" id="12"]
 
 [sub_resource type="Environment" id="1"]
 ambient_light_source = 2
@@ -98,11 +99,14 @@ terrain = NodePath("../Station/Terrain")
 script = ExtResource("10")
 terrain = NodePath("../Station/Terrain")
 
-[node name="Tools" type="Node" parent="." node_paths=PackedStringArray("terrain", "player", "hud")]
+[node name="Tools" type="Node" parent="." node_paths=PackedStringArray("terrain", "player", "hud", "patch")]
 script = ExtResource("11")
 terrain = NodePath("../Station/Terrain")
 player = NodePath("../Station/Player")
 hud = NodePath("../Panel/Box/Shovel")
+patch = NodePath("ShovelPatch")
+
+[node name="ShovelPatch" parent="Tools" instance=ExtResource("12")]
 
 [connection signal="pressed" from="Panel/Box/Buttons/Spawn" to="Station/Emitter" method="spawn"]
 [connection signal="pressed" from="Panel/Box/Buttons/Clear" to="Station/Emitter" method="clear_spawned"]

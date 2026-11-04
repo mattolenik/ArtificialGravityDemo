@@ -9,6 +9,17 @@
 ##    window field bit for bit as before, the box's origin having changed and come back.
 ## reload: a 2 m³ window-side deposit of radius 1 at R1, then reload of its disc: the loose fractions over the
 ##    disc's columns, each by its voxel's annulus, add up to 2 m³ within 0.1 %, as the window's loose does.
+## shovel (S, flat dry ground, the player 4 cells spinward): a scoop at S's collider point holds half the ball
+##    (Tools.ball_volume) times the swell within 2 %, and the window's surface over the box of 3 dropped by
+##    that solid volume (_removed) within 0.1 %; dumped 4 m along +z, the shovel is empty, the window's loose
+##    over the box of 3 there and the box's loose fractions by their annuli both hold it within 0.1 %; two
+##    scoops at W (a pit about 2 m deep) then two balls 1.5 m under the wall's surface 1.2 m along +z: the
+##    column 2 m along holds exactly one gap under an unchanged surface (the second ball merged with the first's
+##    hollow); the ring is shown while the player looks at the ground near them and hidden looking level (the
+##    hit beyond reach).
+## rock (the noise report's rock site): a scoop on the first cell within 6 of the player's cell + (0, 4)
+##    whose ball footprint is bare rock (every cell's surface at its bedrock_top) holds nothing and changes
+##    no surface; the footprint's cells and their top voxels are printed.
 ## The GPU time of the unpack lists (the first fill, the moves, the reload) and the pack lists is printed
 ## against 0.5 ms per brick allocated.
 extends "res://terrain/tool_run.gd"
@@ -29,6 +40,12 @@ func _route() -> void:
 		return
 	_phase = "reload"
 	if not await _reload(spawn + Vector2i(0, 40)):
+		return
+	_phase = "shovel"
+	if not await _shovel_box(spawn + Vector2i(0, 80)):
+		return
+	_phase = "rock"
+	if not await _rock_box():
 		return
 	_phase = ""
 	await _frames(6)
@@ -79,7 +96,7 @@ func _stack(cell: Vector2i) -> Array[PackedByteArray]:
 ## The 64 voxels of cell's column from its stack, as VoxelColumn returns them.
 func _column_vox(stack: Array[PackedByteArray], cell: Vector2i) -> Dictionary:
 	var n := VoxelBox.BRICKS_UP * VoxelBox.BRICK
-	var vox := {"solid": PackedInt32Array(), "loose": PackedInt32Array(), "material": PackedByteArray(), "compaction": PackedByteArray()}
+	var vox := {"solid": PackedInt32Array(), "loose": PackedInt32Array(), "material": PackedByteArray(), "compaction": PackedByteArray(), "hanging": PackedByteArray()}
 	for k: String in vox:
 		vox[k].resize(n)
 	var x := posmod(cell.x, VoxelBox.BRICK)
@@ -94,6 +111,7 @@ func _column_vox(stack: Array[PackedByteArray], cell: Vector2i) -> Dictionary:
 			vox.loose[i] = v.loose
 			vox.material[i] = v.material
 			vox.compaction[i] = v.compaction
+			vox.hanging[i] = v.hanging
 	return vox
 
 
@@ -183,13 +201,112 @@ func _reload(r1: Vector2i) -> bool:
 	return true
 
 
+## The box's loose over cells, each voxel's fraction by its annulus, from the columns' brick stacks.
+func _box_loose(cells: Array[Vector2i]) -> float:
+	var p := _terrain.params
+	var stacks := {}
+	var got := 0.0
+	for c in cells:
+		var key := Vector2i(floori(c.x / 16.0), floori(c.y / 16.0))
+		if not stacks.has(key):
+			stacks[key] = _stack(c)
+		var vox := _column_vox(stacks[key], c)
+		for i in vox.loose.size():
+			got += vox.loose[i] / float(VoxelColumn.FRACTION_ONE) * VoxelColumn.voxel_volume(_terrain.box.bottom() + i, p.radius, p.dtheta())
+	return got
+
+
+func _shovel_box(s: Vector2i) -> bool:
+	if not await _teleport(s + Vector2i(4, 0)):
+		return false
+	var box := _terrain.box
+	var p := _terrain.params
+	var t := _terrain.tool_params
+	var swell := _terrain.materials.swell_factor[0]
+	var cells := _box(s, 3)
+	var s0 := _read("surface")
+	var held := await _scoop(s)
+	var s1 := _read("surface")
+	var removed := _removed(s0, s1, cells)
+	var half := Tools.ball_volume(t.scoop_ball, box.grid_of(_tools.surface_point(s)), p.radius, p.dtheta()) / 2.0 * swell
+	print("shovel: a scoop on flat ground at %s holds %.6f m³ (half the ball · swell %.2f = %.6f, %+.2f %%); the surface over the box of 3 dropped %.6f m³ · swell = %.6f (%+.4f %%)" % [
+			s, held, swell, half, (held / half - 1.0) * 100.0, removed, removed * swell, _residual("box scoop", removed * swell, held)])
+	_report("a scoop takes a half ball of solid, counted by the annulus", held > 0.0 and absf(held - half) <= 0.02 * half and absf(removed * swell - held) <= 1e-3 * held)
+	var d := s + Vector2i(0, 4)
+	var dcells := _box(d, 3)
+	var ld0 := _vol(_read("loose"), _read("surface"), dcells)
+	var emptied := await _dump(d)
+	var ld1 := _vol(_read("loose"), _read("surface"), dcells)
+	var got := _box_loose(dcells)
+	print("shovel: dumped at %s, empty: %s; the window's loose over the box of 3 gained %.6f m³, the box's fractions hold %.6f m³ (%+.4f %%)" % [
+			d, emptied, ld1 - ld0, got, _residual("box dump", got, held)])
+	_report("a dump's loose lands in the box and the window", emptied and absf(ld1 - ld0 - held) <= 1e-3 * held and absf(got - held) <= 1e-3 * held)
+	var w := s + Vector2i(0, -12)
+	await _scoop(w)
+	await _scoop(w)
+	await _dump(s + Vector2i(0, 8))
+	var sw := _read("surface")
+	var wall := w + Vector2i(0, 2)
+	var top := _f(sw, wall)
+	var aim := Cyl.position((w.x + 0.5) * p.dtheta(), -p.length / 2.0 + w.y + 0.5 + 1.2, top - 1.5, p.radius)
+	var first := await _scoop_at(aim)
+	var second := await _scoop_at(aim)
+	var gaps := 0
+	for g in 4:
+		gaps += int(_f(_read("gap_top%d" % g), wall) > _f(_read("gap_bottom%d" % g), wall))
+	var roof := _f(_read("surface"), wall)
+	print("shovel: a pit at %s (floor %.2f m under the wall's top %.2f), then two balls into its wall: %.6f and %.6f m³ held; the wall column %s holds %d gap(s) [%.2f, %.2f] under a surface at %.2f" % [
+			w, top - _f(sw, w), top, first, second - first, wall, gaps, _f(_read("gap_bottom0"), wall), _f(_read("gap_top0"), wall), roof])
+	_report("a wall scoop makes one gap under the roof, a second merges with it", first > 0.0 and second > first and gaps == 1 and roof == top)
+	await _dump(s + Vector2i(0, 8))
+	_player.look(Vector2(0.0, 300.0))
+	await _frames(3)
+	var shown := _tools.patch.visible
+	_player.look(Vector2(0.0, -300.0))
+	await _frames(3)
+	var hidden := not _tools.patch.visible
+	print("shovel: the ring shown looking at the ground: %s, hidden looking level (the ground beyond reach): %s" % [shown, hidden])
+	_report("the ring follows the aim", shown and hidden)
+	return true
+
+
+func _rock_box() -> bool:
+	var site := NoiseReport.rock_site(_terrain.maps, _terrain.params)
+	_terrain.teleport(site.x, site.y)
+	if not await _settled_patch():
+		return false
+	await _frames(3)
+	var surface := _read("surface")
+	var bedrock := _read("bedrock_top")
+	var material := _read("material")
+	var loose := _read("loose")
+	var from := _tools.player_cell() + Vector2i(0, 4)
+	var at := _bare_rock_site(from)
+	if at == TerrainSim.NO_CELL:
+		_report("a scoop on bare rock takes nothing (no bare-rock ball footprint within 6 cells of %s)" % from, false)
+		return true
+	var box := _terrain.box
+	for c in _ball_footprint(at):
+		var k := floori(_f(surface, c))
+		var vox := []
+		for kk in [k + 1, k, k - 1]:
+			var data := box.read_brick(VoxelBox.slot_of(box.brick_of_cell(c, kk)))
+			vox.append("%d:%s" % [kk, VoxelBox.voxel(data, posmod(c.x, 16), posmod(kk, 16), posmod(c.y, 16)) if not data.is_empty() else "none"])
+		print("rock cell %s: material %d, surface %.3f, bedrock %.3f, loose %.4f; voxels %s" % [c, _b(material, c), _f(surface, c), _f(bedrock, c), _f(loose, c), vox])
+	var held := await _scoop(at)
+	var same := _read("surface") == surface
+	print("rock: a scoop at %s holds %.6f m³, surface unchanged: %s" % [at, held, same])
+	_report("a scoop on bare rock takes nothing", held == 0.0 and same)
+	return true
+
+
 func _box_summary() -> void:
 	print("---- box run ----")
 	print("machine: %s, %s" % [OS.get_processor_name(), RenderingServer.get_video_adapter_name()])
 	var bricks := _terrain.box.allocated()
 	var stats := _terrain.box.read_stats()
 	print("box: %d bricks allocated (%.1f MB), gap overflows %d, pool dry %d" % [bricks, bricks * VoxelBox.BRICK_BYTES / 1048576.0, stats[VoxelBox.SLOTS], stats[VoxelBox.SLOTS + 1]])
-	for pass_name: String in ["box_unpack", "box_pack"]:
+	for pass_name: String in ["box_unpack", "box_pack", "box_edit"]:
 		var ms: Array[float] = []
 		for t in _timed:
 			if t.name == pass_name:
@@ -197,6 +314,6 @@ func _box_summary() -> void:
 		print("  %-11s per list %s" % [pass_name, Smoke._stat(ms, BOX_BUDGET * bricks)])
 		if not ms.is_empty():
 			print("  %-11s the longest list per brick allocated %.4f ms (budget %.2f)" % [pass_name, ms.max() / bricks, BOX_BUDGET])
-	for phase: String in ["unpack", "move", "reload"]:
+	for phase: String in ["unpack", "move", "reload", "shovel", "rock"]:
 		var st := _stat_of(phase)
 		print("  %-6s %5.1f s; %s; %d reads" % [phase, st.time, Smoke._times(st.cpu, st.gpu), st.reads])

@@ -7,13 +7,14 @@
 // 0 free: a slot whose brick (under the old origin) lies outside the new box gives its brick back to the
 //   free stack and goes unallocated.
 // 1 mark: a column new to the box (or its layers new to it) flags the slots its content needs.
-// 2 allocate: a flagged, unallocated slot pops a brick from the free stack; the flag is cleared.
+// 2 allocate: a flagged, unallocated slot pops a brick from the free stack and clears it; the flag is cleared.
 // 3 fill: a new column writes its voxels (VoxelColumn.unpack's rule, box_column.glslh) into its allocated
 //   slots; an unallocated slot was air. A column off the station or not resident writes air.
 // With count > 0, modes 1 and 3 run over the cells listed instead (a reload after a window-side stamp: the
 // whole column again, its dirty flag dropped since the window is the truth).
 // A voxel is two uints at ((y * 16 + z) * 16 + x) * 2 of its brick: solid | loose << 16 (fractions of
-// 65535), material | compaction << 8 | saturation << 16.
+// 65535), material | compaction << 8 | saturation << 16 | flags << 24 (bit 0: the solid hangs from the
+// ceiling, box_column.glslh).
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
@@ -100,7 +101,11 @@ void main() {
 		if (needed[gid] != 0u && index[gid] < 0) {
 			int top = atomicAdd(free_top, -1);
 			if (top > 0) {
-				index[gid] = free_list[top - 1];
+				int b = free_list[top - 1];
+				index[gid] = b;
+				for (int i = 0; i < VOXELS_PER_BRICK * 2; i++) {
+					pool[b * VOXELS_PER_BRICK * 2 + i] = 0u;
+				}
 			} else {
 				atomicAdd(free_top, 1);
 				atomicAdd(box_stats[SLOTS + 1], 1u);  // the pool ran dry (never for the ground: 1024 slots, 1536 bricks)
@@ -179,7 +184,7 @@ void main() {
 			int i = L * 16 + y;
 			int v = base + ((y * 16 + within.y) * 16 + within.x) * 2;
 			pool[v] = sol[i] | (loo[i] << 16);
-			pool[v + 1] = mat[i] | (cmp[i] << 8) | (sat << 16);
+			pool[v + 1] = mat[i] | (cmp[i] << 8) | (sat << 16) | (flg[i] << 24);
 		}
 	}
 }
