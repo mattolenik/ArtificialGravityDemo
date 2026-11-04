@@ -285,6 +285,17 @@ func _process(delta: float) -> void:
 		_hold(b, not covered(station.to_local(b.global_position)))
 
 
+## The reset-world button: the world's saved edits go (its generated maps stay, so the same world comes
+## back fresh), nothing is saved on the way out (persist_edits off: _exit_tree and the autosave skip), and
+## the main scene reloads with the player at the spawn.
+func reset_world() -> void:
+	persist_edits = false
+	var err := WorldIO.wipe_edits(world_name)
+	if err != OK:
+		push_error("Wiping the edits of world '%s' failed: %s" % [world_name, error_string(err)])
+	get_tree().reload_current_scene()
+
+
 ## With persist_edits, packs the active tiles and the resident tiles holding an unpacked stamp synchronously
 ## first, so a quit mid-slump keeps the pile and a stamp made just before the quit is saved; without, nothing
 ## is saved, so the synchronous readback is skipped.

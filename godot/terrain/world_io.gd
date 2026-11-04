@@ -90,3 +90,16 @@ static func load_edits(name: String) -> Dictionary:
 			blob = EditLayer.upgrade_v2(blob)
 		out[Vector2i(xy[0].to_int(), xy[1].to_int())] = blob
 	return out
+
+
+## Deletes every file of the world's tiles/ (its saved edits); the directory, the generated maps and the
+## params stay (load_edits wants the directory). OK with no tiles/ at all. Stops at the first error.
+static func wipe_edits(name: String) -> Error:
+	var dir := _dir(name) + "/tiles"
+	if not DirAccess.dir_exists_absolute(dir):
+		return OK
+	for file in DirAccess.get_files_at(dir):
+		var err := DirAccess.remove_absolute(dir + "/" + file)
+		if err != OK:
+			return err
+	return OK

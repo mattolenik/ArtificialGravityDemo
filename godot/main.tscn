@@ -81,6 +81,11 @@ layout_mode = 2
 focus_mode = 0
 text = "Spawn view"
 
+[node name="Reset" type="Button" parent="Panel/Box/Buttons"]
+layout_mode = 2
+focus_mode = 0
+text = "Reset world"
+
 [node name="Info" type="Label" parent="Panel/Box"]
 layout_mode = 2
 
@@ -111,3 +116,4 @@ patch = NodePath("ShovelPatch")
 [connection signal="pressed" from="Panel/Box/Buttons/Spawn" to="Station/Emitter" method="spawn"]
 [connection signal="pressed" from="Panel/Box/Buttons/Clear" to="Station/Emitter" method="clear_spawned"]
 [connection signal="pressed" from="Panel/Box/Buttons/View" to="Station/Emitter" method="toggle_spawn_view"]
+[connection signal="pressed" from="Panel/Box/Buttons/Reset" to="Station/Terrain" method="reset_world"]
