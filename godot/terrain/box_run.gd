@@ -49,6 +49,26 @@
 ##    (no loose floating in the box's voxels once settled); a dump of 2 m³ at the feet leaves
 ##    the player standing on the pile (a ray from the head down to under the feet meets the ground no higher
 ##    than the feet; the unbury rule fired at most once).
+## tscroll (after the tunnel and inside phases): 600 m away (the chunk leaves the box) and back into the pit:
+##    the tunnel's columns bit for bit as before (every window field but the loose ones over the tunnel's
+##    rows; the loose by volume within 0.1 %: a settled pile creeps a few counts on re-entry, and the pit's
+##    floor is tamped by the player's landing), the chunk touched and meshed again within 3 s, the player
+##    stood inside on the mesh (not held, the feet over it).
+## trestart: the in-process restart of the tool run (Terrain._exit_tree packs, main.tscn reopens on the saved
+##    edits), with 2 m³ dumped at the tunnel's floor first: the tunnel's columns bit for bit as before, its
+##    pile's loose within 0.1 % (and over 1.9 m³), the chunk meshed again
+##    within 5 s, the player stood inside.
+## The exit (any run with the tunnel): a scoop at the tunnel's end in the quit's frame (no pack of the box in
+##    between): the exit pack must carry its gap into the tile's blob, else an ERROR line fails the run.
+## play (P, flat ground; the shovel as the user plays it, through Tools and the crosshair): the player looks
+##    down and holds T for nine scoops, looking a little lower and pressing again whenever the sinking hit
+##    leaves the shovel's reach (a pit ahead, at least 1.5 m deep and under the free height, so its walls
+##    stand), is stood in the pit facing its +z wall, holds W for 6 s with the crosshair's hit steered over
+##    the wall and T whenever the ring is on its mark (two heights, two columns: a tunnel the player walks
+##    into as it opens; at least three cells along +z with a gap under a surface the dig left alone, their
+##    chunk touched and meshed), then walks on by W for 2 s: at least eight scoops, the hand not empty, never
+##    held, the feet over ground every frame, walked along +z from the pit's floor a metre past the tunnel's
+##    mouth.
 ## The GPU time of the unpack lists (the first fill, the moves, the reload) and the pack lists is printed
 ## against 0.5 ms per brick allocated.
 extends "res://terrain/tool_run.gd"
@@ -69,9 +89,12 @@ func _route() -> void:
 		"unpack": _unpack.bind(spawn), "move": _move.bind(spawn), "seam": _seam_move.bind(spawn), "reload": _reload.bind(spawn + Vector2i(0, 40)),
 		"shovel": _shovel_box.bind(spawn + Vector2i(0, 80)), "rock": _rock_box, "sand": _sand.bind(spawn + Vector2i(0, -40)), "edge": _edge.bind(spawn),
 		"cave": _cave.bind(spawn + Vector2i(0, -80)), "pickup": _pickup_box.bind(spawn + Vector2i(40, 0)),
-		"tunnel": _tunnel.bind(Vector2i(t_site.x / 16 * 16 + 8, t_site.y / 16 * 16 + 5)), "inside": _inside}
+		"tunnel": _tunnel.bind(Vector2i(t_site.x / 16 * 16 + 8, t_site.y / 16 * 16 + 5)), "inside": _inside,
+		"tscroll": _tunnel_scroll, "trestart": _tunnel_restart,
+		"play": _play.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 48) / 16 * 16 + 5))}
 	for phase: String in phases:
-		if not only.is_empty() and phase != only and not (only == "inside" and phase == "tunnel"):
+		if not only.is_empty() and phase != only and not (only in ["inside", "tscroll", "trestart"] and phase == "tunnel") \
+				and not (only in ["tscroll", "trestart"] and phase == "inside"):
 			continue
 		_phase = phase
 		if not await phases[phase].call():
@@ -80,6 +103,8 @@ func _route() -> void:
 	await _frames(6)
 	_box_summary()
 	print("PASS" if _ok else "FAIL")
+	if _tunnel_site != TerrainSim.NO_CELL:
+		_tunnel_exit()
 	get_tree().quit(0 if _ok else 1)
 
 
@@ -576,7 +601,7 @@ func _box_summary() -> void:
 		print("  %-11s per list %s" % [pass_name, Smoke._stat(ms, BOX_BUDGET * bricks)])
 		if not ms.is_empty():
 			print("  %-11s the longest list per brick allocated %.4f ms (budget %.2f)" % [pass_name, ms.max() / bricks, BOX_BUDGET])
-	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup", "tunnel", "inside"]:
+	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup", "tunnel", "inside", "tscroll", "trestart", "play"]:
 		var st := _stat_of(phase)
 		if st.cpu.is_empty():
 			continue
@@ -767,6 +792,294 @@ func _inside() -> bool:
 			_tools.held, waited3, v3 - v2, _residual("inside feet", v3 - v2, 2.0), Cyl.height_of(q, p.radius) - Cyl.height_of(me, p.radius), clear, ("%.3f m over the feet" % head) if is_finite(head) else "nowhere", _tools.lifts - lifts0])
 	_report("a dump at the feet leaves the player standing on it", _tools.held == 0.0 and waited3 >= 0.0 and absf(v3 - v2 - 2.0) <= 2e-3 and clear >= -0.05 and clear <= 0.3 and (not is_finite(head) or head <= 0.05) and _tools.lifts - lifts0 <= 1)
 	return true
+
+
+## Turns the player and tilts the camera toward station-local target, as the mouse would (the camera rides
+## a spring arm, so a frame or two converges).
+func _aim_at(target: Vector3) -> void:
+	var cam: Camera3D = get_viewport().get_camera_3d()
+	var up := _player.up_direction
+	var dir := (_station.global_transform * target - cam.global_position).normalized()
+	var fwd := -cam.global_basis.z
+	var yaw := (fwd - up * fwd.dot(up)).signed_angle_to(dir - up * dir.dot(up), up)
+	var pitch := asin(clampf(dir.dot(up), -1.0, 1.0)) - asin(clampf(fwd.dot(up), -1.0, 1.0))
+	_player.look(Vector2(-yaw, -pitch) / _player.mouse_sensitivity)
+
+
+## Nudges the look so the crosshair's hit lands at station-local target's height and side, as a player does
+## watching the ring: the hit's distance from the target across the view, INF with no hit in reach (the look
+## turns toward the target itself then).
+func _aim_hit(target: Vector3) -> float:
+	var hit := _tools.shovel_hit()
+	if hit.is_empty():
+		_aim_at(target)
+		return INF
+	var cam: Camera3D = get_viewport().get_camera_3d()
+	var at: Vector3 = _station.global_transform * hit.position
+	var err := at - _station.global_transform * target
+	var d := (at - cam.global_position).length()
+	var across := Vector2(err.dot(cam.global_basis.x), err.dot(cam.global_basis.y))
+	_player.look(Vector2(-atan2(across.x, d), atan2(across.y, d)) / _player.mouse_sensitivity)
+	return across.length()
+
+
+## Phase play at P (see the header). False after quitting on a timeout.
+func _play(c: Vector2i) -> bool:
+	if not await _teleport(c + Vector2i(0, -3)):
+		return false
+	var p := _terrain.params
+	var box := _terrain.box
+	_face(Vector3(0, 0, 1))
+	var scoops0 := _tools.scoops
+	var held0 := _tools.held
+	var s0 := _read("surface")
+	# Looking down at the ground ahead, T held for 6 s: the hit sinks with the pit, and when it drops out of
+	# the shovel's reach (the hold ends) the player looks a little further down and presses T again.
+	var down := 250.0
+	_player.look(Vector2(0.0, down))
+	await _frames(3)
+	_press(KEY_T, true)
+	var t0 := Time.get_ticks_msec()
+	var pressed := t0
+	# Nine scoops at most: a pit past the free height (4 m) caves in to a bowl no tunnel starts from.
+	while Time.get_ticks_msec() - t0 < 4000 and _tools.scoops - scoops0 < 9:
+		await get_tree().process_frame
+		if not _tools._t_down and Time.get_ticks_msec() - pressed >= 250:
+			_player.look(Vector2(0.0, 40.0))
+			down += 40.0
+			_press(KEY_T, true)
+			pressed = Time.get_ticks_msec()
+	_press(KEY_T, false)
+	_player.look(Vector2(0.0, -down))
+	await _frames(3)
+	var s1 := _read("surface")
+	var deepest := 0.0
+	var pit := c
+	for x in _box(c, 4):
+		if _f(s0, x) - _f(s1, x) > deepest:
+			deepest = _f(s0, x) - _f(s1, x)
+			pit = x
+	var pit_scoops := _tools.scoops - scoops0
+	print("play: T held 4 s looking down: %d scoops, the hand %.3f m³, the pit's deepest cell %s %.2f m down" % [pit_scoops, _tools.held - held0, pit, deepest])
+	# Into the pit, facing its +z wall: W held for 6 s, the crosshair's hit steered over the wall at two heights
+	# (1 and 1.5 m over the pit's floor, as the tunnel phase's balls) and two columns (half a metre either
+	# side), T held while the ring is within 0.3 m of its mark, the player walking in as the cut opens.
+	var floor_h := _f(s1, pit) + _f(_read("loose"), pit)
+	await _settled(pit)
+	_player.global_position = _station.global_transform * Cyl.position((pit.x + 0.5) * p.dtheta(), -p.length / 2.0 + pit.y + 0.5, floor_h + 1.0 + Tools.STAND, p.radius)
+	_face(Vector3(0, 0, 1))
+	await _frames(10)
+	var touched0 := box.touched.size()
+	var z0 := _station.to_local(_player.global_position).z
+	_press(KEY_W, true)
+	t0 = Time.get_ticks_msec()
+	pressed = t0
+	while Time.get_ticks_msec() - t0 < 6000:
+		await get_tree().process_frame
+		var me := _station.to_local(_player.global_position)
+		var k := (Time.get_ticks_msec() - t0) / 300
+		var off := _aim_hit(Cyl.position(Cyl.theta_of(me) + (0.5 if k % 2 == 0 else -0.5) / (p.radius - floor_h), me.z + 1.0, floor_h + (1.0 if k % 4 < 2 else 1.5), p.radius))
+		if off > 0.3:
+			if _tools._t_down:
+				_press(KEY_T, false)
+		elif not _tools._t_down and Time.get_ticks_msec() - pressed >= 250:
+			_press(KEY_T, true)
+			pressed = Time.get_ticks_msec()
+	_press(KEY_T, false)
+	_press(KEY_W, false)
+	await _shot("box_play")
+	# The roofed cells along +z from the pit: a gap under a surface the dig left alone (the pit's angled
+	# scoops leave a ramp on its +z side, trenched to the floor before the wall proper).
+	var s2 := _read("surface")
+	var gb := _read("gap_bottom0")
+	var gt := _read("gap_top0")
+	var roofed: Array[int] = []
+	var spans: Array[String] = []
+	for row in range(1, 10):
+		var x := pit + Vector2i(0, row)
+		if _f(gt, x) > _f(gb, x) and _f(s2, x) == _f(s1, x):
+			roofed.append(row)
+			spans.append("%+d: %.2f..%.2f" % [row, _f(gb, x) - floor_h, _f(gt, x) - floor_h])
+	var ch := VoxelBox.chunk_of_cell(pit + Vector2i(0, roofed[0] if not roofed.is_empty() else 2))
+	var landed := await _chunk_landed(ch, 3.0)
+	var wall_scoops := _tools.scoops - scoops0 - pit_scoops
+	print("play: W held 6 s at the pit's +z wall, T while the ring was on its mark: %d scoops, the hand %.3f m³; roofed cells along +z (row: the gap over the pit's floor) [%s]; touched chunks %d -> %d, chunk %s meshed in %.2f s with %d faces" % [
+			wall_scoops, _tools.held - held0, ", ".join(spans), touched0, box.touched.size(), ch, landed, _chunk_faces(ch)])
+	await _frames(20)
+	var held := 0
+	var uncovered := 0
+	_press(KEY_W, true)
+	for i in 120:
+		await get_tree().process_frame
+		held += int(_player.process_mode == Node.PROCESS_MODE_DISABLED)
+		uncovered += int(not _terrain.covered(_station.to_local(_player.global_position - _player.up_direction)))
+	_press(KEY_W, false)
+	var walked := _station.to_local(_player.global_position).z - z0
+	var mouth := roofed[0] if not roofed.is_empty() else 99
+	print("play: walked %.2f m along +z from the pit's floor (W held through the dig and 2 s more), the tunnel's mouth %d m along; held %d frames, the feet uncovered %d frames" % [walked, mouth, held, uncovered])
+	_report("the shovel as played digs a pit and a tunnel the player walks into", pit_scoops + wall_scoops >= 8 and _tools.held > held0 and deepest >= 1.5
+			and roofed.size() >= 3 and box.touched.has(ch) and landed >= 0.0 and walked >= mouth + 1.0 and held == 0 and uncovered == 0)
+	return true
+
+
+## The tunnel's columns and the wall columns either side, rows first..7 from the pit (0: the pit's own).
+func _tunnel_cells(c: Vector2i, first := 0) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	for row in range(first, 8):
+		for x in range(-1, 3):
+			cells.append(c + Vector2i(x, row))
+	return cells
+
+
+## Every window field's bytes over cells (4 per cell for a float field, 1 for a byte field), field -> bytes.
+func _cells_bits(cells: Array[Vector2i]) -> Dictionary:
+	var out := {}
+	var n := _terrain.window.size * _terrain.window.size
+	for field: String in TerrainWindow.FIELDS:
+		var data := _read(field)
+		var bytes := PackedByteArray()
+		for c in cells:
+			var k := _texel(c)
+			if data.size() == n:
+				bytes.append(data[k])
+			else:
+				bytes.append_array(data.slice(4 * k, 4 * k + 4))
+		out[field] = bytes
+	return out
+
+
+## The cells whose bytes of a field differ between two _cells_bits, with both values.
+func _bits_detail(a: Dictionary, b: Dictionary, cells: Array[Vector2i], field: String) -> String:
+	var w := 4 if field in TerrainWindow.FLOAT_FIELDS else 1
+	var out: Array[String] = []
+	for i in cells.size():
+		var x: PackedByteArray = a[field].slice(w * i, w * i + w)
+		var y: PackedByteArray = b[field].slice(w * i, w * i + w)
+		if x != y:
+			out.append("%s %s -> %s" % [cells[i], x.decode_float(0) if w == 4 else x[0], y.decode_float(0) if w == 4 else y[0]])
+	return "%s: %s" % [field, ", ".join(out)]
+
+
+## The fields whose bytes differ between two _cells_bits, the loose ones aside (a settled pile that re-enters
+## the box creeps a few counts, the Task 5 ruling: its volume is checked instead).
+func _bits_differ(a: Dictionary, b: Dictionary) -> Array[String]:
+	var out: Array[String] = []
+	for field: String in a:
+		if field != "loose" and not field.begins_with("gap_loose") and a[field] != b[field]:
+			out.append(field)
+	return out
+
+
+## Waits up to limit s for the chunk's mesh to land with faces: the seconds it took, -1 when it did not.
+func _chunk_landed(ch: Vector2i, limit: float) -> float:
+	var start := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - start < limit * 1000.0:
+		await get_tree().process_frame
+		if _chunk_faces(ch) > 0:
+			return (Time.get_ticks_msec() - start) / 1000.0
+	return -1.0
+
+
+## Stands the player two cells into the tunnel at c, facing its end, and after ten frames tells whether it
+## stands there: not held, the feet over ground (Terrain.covered) within 0..0.3 m of the collider under them.
+func _stand_in_tunnel(c: Vector2i) -> bool:
+	var p := _terrain.params
+	_player.global_position = _station.global_transform * Cyl.position((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 2.5, _tunnel_floor + 1.0 + Tools.STAND, p.radius)
+	_face(Vector3(0, 0, 1))
+	await _frames(10)
+	var hit := _ray_down()
+	var clear: float = (hit.position.distance_to(_player.global_position) - 1.0) if not hit.is_empty() else -INF
+	var feet := _station.to_local(_player.global_position - _player.up_direction)
+	print("stand: held %s, the feet covered %s, %.3f m over the collider under them, at height %.3f for a floor at %.3f" % [
+			_player.process_mode == Node.PROCESS_MODE_DISABLED, _terrain.covered(feet), clear, Cyl.height_of(feet, p.radius), _tunnel_floor])
+	return _player.process_mode != Node.PROCESS_MODE_DISABLED and _terrain.covered(feet) and clear >= -0.05 and clear <= 0.3
+
+
+## Phase tscroll (see the header). False after quitting on a timeout.
+func _tunnel_scroll() -> bool:
+	if _tunnel_site == TerrainSim.NO_CELL:
+		return _quit("The scroll phase needs the tunnel phase's tunnel.")
+	var p := _terrain.params
+	var c := _tunnel_site
+	var cells := _tunnel_cells(c)
+	var tunnel := _tunnel_cells(c, 2)
+	var ch := VoxelBox.chunk_of_cell(c + Vector2i(0, 3))
+	var waited0 := await _settled(c)
+	var before := _cells_bits(tunnel)
+	var v0 := _vol(_read("loose"), _read("surface"), cells) + _gap_loose(cells)
+	_terrain.teleport((c.x + 0.5) * p.dtheta() + 600.0 / p.radius, -p.length / 2.0 + c.y + 0.5)
+	if not await _settled_patch():
+		return false
+	var away := _terrain.window.center_tile
+	var gone := not _terrain.box.touched.has(ch)
+	if not await _teleport(c):
+		return false
+	var landed := await _chunk_landed(ch, 3.0)
+	var after := _cells_bits(tunnel)
+	var differ := _bits_differ(before, after)
+	var v1 := _vol(_read("loose"), _read("surface"), cells) + _gap_loose(cells)
+	var stood := await _stand_in_tunnel(c)
+	print("scroll: settled in %.2f s; 600 m away (window centre %s, the chunk gone from the box: %s) and back: the tunnel's columns bit for bit as before (the loose aside): %s%s; its piles %.6f m³, were %.6f (%+.4f %%); chunk %s meshed again in %.2f s with %d faces; the player stood inside: %s" % [
+			waited0, away, gone, differ.is_empty(), "" if differ.is_empty() else " (changed %s)" % "; ".join(differ.map(func(f: String) -> String: return _bits_detail(before, after, tunnel, f))), v1, v0, _residual("tunnel scroll", v1, v0), ch, landed, _chunk_faces(ch), stood])
+	_report("a tunnel survives a scroll: its columns, its piles, its chunk's mesh, the player's footing", waited0 >= 0.0 and gone and differ.is_empty() and absf(v1 - v0) <= 1e-3 * v0 and landed >= 0.0 and stood)
+	return true
+
+
+## Phase trestart (see the header). False after quitting on a timeout.
+func _tunnel_restart() -> bool:
+	if _tunnel_site == TerrainSim.NO_CELL:
+		return _quit("The restart phase needs the tunnel phase's tunnel.")
+	var p := _terrain.params
+	var c := _tunnel_site
+	var cells := _tunnel_cells(c)
+	var tunnel := _tunnel_cells(c, 2)
+	var ch := VoxelBox.chunk_of_cell(c + Vector2i(0, 3))
+	# The pile: 2 m³ at the floor two cells short of the tunnel's end, dumped from two cells in (the stand's
+	# place after the restart stays clear of it).
+	_player.global_position = _station.global_transform * Cyl.position((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 2.5, _tunnel_floor + 1.0 + Tools.STAND, p.radius)
+	_face(Vector3(0, 0, 1))
+	await _frames(10)
+	_tools.held = 2.0
+	_tools.dump(Cyl.position((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 4.5, _tunnel_floor, p.radius))
+	for i in 30:
+		if not _tools._dump_pending:
+			break
+		await get_tree().process_frame
+	var waited0 := await _settled(c)
+	var before := _cells_bits(tunnel)
+	var v0 := _vol(_read("loose"), _read("surface"), cells) + _gap_loose(cells)
+	if not await _restart():
+		return false
+	if not await _teleport(c):
+		return false
+	var landed := await _chunk_landed(ch, 5.0)
+	var after := _cells_bits(tunnel)
+	var differ := _bits_differ(before, after)
+	var v1 := _vol(_read("loose"), _read("surface"), cells) + _gap_loose(cells)
+	var stood := await _stand_in_tunnel(c)
+	print("restart: settled in %.2f s; after the restart the tunnel's columns bit for bit as before (the loose aside): %s%s; its piles %.6f m³, were %.6f (%+.4f %%); chunk %s meshed again in %.2f s with %d faces; the player stood inside: %s" % [
+			waited0, differ.is_empty(), "" if differ.is_empty() else " (changed %s)" % "; ".join(differ.map(func(f: String) -> String: return _bits_detail(before, after, tunnel, f))), v1, v0, _residual("tunnel restart", v1, v0), ch, landed, _chunk_faces(ch), stood])
+	_report("a tunnel survives a restart: its columns, its pile, its chunk's mesh, the player's footing", waited0 >= 0.0 and differ.is_empty() and v0 >= 1.9 and absf(v1 - v0) <= 1e-3 * v0 and landed >= 0.0 and stood)
+	return true
+
+
+## The exit (see the header): a scoop at the tunnel's end in the quit's frame, checked in the blob once Terrain
+## has left the tree.
+func _tunnel_exit() -> void:
+	var p := _terrain.params
+	var c := _tunnel_site
+	var cell := c + Vector2i(0, 7)
+	var tile := _terrain.window.tile_of_cell(cell.x, cell.y)
+	var o := EditLayer.cell_offset(posmod(cell.x, TerrainWindow.TILE), posmod(cell.y, TerrainWindow.TILE))
+	var edits := _terrain.window.edits
+	var had: bool = edits.blobs.has(tile) and edits.blobs[tile].decode_float(o + 48) > edits.blobs[tile].decode_float(o + 32)
+	_tools.scoop(Cyl.position((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + cell.y + 0.5, _tunnel_floor + 1.0, p.radius))
+	_terrain.tree_exited.connect(func() -> void:
+		var blob: PackedByteArray = edits.blobs.get(tile, PackedByteArray())
+		var packed: bool = blob.size() > o + 52 and blob.decode_float(o + 48) > blob.decode_float(o + 32)
+		print("exit pack: the box's last scoop (a gap at %s in the quit's frame; one there before: %s) packed into tile %s's blob: %s" % [cell, had, tile, packed])
+		if had or not packed:
+			push_error("exit pack: the box's last change did not reach the blob"))
 
 
 ## The ground met by a ray from the player's head down to under the feet, as m over the feet (INF with none):

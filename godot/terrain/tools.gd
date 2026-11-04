@@ -194,7 +194,7 @@ func scoop(aim := Vector3.INF) -> void:
 		scoops += 1
 		terrain.touch(_cell_of(p), ceili(terrain.tool_params.scoop_ball) + 1)
 	else:
-		print("Nothing to scoop there")
+		print("Nothing to scoop there (the aim %s)" % p)
 
 
 ## Dumps what the shovel holds as loose dirt into the ball at `aim` (as scoop), and moves the player clear of
@@ -301,13 +301,15 @@ func _physics_process(_delta: float) -> void:
 	if not terrain.covered(feet):
 		return
 	var ground := terrain.patch
-	var q := ground.surface_point(feet, 0.0) if ground.covers(feet) else Vector3.INF
+	# Over a chunk drawn by its mesh the patch's heights are the roof's until the bake after the mesh lands
+	# (NaN then), so the ray decides there from the landing on.
+	var q := ground.surface_point(feet, 0.0) if ground.covers(feet) and not terrain.box.covers(feet) else Vector3.INF
 	var under: float
 	if q.is_finite():
 		under = (q - feet).dot(ground.transform.basis.y)
 	else:
-		# Over a chunk drawn by its mesh (the patch has no height there): the ground a ray from the head down
-		# to under the feet meets, so a tunnel's roof never counts.
+		# Over a chunk drawn by its mesh: the ground a ray from the head down to under the feet meets, so a
+		# tunnel's roof never counts.
 		var hit := terrain.ground_below(terrain.station.to_local(player.global_position + up * 0.9), 2.1)
 		if not hit.is_finite():
 			return

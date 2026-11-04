@@ -290,6 +290,9 @@ func _process(delta: float) -> void:
 ## is saved, so the synchronous readback is skipped.
 func _exit_tree() -> void:
 	if persist_edits and window != null:
+		# The box's columns changed since its last pack (an op in the quit's frame) go into the window first,
+		# so the tiles' pack below carries them.
+		box.pack_all_sync()
 		var tiles := sim.active_tiles()
 		for t: Vector2i in window.edits.stamped:
 			if window.is_resident(t) and not tiles.has(t):
@@ -375,6 +378,10 @@ func _move_window(center: Vector2i) -> void:
 		return
 	_center = center
 	var evicted := window.evicted_by(center)
+	# The box's columns changed since its last pack go into the window first (the box lies inside the window,
+	# so a tile it has bricks over never leaves; a far teleport moves the window under the box, and the box
+	# follows from the new tiles).
+	box.pack_all_sync()
 	# Active tiles, and tiles holding a stamp no pack has seen (its flag in flight, or landed but not yet
 	# settled): packed now, before the move regenerates their slots, so nothing stamped is lost.
 	var leaving: Array[Vector2i] = evicted.filter(func(t: Vector2i) -> bool: return sim.is_active(t) or window.edits.stamped.has(t))
