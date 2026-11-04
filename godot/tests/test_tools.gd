@@ -38,7 +38,7 @@ func _initialize() -> void:
 	# Tunnels: the shovel reaches 4 m (a roof overhead) and scoops a ball of radius 1 m in the box; the ball's
 	# volume by the annuli of its voxels at the shader's sub-sampling is within 1 % of 4/3 pi wherever its
 	# centre lies in a voxel.
-	check(t.shovel_reach == 4.0 and t.scoop_ball == 1.0, "reach and ball")
+	check(t.shovel_reach == 4.0 and t.scoop_ball == 1.5, "reach and ball")
 	var R := 3200.0
 	var dtheta := TAU / 16384
 	for centre: Vector3 in [Vector3(0.5, 0.5, 410.37), Vector3(0.0, 0.0, 410.5), Vector3(0.7, 0.2, 410.9)]:

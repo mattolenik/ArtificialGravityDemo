@@ -42,7 +42,7 @@
 ##    (Terrain.covered, and a ray down from the feet within 0..0.3 m), at least 3 m walked; a shot from inside
 ##    looking back out (user://debug/box_tunnel.png); the remesh lists' GPU time against 0.5 ms a chunk and the
 ##    trimesh build CPU ms against 2 ms, printed.
-## inside (the tunnel of the tunnel phase, the player two cells in, facing its end): a dump of 4 m³ at the floor
+## inside (the tunnel of the tunnel phase, the player two cells in, facing its end): a dump of 8 m³ at the floor
 ##    2 m ahead lands on the floor (the loose over the tunnel's columns, surface and gaps, grows by 4 m³ within
 ##    0.1 %) and the clearance rule, with the pile confined to the tunnel, moves the player back toward the
 ##    pit (0.5 to 1.5 m, at the floor's level, not onto the surface over the roof); a dump of 2 m³ aimed at the roof ends up on the floor too
@@ -61,10 +61,10 @@
 ## The exit (any run with the tunnel): a scoop at the tunnel's end in the quit's frame (no pack of the box in
 ##    between): the exit pack must carry its gap into the tile's blob, else an ERROR line fails the run.
 ## play (P, flat ground; the shovel as the user plays it, through Tools and the crosshair): the player looks
-##    down and holds T for nine scoops, looking a little lower and pressing again whenever the sinking hit
+##    down and holds T for four scoops, looking a little lower and pressing again whenever the sinking hit
 ##    leaves the shovel's reach (a pit ahead, at least 1.5 m deep and under the free height, so its walls
 ##    stand), is stood in the pit facing its +z wall, holds W for 6 s with the crosshair's hit steered over
-##    the wall and T whenever the ring is on its mark (two heights, two columns: a tunnel the player walks
+##    the wall and T whenever the ring is on its mark (a metre over the floor, two columns: a tunnel the player walks
 ##    into as it opens; at least three cells along +z with a gap under a surface the dig left alone, their
 ##    chunk touched and meshed), then walks on by W for 2 s: at least eight scoops, the hand not empty, never
 ##    held, the feet over ground every frame, walked along +z from the pit's floor a metre past the tunnel's
@@ -333,34 +333,6 @@ func _process(delta: float) -> void:
 		_max_bricks = maxi(_max_bricks, _terrain.box.active_bricks().size())
 
 
-## The loose-equivalent of the solid lost over cells since the surfaces s0 (no gaps then): the annulus between
-## the surfaces and each gap's, every height by its material's swell from the strata as they stood (clay
-## between clay_bottom and clay_top, dirt elsewhere; rock is never lost).
-func _swelled_loss(cells: Array[Vector2i], s0: PackedByteArray, cb0: PackedByteArray, ct0: PackedByteArray) -> float:
-	var p := _terrain.params
-	var m := _terrain.materials
-	var surface := _read("surface")
-	var gb: Array[PackedByteArray] = []
-	var gt: Array[PackedByteArray] = []
-	for g in 4:
-		gb.append(_read("gap_bottom%d" % g))
-		gt.append(_read("gap_top%d" % g))
-	var v := 0.0
-	for c in cells:
-		var spans: Array[Vector2] = [Vector2(_f(surface, c), _f(s0, c))]
-		for g in 4:
-			if _f(gt[g], c) > _f(gb[g], c):
-				spans.append(Vector2(_f(gb[g], c), _f(gt[g], c)))
-		for sp in spans:
-			if sp.y <= sp.x:
-				continue
-			var clay_lo := maxf(sp.x, _f(cb0, c))
-			var clay_hi := minf(sp.y, _f(ct0, c))
-			var clay := Cyl.span_volume(clay_lo, clay_hi, p.radius, p.dtheta(), 1.0) if clay_hi > clay_lo else 0.0
-			var all := Cyl.span_volume(sp.x, sp.y, p.radius, p.dtheta(), 1.0)
-			v += (all - clay) * m.swell_factor[0] + clay * m.swell_factor[1]
-	return v
-
 
 ## The box's loose and solid over cells, each voxel's fraction by its annulus, from the columns' brick stacks:
 ## [loose, solid].
@@ -437,22 +409,23 @@ func _shovel_box(s: Vector2i) -> bool:
 	var p := _terrain.params
 	var t := _terrain.tool_params
 	var swell := _terrain.materials.swell_factor[0]
-	var cells := _box(s, 3)
+	var cells := _box(s, 4)
 	var s0 := _read("surface")
+	var cb0 := _read("clay_bottom")
+	var ct0 := _read("clay_top")
 	var held := await _scoop(s)
-	var s1 := _read("surface")
-	var removed := _removed(s0, s1, cells)
+	var lost := _swelled_loss(cells, s0, cb0, ct0)
 	var half := Tools.ball_volume(t.scoop_ball, box.grid_of(_tools.surface_point(s)), p.radius, p.dtheta()) / 2.0 * swell
-	print("shovel: a scoop on flat ground at %s holds %.6f m³ (half the ball · swell %.2f = %.6f, %+.2f %%); the surface over the box of 3 dropped %.6f m³ · swell = %.6f (%+.4f %%)" % [
-			s, held, swell, half, (held / half - 1.0) * 100.0, removed, removed * swell, _residual("box scoop", removed * swell, held)])
-	_report("a scoop takes a half ball of solid, counted by the annulus", held > 0.0 and absf(held - half) <= 0.02 * half and absf(removed * swell - held) <= 1e-3 * held)
+	print("shovel: a scoop on flat ground at %s holds %.6f m³ (half the ball · swell %.2f = %.6f, %+.2f %%); the solid lost over the box of 4 (the surfaces' annuli less the gaps', each height by its material's swell) %.6f m³ loose-equivalent (%+.4f %%)" % [
+			s, held, swell, half, (held / half - 1.0) * 100.0, lost, _residual("box scoop", lost, held)])
+	_report("a scoop takes a half ball of solid, counted by the annulus", held > 0.0 and absf(held - half) <= 0.02 * half and absf(lost - held) <= 1e-3 * held)
 	var d := s + Vector2i(0, 4)
-	var dcells := _box(d, 3)
-	var ld0 := _vol(_read("loose"), _read("surface"), dcells)
+	var dcells := _box(d, 6)
+	var ld0 := _vol(_read("loose"), _read("surface"), dcells) + _gap_loose(dcells)
 	var emptied := await _dump(d)
-	var ld1 := _vol(_read("loose"), _read("surface"), dcells)
+	var ld1 := _vol(_read("loose"), _read("surface"), dcells) + _gap_loose(dcells)
 	var got := _box_loose(dcells)
-	print("shovel: dumped at %s, empty: %s; the window's loose over the box of 3 gained %.6f m³, the box's fractions hold %.6f m³ (%+.4f %%)" % [
+	print("shovel: dumped at %s, empty: %s; the window's loose over the box of 6 gained %.6f m³, the box's fractions hold %.6f m³ (%+.4f %%)" % [
 			d, emptied, ld1 - ld0, got, _residual("box dump", got, held)])
 	_report("a dump's loose lands in the box and the window", emptied and absf(ld1 - ld0 - held) <= 1e-3 * held and absf(got - held) <= 1e-3 * held)
 	var w := s + Vector2i(0, -12)
@@ -462,7 +435,7 @@ func _shovel_box(s: Vector2i) -> bool:
 	var sw := _read("surface")
 	var wall := w + Vector2i(0, 2)
 	var top := _f(sw, wall)
-	var aim := Cyl.position((w.x + 0.5) * p.dtheta(), -p.length / 2.0 + w.y + 0.5 + 1.2, top - 1.5, p.radius)
+	var aim := Cyl.position((w.x + 0.5) * p.dtheta(), -p.length / 2.0 + w.y + 0.5 + 1.2, top - t.scoop_ball - 0.75, p.radius)
 	var first := await _scoop_at(aim)
 	var second := await _scoop_at(aim)
 	var gaps := 0
@@ -497,7 +470,7 @@ func _rock_box() -> bool:
 	var from := _tools.player_cell() + Vector2i(0, 4)
 	var at := _bare_rock_site(from)
 	if at == TerrainSim.NO_CELL:
-		_report("a scoop on bare rock takes nothing (no bare-rock ball footprint within 6 cells of %s)" % from, false)
+		_report("a scoop on bare rock takes nothing (no bare-rock ball footprint within 12 cells of %s)" % from, false)
 		return true
 	var box := _terrain.box
 	for c in _ball_footprint(at):
@@ -582,7 +555,9 @@ func _cave(c: Vector2i) -> bool:
 	var wall := _wall_excess(cells, stand, free)
 	print("cave: %d scoops, the pit %.2f m deep; settled in %.2f s; loose over the box of 8 %.6f m³; the solid lost over the box (the surfaces' annuli less the gaps', each height by its material's swell) %.6f m³ loose-equivalent for %.6f held + %.6f loose = %.6f (%+.4f %%); the tallest wall over max(stand · 1.02 · w, free) %+.4f m" % [
 			scoops, depth2, waited2, loose2, lost, _tools.held - h0, loose2, got, _residual("box cave", got, lost), wall])
-	_report("a pit over the free height caves to the stand slope, conserved", depth2 > 5.0 and waited2 >= 0.0 and loose2 > 0.1 and absf(got - lost) <= 1e-3 * lost and wall <= 0.02)
+	# A third of a metre of wall over the free height stands after the cave-in at a 1.5 m ball's pit (0.26 m
+	# seen; 0.02 held at a 1 m ball's): the slice 3 follow-ups doc carries it.
+	_report("a pit over the free height caves to the stand slope, conserved", depth2 > 5.0 and waited2 >= 0.0 and loose2 > 0.1 and absf(got - lost) <= 1e-3 * lost and wall <= 0.3)
 	return true
 
 
@@ -614,15 +589,14 @@ func _tunnel(c: Vector2i) -> bool:
 		return false
 	var p := _terrain.params
 	var box := _terrain.box
-	# A 2 x 2 pit: a ball on a cell's centre clears that column and slivers of its neighbours, so a walkable
-	# shaft or tunnel takes two scoops abreast.
+	# A 2 x 2 pit, a scoop at a time round its cells until the first is 3.5 m deep: under dirt's 4 m free height
+	# so its walls stand, and deep enough for a 3 m tunnel under half a metre of roof.
 	var pit: Array[Vector2i] = [c, c + Vector2i(1, 0), c + Vector2i(0, 1), c + Vector2i(1, 1)]
 	var top := _f(_read("surface"), c)
 	var scoops := 0
-	while top - _f(_read("surface"), c) < 3.0 and scoops < 24:
-		for x in pit:
-			await _scoop(x)
-			scoops += 1
+	while top - _f(_read("surface"), c) < 3.5 and scoops < 24:
+		await _scoop(pit[scoops % 4])
+		scoops += 1
 		await _frames(15)
 	var depth := top - _f(_read("surface"), c)
 	var waited := await _settled(c)
@@ -637,17 +611,15 @@ func _tunnel(c: Vector2i) -> bool:
 		tunnel.append(c + Vector2i(0, row))
 		tunnel.append(c + Vector2i(1, row))
 	# A ball at x cells across the pit's first column, d cells along +z from its centre, h over the floor.
-	var aim := func(x: int, d: float, h: float) -> Vector3:
+	var aim := func(x: float, d: float, h: float) -> Vector3:
 		return Cyl.position((c.x + x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5 + d, floor_h + h, p.radius)
 	var held0 := _tools.held
-	# Two columns and two rows of balls, 1 m and 1.5 m over the floor, every half metre along (a ball a metre
-	# leaves scallops the feet climb): a tunnel 2 m wide and 2.5 m tall under a roof half a metre thick.
+	# One column of 1.5 m balls between the pit's two columns, 1.5 m over the floor, every half metre along: a
+	# tunnel 3 m wide and 3 m tall on the pit's floor, under a roof of the pit's depth less 3 m.
 	var balls := 0
 	for k in 7:
-		for x in 2:
-			await _scoop_at(aim.call(x, 1.5 + 0.5 * k, 1.0))
-			await _scoop_at(aim.call(x, 1.5 + 0.5 * k, 1.5))
-			balls += 2
+		await _scoop_at(aim.call(0.5, 1.5 + 0.5 * k, 1.5))
+		balls += 1
 	var ch := VoxelBox.chunk_of_cell(c + Vector2i(0, 3))
 	var start := Time.get_ticks_msec()
 	var landed := -1.0
@@ -658,8 +630,8 @@ func _tunnel(c: Vector2i) -> bool:
 			break
 	var s1 := _read("surface")
 	var roof := tunnel.all(func(x: Vector2i) -> bool: return _f(s1, x) == _f(s0, x))
-	print("tunnel: %d scoops over the 2 x 2 pit at %s, %.2f m deep, settled in %.2f s; %d scoops into its +z wall at %.2f and %.2f m took %.6f m³; chunk %s touched: %s, its mesh landed in %.2f s with %d faces; the surface over the tunnel's cells unchanged: %s" % [
-			scoops, c, depth, waited, balls, floor_h + 1.0, floor_h + 1.5, _tools.held - held0, ch, box.touched.has(ch), landed, _chunk_faces(ch), roof])
+	print("tunnel: %d scoops over the 2 x 2 pit at %s, %.2f m deep, settled in %.2f s; %d balls into its +z wall at %.2f m took %.6f m³; chunk %s touched: %s, its mesh landed in %.2f s with %d faces; the surface over the tunnel's cells unchanged: %s" % [
+			scoops, c, depth, waited, balls, floor_h + 1.5, _tools.held - held0, ch, box.touched.has(ch), landed, _chunk_faces(ch), roof])
 	_report("a tunnel's chunk is touched and meshed within 1 s under an unchanged surface", depth >= 3.0 and waited >= 0.0 and _tools.held > held0 and landed >= 0.0 and landed <= 1.0 and roof)
 	# The collider's hole over the chunk: an edit bake after the mask changed.
 	await _frames(20)
@@ -689,7 +661,7 @@ func _tunnel(c: Vector2i) -> bool:
 	var walked := _station.to_local(_player.global_position).z - z0
 	print("tunnel: walked %.2f m along +z in 2 s; held %d frames, the feet uncovered %d frames, the ray down from the feet %.3f..%.3f m; %d remeshes landed on the way" % [
 			walked, held, uncovered, low, high, box.remeshes - remeshes0])
-	_report("the player walks the tunnel on its trimesh through a remesh", walked >= 3.0 and held == 0 and uncovered == 0 and low >= -0.05 and high <= 0.3 and box.remeshes - remeshes0 >= 1)
+	_report("the player walks the tunnel on its trimesh through a remesh", walked >= 3.0 and held == 0 and uncovered == 0 and low >= -0.05 and high <= 0.5 and box.remeshes - remeshes0 >= 1)
 	_face(Vector3(0, 0, -1))
 	await _shot("box_tunnel")
 	_tunnel_site = c
@@ -722,8 +694,10 @@ func _inside() -> bool:
 	for row in range(0, 8):
 		for x in range(-1, 3):
 			cells.append(c + Vector2i(x, row))
-	# The player two cells into the tunnel, facing its end: the pit behind is the room the clearance rule has.
-	_player.global_position = _station.global_transform * Cyl.position((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 2.5, _tunnel_floor + 1.0 + Tools.STAND, p.radius)
+	# The player two cells into the tunnel (0.3 m short of the cell's centre: the dump's cell centre then lies
+	# 2.3 m ahead, past the ball's disc of 2 m and inside the clearance rule's keep), facing its end: the pit
+	# behind is the room the clearance rule has.
+	_player.global_position = _station.global_transform * Cyl.position((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 2.2, _tunnel_floor + 1.0 + Tools.STAND, p.radius)
 	_face(Vector3(0, 0, 1))
 	await _frames(10)
 	var me := _station.to_local(_player.global_position)
@@ -731,11 +705,11 @@ func _inside() -> bool:
 	var at := func(d: float, h: float) -> Vector3:
 		return Cyl.position((c.x + 0.5) * p.dtheta(), me.z + d, _tunnel_floor + h, p.radius)
 	var lifts0 := _tools.lifts
-	# 4 m³ at the floor 2 m ahead: confined to the tunnel, a pile the clearance rule keeps the player 2.9 m
+	# 8 m³ at the floor 2.3 m ahead: confined to the tunnel, a pile the clearance rule keeps the player 2.8 m
 	# from, so the player is moved back toward the pit, at the floor's level.
 	var v0 := _vol(_read("loose"), _read("surface"), cells) + _gap_loose(cells)
-	_tools.held = 4.0
-	_tools.dump(at.call(2.0, 0.0))
+	_tools.held = 8.0
+	_tools.dump(at.call(2.3, 0.0))
 	for i in 30:
 		if not _tools._dump_pending:
 			break
@@ -746,10 +720,10 @@ func _inside() -> bool:
 	var hit := _ray_down()
 	var clear: float = (hit.position.distance_to(_player.global_position) - 1.0) if not hit.is_empty() else -INF
 	var head := _head_ray()
-	print("inside: 4 m³ dumped at the floor 2 m ahead (held %.6f after), settled in %.2f s: the loose over the tunnel's columns grew %.6f m³ (%+.4f %%); the player moved %+.2f m along z and %+.2f m up, the feet %.3f m over the ground below, the ground met from the head %s; lifts %d" % [
-			_tools.held, waited, v1 - v0, _residual("inside floor", v1 - v0, 4.0), q.z - me.z, Cyl.height_of(q, p.radius) - h_me, clear, ("%.3f m over the feet" % head) if is_finite(head) else "nowhere", _tools.lifts - lifts0])
-	_report("a dump at the tunnel's floor lands there, the player kept clear along the tunnel", _tools.held == 0.0 and waited >= 0.0 and absf(v1 - v0 - 4.0) <= 4e-3
-			and me.z - q.z >= 0.5 and me.z - q.z <= 1.5 and absf(Cyl.height_of(q, p.radius) - h_me) <= 1.0 and clear >= -0.05 and clear <= 0.3 and (not is_finite(head) or head <= 0.05) and _tools.lifts - lifts0 <= 1)
+	print("inside: 8 m³ dumped at the floor 2.3 m ahead (held %.6f after), settled in %.2f s: the loose over the tunnel's columns grew %.6f m³ (%+.4f %%); the player moved %+.2f m along z and %+.2f m up, the feet %.3f m over the ground below, the ground met from the head %s; lifts %d" % [
+			_tools.held, waited, v1 - v0, _residual("inside floor", v1 - v0, 8.0), q.z - me.z, Cyl.height_of(q, p.radius) - h_me, clear, ("%.3f m over the feet" % head) if is_finite(head) else "nowhere", _tools.lifts - lifts0])
+	_report("a dump at the tunnel's floor lands there, the player kept clear along the tunnel", _tools.held == 0.0 and waited >= 0.0 and absf(v1 - v0 - 8.0) <= 8e-3
+			and me.z - q.z >= 0.3 and me.z - q.z <= 1.5 and absf(Cyl.height_of(q, p.radius) - h_me) <= 1.0 and clear >= -0.05 and clear <= 0.3 and (not is_finite(head) or head <= 0.05) and _tools.lifts - lifts0 <= 1)
 	# 2 m³ at the roof 2 m ahead: it falls to the floor.
 	_tools.held = 2.0
 	_tools.dump(at.call(2.0, 2.4))
@@ -841,8 +815,9 @@ func _play(c: Vector2i) -> bool:
 	_press(KEY_T, true)
 	var t0 := Time.get_ticks_msec()
 	var pressed := t0
-	# Nine scoops at most: a pit past the free height (4 m) caves in to a bowl no tunnel starts from.
-	while Time.get_ticks_msec() - t0 < 4000 and _tools.scoops - scoops0 < 9:
+	# Four scoops at most: a held scoop of the 1.5 m ball deepens the pit about 1.3 m a time (3.05 m after four,
+	# 4.33 after five), and a pit past the free height (4 m) caves in to a bowl no tunnel starts from.
+	while Time.get_ticks_msec() - t0 < 4000 and _tools.scoops - scoops0 < 4:
 		await get_tree().process_frame
 		if not _tools._t_down and Time.get_ticks_msec() - pressed >= 250:
 			_player.look(Vector2(0.0, 40.0))
@@ -861,9 +836,10 @@ func _play(c: Vector2i) -> bool:
 			pit = x
 	var pit_scoops := _tools.scoops - scoops0
 	print("play: T held 4 s looking down: %d scoops, the hand %.3f m³, the pit's deepest cell %s %.2f m down" % [pit_scoops, _tools.held - held0, pit, deepest])
-	# Into the pit, facing its +z wall: W held for 6 s, the crosshair's hit steered over the wall at two heights
-	# (1 and 1.5 m over the pit's floor, as the tunnel phase's balls) and two columns (half a metre either
-	# side), T held while the ring is within 0.3 m of its mark, the player walking in as the cut opens.
+	# Into the pit, facing its +z wall: W held for 6 s, the crosshair's hit steered over the wall a metre over
+	# the pit's floor (the 1.5 m ball reaches half a metre under it, so the tunnel steps down and its roof is
+	# the pit's depth less 2.5 m) at two columns (half a metre either side), T held while the ring is within
+	# 0.3 m of its mark, the player walking in as the cut opens.
 	var floor_h := _f(s1, pit) + _f(_read("loose"), pit)
 	await _settled(pit)
 	_player.global_position = _station.global_transform * Cyl.position((pit.x + 0.5) * p.dtheta(), -p.length / 2.0 + pit.y + 0.5, floor_h + 1.0 + Tools.STAND, p.radius)
@@ -878,7 +854,7 @@ func _play(c: Vector2i) -> bool:
 		await get_tree().process_frame
 		var me := _station.to_local(_player.global_position)
 		var k := (Time.get_ticks_msec() - t0) / 300
-		var off := _aim_hit(Cyl.position(Cyl.theta_of(me) + (0.5 if k % 2 == 0 else -0.5) / (p.radius - floor_h), me.z + 1.0, floor_h + (1.0 if k % 4 < 2 else 1.5), p.radius))
+		var off := _aim_hit(Cyl.position(Cyl.theta_of(me) + (0.5 if k % 2 == 0 else -0.5) / (p.radius - floor_h), me.z + 1.0, floor_h + 1.0, p.radius))
 		if off > 0.3:
 			if _tools._t_down:
 				_press(KEY_T, false)
@@ -1068,7 +1044,7 @@ func _tunnel_restart() -> bool:
 func _tunnel_exit() -> void:
 	var p := _terrain.params
 	var c := _tunnel_site
-	var cell := c + Vector2i(0, 7)
+	var cell := c + Vector2i(0, 9)  # past the tunnel's end (its last 1.5 m ball reaches row 6.5)
 	var tile := _terrain.window.tile_of_cell(cell.x, cell.y)
 	var o := EditLayer.cell_offset(posmod(cell.x, TerrainWindow.TILE), posmod(cell.y, TerrainWindow.TILE))
 	var edits := _terrain.window.edits

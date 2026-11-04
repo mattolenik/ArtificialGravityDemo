@@ -28,8 +28,10 @@ extends Resource
 @export var scoop_radius := 1
 ## How far from the player the crosshair may scoop or dump, in m (4: a roof overhead is in reach).
 @export var shovel_reach := 4.0
-## The radius in m of the ball the shovel scoops and dumps in the voxel box.
-@export var scoop_ball := 1.0
+## The radius in m of the ball the shovel scoops and dumps in the voxel box (1.5 m by the user's choice on
+## 2026-11-04, over the design's 1: a scoop takes a half ball, about 9 m³; at 2 m no roofed tunnel can start
+## sideways from a pit under dirt's 4 m free height).
+@export var scoop_ball := 1.5
 ## Seconds between scoops while T is held.
 @export var scoop_interval := 0.25
 ## The feet's disc radius in cells (1: a five-cell plus).

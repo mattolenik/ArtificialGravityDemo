@@ -7,8 +7,10 @@
 # up (headless Godot has only the dummy renderer; a minimized window draws nothing and its readbacks never
 # land), so the GPU drivers run as they do windowed at the same frame rate. Usage, from anywhere:
 #   sh tests/offscreen.sh res://terrain/tool_run.tscn /abs/path/to/log [user args...]
-# DRIVER selects the rendering driver (vulkan, the default, for GPU timings; metal reports zeros). Waits for
-# the instance to exit, prints the log's last lines and exits 0 when the log holds the drivers' verdict
+# DRIVER selects the rendering driver (vulkan, the default, for GPU timings; metal reports zeros). The project
+# is imported first: a run started with a script or shader changed on disk since the last import (a checkout,
+# a merge, an edit) can fail in ways that look like physics (the edit run's collider pit, 2026-11-04). Waits
+# for the instance to exit, prints the log's last lines and exits 0 when the log holds the drivers' verdict
 # (PASS or BLACKOUT PASS on a line of its own), else 1.
 cd "$(dirname "$0")/.." || exit 1
 scene=$1
@@ -16,6 +18,7 @@ log=$2
 shift 2 || { echo "usage: offscreen.sh <scene> </abs/log> [user args...]"; exit 2; }
 case "$log" in /*) ;; *) echo "the log path must be absolute"; exit 2;; esac
 rm -f "$log"
+godot --headless --path "$PWD" --import >/dev/null 2>&1 || { echo "the import failed: rerun it before the drivers"; exit 2; }
 prev=$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true' 2>/dev/null)
 if [ -n "$prev" ]; then
   (sleep 1; osascript -e "tell application \"$prev\" to activate" >/dev/null 2>&1) &

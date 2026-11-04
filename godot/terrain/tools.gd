@@ -276,7 +276,7 @@ func _process(_delta: float) -> void:
 		if hit.is_empty():
 			patch.visible = false
 		else:
-			patch.show_at(hit.position, hit.normal, terrain.station)
+			patch.show_at(hit.position, hit.normal, terrain.station, terrain.tool_params.scoop_ball)
 	if not _t_down or _scoop_pending or terrain.sim.stalled():
 		return
 	var now := Time.get_ticks_msec()

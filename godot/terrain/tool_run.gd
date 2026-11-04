@@ -45,10 +45,10 @@
 ## tunnels design, centred on the cell's collider point, in the voxel box; the pile is reloaded into the box
 ## once settled):
 ## 1. a 20 m³ deposit of radius 2 settles (a cone 3 m wide at the base, deep enough under the apex for a
-##    ball to take loose only); a scoop at S8 holds between 0.5 and 5 m³, the loose over the box
+##    ball to take loose only); a scoop at S8 holds between 0.5 and 12 m³, the loose over the box
 ##    of 12 dropped by what it holds within 0.1 % and the surface is bitwise unchanged (loose first);
 ## 2. dumped at S8 + (0, 6), the shovel is empty and the loose over the box is back within 0.1 %;
-## 3. a scoop of the bare ground at B = S8 - (0, 6) holds between 0.5 and 5 m³, the annulus cut over the box
+## 3. a scoop of the bare ground at B = S8 - (0, 6) holds between 0.5 and 12 m³, the annulus cut over the box
 ##    of 4 times the swell is what it holds within 0.1 %, the box's loose unchanged within 1e-6 m³, the disc's
 ##    surface lower and its clay at most the surface;
 ## 4. dumped back at B, the box's loose gains what was held within 0.1 % once settled; two scoops, two dumps.
@@ -734,7 +734,7 @@ func _shovel(s8: Vector2i) -> bool:
 	var scoops0 := _tools.scoops
 	var dumps0 := _tools.dumps
 	var box := _box(s8, 12)
-	_stamp(_op(s8, 2, EditLayer.MODE_DEPOSIT, 20.0))
+	_stamp(_op(s8, 2, EditLayer.MODE_DEPOSIT, 30.0))
 	var waited := await _settled(s8)
 	_terrain.box.reload(box)
 	await _frames(2)
@@ -745,9 +745,9 @@ func _shovel(s8: Vector2i) -> bool:
 	var edit_ms := _timed.slice(timed0).filter(func(e: Dictionary) -> bool: return e.name == "edit").map(func(e: Dictionary) -> float: return e.ms)
 	var s1 := _read("surface")
 	var l1 := _vol(_read("loose"), s1, box)
-	print("shovel: a 20 m³ pile at %s settled in %.2f s; the scoop holds %.6f m³, the loose over the box of 12 dropped %.6f m³ (%+.4f %% of it), surface unchanged: %s; its edit list %s ms" % [
+	print("shovel: a 30 m³ pile at %s settled in %.2f s; the scoop holds %.6f m³, the loose over the box of 12 dropped %.6f m³ (%+.4f %% of it), surface unchanged: %s; its edit list %s ms" % [
 			s8, waited, held, l0 - l1, _residual("scoop loose", l0 - l1, held), s1 == s0, edit_ms])
-	_report("scoop takes loose first", waited >= 0.0 and held > 0.5 and held < 5.0
+	_report("scoop takes loose first", waited >= 0.0 and held > 0.5 and held < 12.0
 			and absf(l0 - l1 - held) <= 1e-3 * held and s1 == s0)
 	var emptied := await _dump(s8 + Vector2i(0, 6))
 	var l2 := _vol(_read("loose"), _read("surface"), box)
@@ -756,25 +756,25 @@ func _shovel(s8: Vector2i) -> bool:
 	_report("dump returns it", emptied and absf(l2 - l0) <= 1e-3 * l0)
 	var waited2 := await _settled(s8)
 	var b := s8 + Vector2i(0, -6)
-	var bbox := _box(b, 4)
+	var bbox := _box(b, 6)
 	s0 = _read("surface")
-	var lb0 := _vol(_read("loose"), s0, bbox)
-	var bit := await _scoop(b)
-	s1 = _read("surface")
-	var lb1 := _vol(_read("loose"), s1, bbox)
-	var removed := _removed(s0, s1, bbox)
 	var clay_top := _read("clay_top")
 	var clay_bottom := _read("clay_bottom")
+	var lb0 := _vol(_read("loose"), s0, bbox) + _gap_loose(bbox)
+	var bit := await _scoop(b)
+	s1 = _read("surface")
+	var lb1 := _vol(_read("loose"), s1, bbox) + _gap_loose(bbox)
+	var lost := _swelled_loss(bbox, s0, clay_bottom, clay_top)
 	var dented := _disc(b, t.scoop_radius).all(func(c: Vector2i) -> bool:
 		return _f(s1, c) < _f(s0, c) and _f(clay_top, c) <= _f(s1, c) and _f(clay_bottom, c) <= _f(s1, c))
-	print("shovel: settled in %.2f s; bare ground at %s: the scoop holds %.6f m³, the annulus cut %.6f m³ · %.2f = %.6f (%+.4f %%), the loose over the box of 4 %+.9f m³, the disc dented under its clay: %s" % [
-			waited2, b, bit, removed, swell, removed * swell, _residual("scoop solid", removed * swell, bit), lb1 - lb0, dented])
-	_report("scoop bites solid dirt with the swell", waited2 >= 0.0 and bit > 0.5 and bit < 5.0
-			and absf(removed * swell - bit) <= 1e-3 * bit and absf(lb1 - lb0) <= 1e-6 and dented)
+	print("shovel: settled in %.2f s; bare ground at %s: the scoop holds %.6f m³, the solid lost over the box of 6 (the surfaces' annuli less the gaps', each height by its material's swell) %.6f m³ loose-equivalent (%+.4f %%), the loose over the box %+.9f m³, the disc dented under its clay: %s" % [
+			waited2, b, bit, lost, _residual("scoop solid", lost, bit), lb1 - lb0, dented])
+	_report("scoop bites solid dirt with the swell", waited2 >= 0.0 and bit > 0.5 and bit < 12.0
+			and absf(lost - bit) <= 1e-3 * bit and absf(lb1 - lb0) <= 1e-6 and dented)
 	emptied = await _dump(b)
 	var waited3 := await _settled(b)
-	var lb2 := _vol(_read("loose"), _read("surface"), bbox)
-	print("shovel: dumped back at %s, empty: %s, settled in %.2f s: the loose over the box of 4 gained %.6f m³ for %.6f held (%+.4f %%); %d scoops, %d dumps" % [
+	var lb2 := _vol(_read("loose"), _read("surface"), bbox) + _gap_loose(bbox)
+	print("shovel: dumped back at %s, empty: %s, settled in %.2f s: the loose over the box of 6 gained %.6f m³ for %.6f held (%+.4f %%); %d scoops, %d dumps" % [
 			b, emptied, waited3, lb2 - lb0, bit, _residual("refill", lb2 - lb0, bit), _tools.scoops - scoops0, _tools.dumps - dumps0])
 	_report("dump refills", emptied and waited3 >= 0.0 and absf(lb2 - lb0 - bit) <= 1e-3 * bit
 			and _tools.scoops - scoops0 == 2 and _tools.dumps - dumps0 == 2)
@@ -1291,27 +1291,27 @@ func _ball_footprint(c: Vector2i) -> Array[Vector2i]:
 	return out
 
 
-## The first cell within 6 of `from` whose ball footprint is all bare rock (every cell's surface at its
+## The first cell within 12 of `from` whose ball footprint is all bare rock (every cell's surface at its
 ## bedrock_top), or NO_CELL.
 func _bare_rock_site(from: Vector2i) -> Vector2i:
 	var surface := _read("surface")
 	var bedrock := _read("bedrock_top")
 	var bare := func(c: Vector2i) -> bool: return _f(surface, c) <= _f(bedrock, c)
-	for c in _box(from, 6):
+	for c in _box(from, 12):
 		var foot := _ball_footprint(c)
 		if not foot.is_empty() and foot.all(bare):
 			return c
 	return TerrainSim.NO_CELL
 
 
-## A scoop on the first cell within 6 of the player's cell + (0, 4) whose ball footprint is bare rock (every
+## A scoop on the first cell within 12 of the player's cell + (0, 4) whose ball footprint is bare rock (every
 ## cell's surface at its bedrock_top): accepted, it holds nothing.
 func _rock_scoop() -> void:
 	var surface := _read("surface")
 	var from := _tools.player_cell() + Vector2i(0, 4)
 	var at := _bare_rock_site(from)
 	if at == TerrainSim.NO_CELL:
-		_report("rock gives nothing (no bare-rock ball footprint within 6 cells of %s)" % from, false)
+		_report("rock gives nothing (no bare-rock ball footprint within 12 cells of %s)" % from, false)
 		return
 	var scoops0 := _tools.scoops
 	var held := await _scoop(at)
@@ -1978,3 +1978,31 @@ func _residual(what: String, got: float, want: float) -> float:
 	_residuals[what] = (got / want - 1.0) * 100.0
 	return _residuals[what]
 
+
+## The loose-equivalent of the solid lost over cells since the surfaces s0 (no gaps then): the annulus between
+## the surfaces and each gap's, every height by its material's swell from the strata as they stood (clay
+## between clay_bottom and clay_top, dirt elsewhere; rock is never lost).
+func _swelled_loss(cells: Array[Vector2i], s0: PackedByteArray, cb0: PackedByteArray, ct0: PackedByteArray) -> float:
+	var p := _terrain.params
+	var m := _terrain.materials
+	var surface := _read("surface")
+	var gb: Array[PackedByteArray] = []
+	var gt: Array[PackedByteArray] = []
+	for g in 4:
+		gb.append(_read("gap_bottom%d" % g))
+		gt.append(_read("gap_top%d" % g))
+	var v := 0.0
+	for c in cells:
+		var spans: Array[Vector2] = [Vector2(_f(surface, c), _f(s0, c))]
+		for g in 4:
+			if _f(gt[g], c) > _f(gb[g], c):
+				spans.append(Vector2(_f(gb[g], c), _f(gt[g], c)))
+		for sp in spans:
+			if sp.y <= sp.x:
+				continue
+			var clay_lo := maxf(sp.x, _f(cb0, c))
+			var clay_hi := minf(sp.y, _f(ct0, c))
+			var clay := Cyl.span_volume(clay_lo, clay_hi, p.radius, p.dtheta(), 1.0) if clay_hi > clay_lo else 0.0
+			var all := Cyl.span_volume(sp.x, sp.y, p.radius, p.dtheta(), 1.0)
+			v += (all - clay) * m.swell_factor[0] + clay * m.swell_factor[1]
+	return v

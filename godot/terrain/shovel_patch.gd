@@ -1,4 +1,4 @@
-## The shovel's patch (the tunnels design): a ring decal two metres across, projected along the surface
+## The shovel's patch (the tunnels design): a ring decal the ball's width across, projected along the surface
 ## normal at the crosshair's hit while one is in reach, onto the terrain meshes only.
 class_name ShovelPatch
 extends Decal
@@ -19,8 +19,10 @@ func _ready() -> void:
 	visible = false
 
 
-## Shows the ring at station-local p, its face along the normal n.
-func show_at(p: Vector3, n: Vector3, station: Node3D) -> void:
+## Shows the ring at station-local p, its face along the normal n, radius m across each way.
+func show_at(p: Vector3, n: Vector3, station: Node3D, radius := SIZE / 2.0) -> void:
+	if size.x != 2.0 * radius:
+		size = Vector3(2.0 * radius, 1.0, 2.0 * radius)
 	var y := n.normalized()
 	var x := y.cross(Vector3.FORWARD)
 	if x.length() < 1e-3:
