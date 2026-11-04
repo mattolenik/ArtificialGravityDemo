@@ -7,6 +7,8 @@
 ##    VoxelColumn.unpack of the window's column (solid exactly, loose within one fraction step).
 ## move: the player teleported 100 m along z and back (the box moves six or seven bricks each way): every
 ##    window field bit for bit as before, the box's origin having changed and come back.
+## seam: the player teleported to theta = 0 on the spawn's row (the box crosses the seam) and back: every window
+##    field bit for bit as before, the box's origin on the seam's bricks meanwhile.
 ## reload: a 2 m³ window-side deposit of radius 1 at R1, then reload of its disc: the loose fractions over the
 ##    disc's columns, each by its voxel's annulus, add up to 2 m³ within 0.1 %, as the window's loose does.
 ## shovel (S, flat dry ground, the player 4 cells spinward): a scoop at S's collider point holds half the ball
@@ -17,6 +19,16 @@
 ##    column 2 m along holds exactly one gap under an unchanged surface (the second ball merged with the first's
 ##    hollow); the ring is shown while the player looks at the ground near them and hidden looking level (the
 ##    hit beyond reach).
+## sand (D, flat ground): a 30 m³ window-side deposit of radius 1 (reloaded into the box by stamp_tool) settles
+##    in the box within 10 s: the window's loose over the box of 24 holds it within 0.1 %, the steepest loose
+##    slope is at repose · 1.02.
+## edge: a 5 m³ deposit two cells inside the box's far edge along z settles with its volume kept within 0.1 %
+##    over the box of 8 (the sand parks dirt at the edge, none crosses).
+## cave (C, flat ground): scoops at one spot until the pit is over 3 m deep: once settled no loose lies over
+##    the box of 6 (the walls stand under the 4 m free height); scoops on until it is over 5 m deep: once
+##    settled loose lies there (the walls caved), no wall step stands more than 2 cm over max(stand · 1.02 · w,
+##    free), and the annulus between the first and last surfaces over the box of 8 is the hand's solid plus
+##    the loose's within 0.1 % (each by the swell).
 ## rock (the noise report's rock site): a scoop on the first cell within 6 of the player's cell + (0, 4)
 ##    whose ball footprint is bare rock (every cell's surface at its bedrock_top) holds nothing and changes
 ##    no surface; the footprint's cells and their top voxels are printed.
@@ -38,6 +50,9 @@ func _route() -> void:
 	_phase = "move"
 	if not await _move(spawn):
 		return
+	_phase = "seam"
+	if not await _seam_move(spawn):
+		return
 	_phase = "reload"
 	if not await _reload(spawn + Vector2i(0, 40)):
 		return
@@ -46,6 +61,18 @@ func _route() -> void:
 		return
 	_phase = "rock"
 	if not await _rock_box():
+		return
+	_phase = "sand"
+	if not await _sand(spawn + Vector2i(0, -40)):
+		return
+	_phase = "edge"
+	if not await _edge(spawn):
+		return
+	_phase = "cave"
+	if not await _cave(spawn + Vector2i(0, -80)):
+		return
+	_phase = "pickup"
+	if not await _pickup_box(spawn + Vector2i(40, 0)):
 		return
 	_phase = ""
 	await _frames(6)
@@ -68,6 +95,27 @@ func _same(a: Dictionary, b: Dictionary) -> Array[String]:
 		if a[f] != b[f]:
 			differ.append(f)
 	return differ
+
+
+## Per differing field: how many texels differ and the first one's cell and values (floats or bytes).
+func _diff_report(a: Dictionary, b: Dictionary) -> String:
+	var n := _terrain.window.size
+	var out := PackedStringArray()
+	for f: String in _same(a, b):
+		var is_float := f in TerrainWindow.FLOAT_FIELDS
+		var x: Array = Array(a[f].to_float32_array()) if is_float else Array(a[f])
+		var y: Array = Array(b[f].to_float32_array()) if is_float else Array(b[f])
+		var count := 0
+		var first := ""
+		for k in n * n:
+			if x[k] == y[k]:
+				continue
+			count += 1
+			if first.is_empty():
+				@warning_ignore("integer_division")
+				first = "texel %s: %s -> %s" % [Vector2i(k % n, k / n), x[k], y[k]]
+		out.append("%s %d texels (%s)" % [f, count, first])
+	return "; ".join(out)
 
 
 ## The window's column at cell, as VoxelColumn takes it.
@@ -177,6 +225,54 @@ func _move(spawn: Vector2i) -> bool:
 	return true
 
 
+func _seam_move(spawn: Vector2i) -> bool:
+	var box := _terrain.box
+	# As the tool run arrives at its seam phase: a pile settled against an obstacle, the obstacle lifted, the
+	# pile settled again, the player back at the spawn, then the teleport.
+	var s2 := spawn + Vector2i(0, -120)
+	if not await _teleport(s2 + Vector2i(6, 0)):
+		return false
+	_terrain.set_obstacle(s2 + Vector2i(0, 3), 1)
+	_stamp(_op(s2, 1, EditLayer.MODE_DEPOSIT, 30.0))
+	var w1 := await _settled(s2)
+	_terrain.set_obstacle(TerrainSim.NO_CELL, -1)
+	var w2 := await _settled(s2)
+	print("seam: a pile against an obstacle settled in %.2f s, lifted and settled again in %.2f s" % [w1, w2])
+	if not await _teleport(spawn):
+		return false
+	await _frames(3)
+	var before := _snapshot()
+	if not await _teleport(Vector2i(0, spawn.y)):
+		return false
+	await _frames(3)
+	var o1 := box.origin()
+	var bricks := box.allocated()
+	if not await _teleport(spawn):
+		return false
+	await _frames(3)
+	var after := _snapshot()
+	var differ := _same(before, after)
+	# A pile re-entering the box goes active (a pile mid-slump resumes) and creeps a little: its loose may
+	# move, conserved; every other field keeps its bits.
+	var l0 := _sum(before.loose, before.surface)
+	var l1 := _sum(after.loose, after.surface)
+	var loose_only := differ.size() == 1 and differ[0] == "loose" and absf(l1 - l0) <= 1e-3 * l0
+	print("seam: the box at %s on the seam (%d bricks), back at %s; %s; the window's loose %.6f m³, was %.6f (%+.4f %%)" % [
+			o1, bricks, box.origin(), "no field changed" if differ.is_empty() else "changed " + _diff_report(before, after), l1, l0, _residual("seam loose", l1, l0)])
+	_report("a move across the seam changes no column but a pile's loose, conserved", (differ.is_empty() or loose_only) and bricks > 0)
+	return true
+
+
+## The largest difference between two float fields' texels.
+func _max_abs_diff(a: PackedByteArray, b: PackedByteArray) -> float:
+	var x := a.to_float32_array()
+	var y := b.to_float32_array()
+	var worst := 0.0
+	for k in x.size():
+		worst = maxf(worst, absf(x[k] - y[k]))
+	return worst
+
+
 func _reload(r1: Vector2i) -> bool:
 	var box := _terrain.box
 	var disc := _disc(r1, 1)
@@ -201,19 +297,102 @@ func _reload(r1: Vector2i) -> bool:
 	return true
 
 
-## The box's loose over cells, each voxel's fraction by its annulus, from the columns' brick stacks.
-func _box_loose(cells: Array[Vector2i]) -> float:
+var _max_bricks := 0
+
+
+func _process(delta: float) -> void:
+	super._process(delta)
+	if _listening:
+		_max_bricks = maxi(_max_bricks, _terrain.box.active_bricks().size())
+
+
+## The loose-equivalent of the solid lost over cells since the surfaces s0 (no gaps then): the annulus between
+## the surfaces and each gap's, every height by its material's swell from the strata as they stood (clay
+## between clay_bottom and clay_top, dirt elsewhere; rock is never lost).
+func _swelled_loss(cells: Array[Vector2i], s0: PackedByteArray, cb0: PackedByteArray, ct0: PackedByteArray) -> float:
+	var p := _terrain.params
+	var m := _terrain.materials
+	var surface := _read("surface")
+	var gb: Array[PackedByteArray] = []
+	var gt: Array[PackedByteArray] = []
+	for g in 4:
+		gb.append(_read("gap_bottom%d" % g))
+		gt.append(_read("gap_top%d" % g))
+	var v := 0.0
+	for c in cells:
+		var spans: Array[Vector2] = [Vector2(_f(surface, c), _f(s0, c))]
+		for g in 4:
+			if _f(gt[g], c) > _f(gb[g], c):
+				spans.append(Vector2(_f(gb[g], c), _f(gt[g], c)))
+		for sp in spans:
+			if sp.y <= sp.x:
+				continue
+			var clay_lo := maxf(sp.x, _f(cb0, c))
+			var clay_hi := minf(sp.y, _f(ct0, c))
+			var clay := Cyl.span_volume(clay_lo, clay_hi, p.radius, p.dtheta(), 1.0) if clay_hi > clay_lo else 0.0
+			var all := Cyl.span_volume(sp.x, sp.y, p.radius, p.dtheta(), 1.0)
+			v += (all - clay) * m.swell_factor[0] + clay * m.swell_factor[1]
+	return v
+
+
+## The box's loose and solid over cells, each voxel's fraction by its annulus, from the columns' brick stacks:
+## [loose, solid].
+func _box_volumes(cells: Array[Vector2i]) -> Array[float]:
 	var p := _terrain.params
 	var stacks := {}
-	var got := 0.0
+	var loose := 0.0
+	var solid := 0.0
 	for c in cells:
 		var key := Vector2i(floori(c.x / 16.0), floori(c.y / 16.0))
 		if not stacks.has(key):
 			stacks[key] = _stack(c)
 		var vox := _column_vox(stacks[key], c)
 		for i in vox.loose.size():
-			got += vox.loose[i] / float(VoxelColumn.FRACTION_ONE) * VoxelColumn.voxel_volume(_terrain.box.bottom() + i, p.radius, p.dtheta())
-	return got
+			var vol := VoxelColumn.voxel_volume(_terrain.box.bottom() + i, p.radius, p.dtheta())
+			loose += vox.loose[i] / float(VoxelColumn.FRACTION_ONE) * vol
+			solid += vox.solid[i] / float(VoxelColumn.FRACTION_ONE) * vol
+	return [loose, solid]
+
+
+func _box_loose(cells: Array[Vector2i]) -> float:
+	return _box_volumes(cells)[0]
+
+
+## Phase pickup at A: an auger bores 10 m and is picked up; the uncased shaft caves in. The loose and solid of
+## the box's voxels and of the window (surfaces and gaps) over the box of 12 before and after, so a loss shows
+## where it happens: the box's loose gain against its solid loss times the swell, and each against the window.
+func _pickup_box(a: Vector2i) -> bool:
+	if not await _teleport(a + Vector2i(-4, 0)):
+		return false
+	var t := _terrain.tool_params
+	var swell := _terrain.materials.swell_factor[0]
+	var at := _center(a)
+	var auger := _tools.place(at.x, at.y, Vector2i(0, 1))
+	if auger == null:
+		return _quit("The auger was not placed at %s." % a)
+	var reason := await _stopped(auger, 40.0)
+	if reason.is_empty():
+		return _quit("The auger did not stop in 40 s.")
+	var waited := await _settled(auger.spoil_cell())
+	var cells := _box(a, 12)
+	var w_loose0 := _vol(_read("loose"), _read("surface"), cells) + _gap_loose(cells)
+	var w_solid0 := _solid_volume(cells)
+	var b0 := _box_volumes(cells)
+	_tools.pickup()
+	var waited2 := await _settled(a, 20.0)
+	var w_loose1 := _vol(_read("loose"), _read("surface"), cells) + _gap_loose(cells)
+	var w_solid1 := _solid_volume(cells)
+	var b1 := _box_volumes(cells)
+	print("pickup: bored (%s), settled in %.2f s, picked up, settled in %.2f s; the box's voxels: loose %.6f -> %.6f (%+.6f), solid %.6f -> %.6f (%+.6f, · %.2f = %+.6f); the window: loose %.6f -> %.6f (%+.6f), solid %.6f -> %.6f (%+.6f)" % [
+			reason, waited, waited2, b0[0], b1[0], b1[0] - b0[0], b0[1], b1[1], b1[1] - b0[1], swell, (b0[1] - b1[1]) * swell,
+			w_loose0, w_loose1, w_loose1 - w_loose0, w_solid0, w_solid1, w_solid1 - w_solid0])
+	var clipped: int = _terrain.box.read_stats()[VoxelBox.SLOTS + 2]
+	print("pickup: the sand clipped %d counts of arriving loose at full voxels so far" % clipped)
+	var box_ok := absf((b1[0] - b0[0]) - (b0[1] - b1[1]) * swell) <= 1e-3 * (b1[0] - b0[0])
+	var window_ok := absf((w_loose1 - w_loose0) - (w_solid0 - w_solid1) * swell) <= 1e-3 * (w_loose1 - w_loose0)
+	var agree := absf(b1[0] - w_loose1) <= 1e-3 * w_loose1 and absf((b1[1] - b0[1]) - (w_solid1 - w_solid0)) <= 1e-3 * absf(b1[1] - b0[1])
+	_report("the caved shaft's loose is its walls' solid times the swell, in the box and in the window, no arrival clipped", reason == "depth" and waited >= 0.0 and waited2 >= 0.0 and box_ok and window_ok and agree and clipped == 0)
+	return true
 
 
 func _shovel_box(s: Vector2i) -> bool:
@@ -293,10 +472,82 @@ func _rock_box() -> bool:
 			var data := box.read_brick(VoxelBox.slot_of(box.brick_of_cell(c, kk)))
 			vox.append("%d:%s" % [kk, VoxelBox.voxel(data, posmod(c.x, 16), posmod(kk, 16), posmod(c.y, 16)) if not data.is_empty() else "none"])
 		print("rock cell %s: material %d, surface %.3f, bedrock %.3f, loose %.4f; voxels %s" % [c, _b(material, c), _f(surface, c), _f(bedrock, c), _f(loose, c), vox])
-	var held := await _scoop(at)
+	var h0 := _tools.held
+	var held := await _scoop(at) - h0
 	var same := _read("surface") == surface
-	print("rock: a scoop at %s holds %.6f m³, surface unchanged: %s" % [at, held, same])
+	print("rock: a scoop at %s adds %.6f m³ to the hand, surface unchanged: %s" % [at, held, same])
 	_report("a scoop on bare rock takes nothing", held == 0.0 and same)
+	return true
+
+
+func _sand(d: Vector2i) -> bool:
+	if not await _teleport(d + Vector2i(6, 0)):
+		return false
+	var cells := _box(d, 24)
+	_stamp(_op(d, 1, EditLayer.MODE_DEPOSIT, 30.0))
+	var waited := await _settled(d)
+	var vol := _vol(_read("loose"), _read("surface"), cells)
+	var steep := _steepest(cells, [])
+	var repose := tan(deg_to_rad(_terrain.materials.repose_dry[0])) * 1.02
+	print("sand: a 30 m³ deposit at %s settled in %.2f s; %.6f m³ over the box of 24 (%+.4f %%); steepest %.4f, repose · 1.02 %.4f; active bricks at most %d" % [
+			d, waited, vol, _residual("box sand", vol, 30.0), steep, repose, _max_bricks])
+	_report("a pile settles at repose in the box, conserved", waited >= 0.0 and absf(vol - 30.0) <= 0.03 and steep <= repose)
+	return true
+
+
+func _edge(spawn: Vector2i) -> bool:
+	if not await _teleport(spawn):
+		return false
+	var box := _terrain.box
+	var e := Vector2i(spawn.x, box.origin().y * VoxelBox.BRICK + VoxelBox.COLUMNS - 3)
+	var cells := _box(e, 8)
+	var l0 := _vol(_read("loose"), _read("surface"), cells)
+	_stamp(_op(e, 1, EditLayer.MODE_DEPOSIT, 5.0))
+	var waited := await _settled(e)
+	var l1 := _vol(_read("loose"), _read("surface"), cells)
+	print("edge: a 5 m³ deposit at %s, two cells inside the box's far edge (origin %s), settled in %.2f s; the loose over the box of 8 gained %.6f m³ (%+.4f %%)" % [
+			e, box.origin(), waited, l1 - l0, _residual("box edge", l1 - l0, 5.0)])
+	_report("the sand parks dirt at the box's edge", waited >= 0.0 and absf(l1 - l0 - 5.0) <= 0.005)
+	return true
+
+
+func _cave(c: Vector2i) -> bool:
+	if not await _teleport(c + Vector2i(5, 0)):
+		return false
+	var swell := _terrain.materials.swell_factor[0]
+	var stand := tan(deg_to_rad(_terrain.materials.stable_slope_dry[0])) * 1.02
+	var free := _terrain.materials.roof_span_dry[0]
+	var cells := _box(c, 8)
+	var inner := _box(c, 6)
+	var s0 := _read("surface")
+	var cb0 := _read("clay_bottom")
+	var ct0 := _read("clay_top")
+	var h0 := _tools.held
+	var top := _f(s0, c)
+	var scoops := 0
+	while top - _f(_read("surface"), c) < 3.0 and scoops < 12:
+		await _scoop(c)
+		await _frames(15)
+		scoops += 1
+	var depth1 := top - _f(_read("surface"), c)
+	var waited1 := await _settled(c)
+	var loose1 := _vol(_read("loose"), _read("surface"), inner)
+	print("cave: %d scoops at %s, the pit %.2f m deep; settled in %.2f s; loose over the box of 6 %.6f m³ (the walls stand under %.1f m)" % [scoops, c, depth1, waited1, loose1, free])
+	_report("a pit under the free height keeps its walls", depth1 > 3.0 and waited1 >= 0.0 and loose1 <= 1e-3)
+	while top - _f(_read("surface"), c) < 5.0 and scoops < 24:
+		await _scoop(c)
+		await _frames(15)
+		scoops += 1
+	var depth2 := top - _f(_read("surface"), c)
+	var waited2 := await _settled(c, 20.0)
+	var s1 := _read("surface")
+	var loose2 := _vol(_read("loose"), s1, cells) + _gap_loose(cells)
+	var lost := _swelled_loss(cells, s0, cb0, ct0)
+	var got := _tools.held - h0 + loose2
+	var wall := _wall_excess(cells, stand, free)
+	print("cave: %d scoops, the pit %.2f m deep; settled in %.2f s; loose over the box of 8 %.6f m³; the solid lost over the box (the surfaces' annuli less the gaps', each height by its material's swell) %.6f m³ loose-equivalent for %.6f held + %.6f loose = %.6f (%+.4f %%); the tallest wall over max(stand · 1.02 · w, free) %+.4f m" % [
+			scoops, depth2, waited2, loose2, lost, _tools.held - h0, loose2, got, _residual("box cave", got, lost), wall])
+	_report("a pit over the free height caves to the stand slope, conserved", depth2 > 5.0 and waited2 >= 0.0 and loose2 > 0.1 and absf(got - lost) <= 1e-3 * lost and wall <= 0.02)
 	return true
 
 
@@ -306,7 +557,8 @@ func _box_summary() -> void:
 	var bricks := _terrain.box.allocated()
 	var stats := _terrain.box.read_stats()
 	print("box: %d bricks allocated (%.1f MB), gap overflows %d, pool dry %d" % [bricks, bricks * VoxelBox.BRICK_BYTES / 1048576.0, stats[VoxelBox.SLOTS], stats[VoxelBox.SLOTS + 1]])
-	for pass_name: String in ["box_unpack", "box_pack", "box_edit"]:
+	print("box: at most %d bricks active at once; %d sand steps" % [_max_bricks, _terrain.box.steps])
+	for pass_name: String in ["box_unpack", "box_pack", "box_edit", "box_sand"]:
 		var ms: Array[float] = []
 		for t in _timed:
 			if t.name == pass_name:
@@ -314,6 +566,6 @@ func _box_summary() -> void:
 		print("  %-11s per list %s" % [pass_name, Smoke._stat(ms, BOX_BUDGET * bricks)])
 		if not ms.is_empty():
 			print("  %-11s the longest list per brick allocated %.4f ms (budget %.2f)" % [pass_name, ms.max() / bricks, BOX_BUDGET])
-	for phase: String in ["unpack", "move", "reload", "shovel", "rock"]:
+	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup"]:
 		var st := _stat_of(phase)
 		print("  %-6s %5.1f s; %s; %d reads" % [phase, st.time, Smoke._times(st.cpu, st.gpu), st.reads])

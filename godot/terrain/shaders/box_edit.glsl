@@ -88,6 +88,29 @@ const int SUB = 8;
 const float THIN_ROOF = 0.3;
 shared uint refuse;
 
+// The brick slot of voxel ck (theta unwrapped, z, height index), -1 outside the box or off the station.
+int slot_of_voxel(ivec3 ck) {
+	ivec2 c = ivec2(wrap(ck.x, pc.n_theta), ck.y);
+	if (c.y < 0 || c.y >= pc.n_z) {
+		return -1;
+	}
+	bool inbox;
+	ivec2 s = slot_of_cell(c, pc.origin, inbox);
+	int k0 = pc.origin.z * 16;
+	if (!inbox || ck.z < k0 || ck.z >= k0 + K) {
+		return -1;
+	}
+	return slot_index(ivec3(s.x / 16, s.y / 16, wrap(ck.z >> 4, 4)));
+}
+
+// Wakes the brick holding voxel ck (bit 0 of its slot: the sand steps it).
+void wake(ivec3 ck) {
+	int e = slot_of_voxel(ck);
+	if (e >= 0) {
+		atomicOr(box_stats[e], 1u);
+	}
+}
+
 // The pool address of voxel ck (theta unwrapped, z, height index) and its column's dirty index; false when
 // it lies outside the box, off the station or in an unallocated (air) slot.
 bool voxel_addr(ivec3 ck, out int addr, out int col) {
@@ -101,7 +124,7 @@ bool voxel_addr(ivec3 ck, out int addr, out int col) {
 	if (!inbox || ck.z < k0 || ck.z >= k0 + K) {
 		return false;
 	}
-	int b = index[slot_index(ivec3(s.x / 16, s.y / 16, wrap(ck.z / 16, 4)))];
+	int b = index[slot_index(ivec3(s.x / 16, s.y / 16, wrap(ck.z >> 4, 4)))];
 	if (b < 0) {
 		return false;
 	}
@@ -279,6 +302,8 @@ void scoop_column(ivec2 cxz) {
 			pool[addr[i] + 1] = (w1s[i] & 0x00FFFFFFu) | ((fs[i] > 0u ? hg[i] : 0u) << 24);
 		}
 	}
+	wake(ivec3(cxz, kz0));
+	wake(ivec3(cxz, kz0 + nk - 1));
 	dirty[col] = 1u;
 }
 
@@ -341,6 +366,7 @@ void dump(ivec3 l, ivec3 ck) {
 	pool[addr + 1] &= ~0xFF00u;
 	atomicAdd(counter[0], uint(roundh(float(q) / ONE * vol(ck.z) * 1e6)));
 	dirty[col] = 1u;
+	wake(ck);
 }
 
 void main() {

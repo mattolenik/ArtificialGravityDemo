@@ -34,5 +34,32 @@ func _initialize() -> void:
 	var v := VoxelBox.voxel(brick, 3, 5, 7)
 	check(v.solid == 24248 and v.loose == 1000 and v.material == 1 and v.compaction == 50 and v.saturation == 7 and v.hanging == 1, "voxel %s" % v)
 	check(VoxelBox.voxel(brick, 4, 5, 7).solid == 0, "another voxel")
+	# The cave-in's free height (the tunnels design): a step fails only when it is both steeper than the stand
+	# slope over the edge distance and taller than the free height.
+	check(not VoxelBox.wall_fails(3.0, 1.0, 1.0, 4.0) and VoxelBox.wall_fails(5.0, 1.0, 1.0, 4.0) and not VoxelBox.wall_fails(0.9, 1.0, 1.0, 0.0), "wall_fails")
+	# The Materials block of box_sand.glsl: tan of the stand slopes dry and saturated, the swell, the free
+	# heights dry and saturated (the roof spans), per material.
+	b.materials = load("res://terrain/materials.tres")
+	var m := b.material_table()
+	check(m.size() == 80 and absf(m.decode_float(0) - tan(deg_to_rad(45.0))) < 1e-6 and absf(m.decode_float(4) - tan(deg_to_rad(70.0))) < 1e-5 \
+			and absf(m.decode_float(16) - tan(deg_to_rad(35.0))) < 1e-6 and m.decode_float(32) == 1.25 and absf(m.decode_float(44) - 1.6) < 1e-6 \
+			and m.decode_float(48) == 4.0 and m.decode_float(52) == 6.0 and m.decode_float(64) == 1.5 and m.decode_float(68) == 2.0, "box material table")
+	# The activity bookkeeping without a device: a flagged slot's brick (in the origin's frame) is active with
+	# quiet 0, settles after settle_time, at most MAX_ACTIVE_BRICKS at once.
+	b.tool_params = ToolParams.new()
+	var flags := PackedInt32Array()
+	flags.resize(VoxelBox.SLOTS)
+	flags[VoxelBox.slot_index(VoxelBox.slot_of(Vector3i(6, 12, 25)))] = 1
+	check(b.settle(0.5, flags).is_empty() and b.is_active(Vector3i(6, 12, 25)) and b.active_bricks().size() == 1, "a flagged slot's brick is active")
+	flags.fill(0)
+	check(b.settle(0.6, flags).is_empty() and b.is_active(Vector3i(6, 12, 25)), "quiet under settle_time stays active")
+	check(b.settle(0.5, flags) == [Vector3i(6, 12, 25)] and not b.has_active(), "settled after settle_time")
+	for i in VoxelBox.MAX_ACTIVE_BRICKS + 10:
+		flags[i] = 1
+	var out := b.settle(0.0, flags)
+	check(b.active_bricks().size() == VoxelBox.MAX_ACTIVE_BRICKS and out.size() == 10, "capped at %d: %d active, %d out" % [VoxelBox.MAX_ACTIVE_BRICKS, b.active_bricks().size(), out.size()])
+	b.drop(b.active_bricks())
+	b.activate_cells([Vector2i(100, 200)])
+	check(b.active_bricks().size() == 4 and b.is_active(Vector3i(6, 12, 23)) and b.is_active(Vector3i(6, 12, 26)), "activate_cells wakes a column's four bricks")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

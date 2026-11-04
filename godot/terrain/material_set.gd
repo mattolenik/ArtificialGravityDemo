@@ -22,7 +22,9 @@ const ROCK_FACE := 3
 @export var repose_dry := PackedFloat32Array([35.0, 40.0, 40.0, 40.0])
 @export var repose_damp := PackedFloat32Array([40.0, 45.0, 40.0, 40.0])
 @export var repose_saturated := PackedFloat32Array([20.0, 0.0, 40.0, 40.0])
-## Longest unsupported roof of the solid, dry and saturated.
+## Longest unsupported roof of the solid, dry and saturated: the cohesion that lets a roof span, and (the
+## tunnels design) the free height of the slope stability rule: a wall fails only when it is both steeper than
+## the stable slope and taller than this, so a pit under it keeps its cut shape and a tunnel mouth keeps its lintel.
 @export var roof_span_dry := PackedFloat32Array([4.0, 6.0, 20.0, 20.0])
 @export var roof_span_saturated := PackedFloat32Array([1.5, 2.0, 20.0, 20.0])
 ## Steepest face the solid holds, dry and saturated: the simulation fails a steeper face toward disturbed

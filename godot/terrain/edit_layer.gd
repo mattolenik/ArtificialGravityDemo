@@ -374,6 +374,16 @@ static func disc_cells(radius: int) -> int:
 	return n
 
 
+## The cells of the disc of `radius` around cell (theta wrapped, rows as they fall), as edit.glsl takes them.
+static func disc(cell: Vector2i, radius: int, n_theta: int) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for y in range(-radius, radius + 1):
+		for x in range(-radius, radius + 1):
+			if x * x + y * y <= radius * radius:
+				out.append(Vector2i(posmod(cell.x + x, n_theta), cell.y + y))
+	return out
+
+
 ## Workgroups per axis of a stamp over the box of `reach` cells around its centre (8 x 8 per group).
 static func box_groups(reach: int) -> int:
 	return ceili((2 * reach + 1) / 8.0)

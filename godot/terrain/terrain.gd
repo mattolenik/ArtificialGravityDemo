@@ -109,7 +109,7 @@ func _ready() -> void:
 	sim.materials = materials
 	sim.setup(window, window.edits)
 	box = VoxelBox.new()
-	box.setup(window, window.edits, materials)
+	box.setup(window, window.edits, materials, tool_params)
 	# Before the first move_to, so the spawn tiles get their edits in their first dispatch.
 	window.edits.blobs = WorldIO.load_edits(world_name)
 	if not window.edits.blobs.is_empty():
@@ -247,11 +247,12 @@ func _process(delta: float) -> void:
 	var cell := viewer_cell()
 	_move_window(window.tile_of_cell(cell.x, cell.y))
 	far.follow(cell)
-	# The box follows the feet (1 m under the body's origin, toward the hull) and packs what changed before
-	# the simulation reads the window.
+	# The box follows the feet (1 m under the body's origin, toward the hull), steps its loose dirt and packs
+	# what changed before the water simulation reads the window.
 	var q := station.to_local(_body.global_position)
 	box.follow(q + Vector3(q.x, q.y, 0.0).normalized())
-	box.pack_dirty()
+	box.step(delta)
+	box.pack_dirty(sim.stats_reads)
 	# Settled tiles are packed after the step's lists, so the pack sees the last apply.
 	var settled := sim.step(window, delta)
 	if not settled.is_empty():
@@ -433,6 +434,7 @@ func edit(theta: float, z: float, radius: float, dh: float) -> bool:
 		if not window.is_resident(t):
 			return false
 	window.edits.stamp(window, cell, r, dh)
+	box.reload(EditLayer.disc(cell, r, params.n_theta()))
 	patch.on_edit(cell, r)
 	return true
 
@@ -459,6 +461,9 @@ func stamp_tool(op: EditLayer.Op) -> bool:
 	op.obstacle = _obstacle
 	op.obstacle_radius = _obstacle_radius
 	window.edits.stamp_op(window, op, sim.stats_reads)
+	# A window-side stamp that moves dirt is followed by the box reading those columns again (one owner).
+	if op.mode != EditLayer.MODE_SPILL:
+		box.reload(EditLayer.disc(op.cell, op.reach(), params.n_theta()))
 	_last_tool = op.cell
 	_last_reach = op.reach()
 	_last_frame = Engine.get_process_frames()
@@ -471,6 +476,8 @@ func stamp_tool(op: EditLayer.Op) -> bool:
 ## A box op (Tools, through VoxelBox) changed the ground within reach cells of cell: the collider follows as it
 ## does after a tool stamp (_collider_touch, and _retouch while the tile is active).
 func touch(cell: Vector2i, reach: int) -> void:
+	for t in EditLayer.stamp_tiles(window, cell, reach):
+		window.edits.stamped[t] = sim.stats_reads
 	_last_tool = cell
 	_last_reach = reach
 	_last_frame = Engine.get_process_frames()
@@ -484,10 +491,13 @@ func touch(cell: Vector2i, reach: int) -> void:
 func set_obstacle(cell: Vector2i, radius: int) -> void:
 	if _obstacle_radius >= 0:
 		sim.activate(EditLayer.stamp_tiles(window, _obstacle, _obstacle_radius + 1))
+		box.activate_cells(EditLayer.disc(_obstacle, _obstacle_radius + 1, params.n_theta()))
 	_obstacle = cell
 	_obstacle_radius = radius
 	sim.obstacle = cell
 	sim.obstacle_radius = radius
+	box.obstacle = cell
+	box.obstacle_radius = radius
 
 
 ## A slumping pile, or a push that moved loose, reaches the collider through the last tool stamp's place:

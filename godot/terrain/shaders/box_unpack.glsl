@@ -180,11 +180,17 @@ void main() {
 			continue;
 		}
 		int base = bidx * VOXELS_PER_BRICK * 2;
+		bool any_loose = false;
 		for (int y = 0; y < 16; y++) {
 			int i = L * 16 + y;
 			int v = base + ((y * 16 + within.y) * 16 + within.x) * 2;
 			pool[v] = sol[i] | (loo[i] << 16);
 			pool[v + 1] = mat[i] | (cmp[i] << 8) | (sat << 16) | (flg[i] << 24);
+			any_loose = any_loose || loo[i] != 0u;
+		}
+		// Loose that enters the box goes active, so a pile mid-slump resumes (the sand settles it).
+		if (any_loose) {
+			atomicOr(box_stats[e], 1u);
 		}
 	}
 }

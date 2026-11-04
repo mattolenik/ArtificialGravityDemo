@@ -8,9 +8,14 @@
 ## dirty (one word per box column) and packed back by box_pack.glsl (pack_dirty, every frame something was
 ## changed, before TerrainSim steps): the window's surface, loose and gap fields stay current for the tiles,
 ## the collider, the water and the saves, and a column the box never changed keeps its floats bit for bit. A
-## window-side stamp inside the box is followed by reload(cells). configure and the static helpers are
-## arithmetic (headless-safe); setup is the RenderingDevice entry point. Drivers read bricks back with
-## read_brick (synchronous).
+## window-side stamp inside the box is followed by reload(cells). The loose dirt moves by the sand rule
+## (box_sand.glsl, step) on the active bricks only: a brick goes active when an op, the sand or an unpack
+## holding loose flags its slot in box_stats (bit 0, bit 1 from a neighbour across a face), read back after
+## every frame that stepped, and settles out after settle_time quiet, at most MAX_ACTIVE_BRICKS at once
+## (settle, the window's bookkeeping lifted to bricks). The surface cave-in with the free height runs there
+## too (material_table, wall_fails). configure, settle and the static helpers are arithmetic
+## (headless-safe); setup is the RenderingDevice entry point. Drivers read bricks back with read_brick
+## (synchronous).
 class_name VoxelBox
 extends RefCounted
 
@@ -29,9 +34,10 @@ const SLOTS := BRICKS_ACROSS * BRICKS_ACROSS * BRICKS_UP
 const FAR := Vector3i(1 << 20, 1 << 20, 1 << 20)
 ## Cells one reload may list at once.
 const LIST_MAX := 65536
-## box_stats: one activity word per brick slot (Task 5), the pack's gap overflow count at SLOTS, the pool
-## running dry at SLOTS + 1, then one word per 32 m chunk (Task 7).
-const STATS_WORDS := SLOTS + 2 + 256
+## box_stats: one activity word per brick slot, the pack's gap overflow count at SLOTS, the pool running dry
+## at SLOTS + 1, the sand's arrivals clipped at a voxel's room at SLOTS + 2 (counts; a leak when not 0), then
+## one word per 32 m chunk (Task 7).
+const STATS_WORDS := SLOTS + 3 + 256
 ## The Params block of box_unpack.glsl and box_pack.glsl, std430.
 const PC_BYTES := 80
 const MODE_FREE := 0
@@ -44,14 +50,27 @@ const EDIT_DUMP := 1
 const EDIT_PC_BYTES := 112
 ## Sub-samples per axis of a voxel for a ball's coverage (box_edit.glsl's SUB; Tools.ball_volume).
 const SUB := 8
+## The sand step (box_sand.glsl): the fixed step in s, the most steps run in one frame, the most bricks stepped
+## at once; its Params block and the Materials block (material_table).
+const STEP := 1.0 / 60.0
+const MAX_STEPS := 2
+const MAX_ACTIVE_BRICKS := 64
+const SAND_PC_BYTES := 96
+const MATERIALS_BYTES := 80
 
 var params: WorldParams
 var window: TerrainWindow
 var edits: EditLayer
 var materials: MaterialSet
-## Set by every op that changes voxels; pack_dirty dispatches the pack only then (nothing else sets dirty
-## flags on the GPU).
+## The tunables: the slump rate, the settle time, move_eps (ToolParams).
+var tool_params: ToolParams
+## Set by every op or step that changes voxels; pack_dirty dispatches the pack only then.
 var dirty_pending := false
+## Nothing moves into a cell within obstacle_radius cells of obstacle (Terrain.set_obstacle); none when negative.
+var obstacle := TerrainSim.NO_CELL
+var obstacle_radius := -1
+## Sand steps run, for the drivers.
+var steps := 0
 
 var _origin := FAR
 var _rd: RenderingDevice
@@ -73,6 +92,24 @@ var _edit_pipeline: RID
 var _edit_set: RID
 ## The ball ops' counter: m³ in units of 1e-6, then a refusal flag. Cleared before each op.
 var _counter: RID
+var _sand_shader: RID
+var _sand_pipeline: RID
+var _sand_set: RID
+## Per active brick and voxel: what leaves and what arrives in a step (box_sand.glsl's Flux).
+var _flux: RID
+## Per brick slot: its index among the active bricks this step, or -1 (uploaded each step).
+var _active_table: RID
+## The Materials block of box_sand.glsl.
+var _materials: RID
+## Active brick (world index) -> seconds since one of its voxels last moved.
+var _active := {}
+## The activity words landed since the last step, ORed: per slot, bit 0 a voxel moved, bit 1 one across a
+## face did or wants in.
+var _flags := PackedInt32Array()
+## Seconds not yet stepped, at most MAX_STEPS steps' worth.
+var _accum := 0.0
+## Set when an op or an unpack may have flagged a slot since the last readback.
+var _stats_pending := false
 
 
 ## Arithmetic only.
@@ -80,14 +117,16 @@ func configure(p: WorldParams) -> void:
 	params = p
 
 
-## Creates the pool, the index, the free stack and the other buffers, compiles the two shaders and builds their
+## Creates the pool, the index, the free stack and the other buffers, compiles the shaders and builds their
 ## sets over the window's fields and the edit layer's stats buffer, on the render thread. Call after
 ## edits.setup(window).
-func setup(w: TerrainWindow, e: EditLayer, m: MaterialSet) -> void:
+func setup(w: TerrainWindow, e: EditLayer, m: MaterialSet, t: ToolParams = null) -> void:
 	configure(w.params)
 	window = w
 	edits = e
 	materials = m
+	tool_params = t if t != null else ToolParams.new()
+	_flags.resize(SLOTS)
 	RenderingServer.call_on_render_thread(_setup_rd)
 
 
@@ -99,11 +138,13 @@ func _setup_rd() -> void:
 	_unpack_shader = _compile("res://terrain/shaders/box_unpack.glsl")
 	_pack_shader = _compile("res://terrain/shaders/box_pack.glsl")
 	_edit_shader = _compile("res://terrain/shaders/box_edit.glsl")
-	if not _unpack_shader.is_valid() or not _pack_shader.is_valid() or not _edit_shader.is_valid():
+	_sand_shader = _compile("res://terrain/shaders/box_sand.glsl")
+	if not _unpack_shader.is_valid() or not _pack_shader.is_valid() or not _edit_shader.is_valid() or not _sand_shader.is_valid():
 		return
 	_unpack_pipeline = _rd.compute_pipeline_create(_unpack_shader)
 	_pack_pipeline = _rd.compute_pipeline_create(_pack_shader)
 	_edit_pipeline = _rd.compute_pipeline_create(_edit_shader)
+	_sand_pipeline = _rd.compute_pipeline_create(_sand_shader)
 	_pool = _rd.storage_buffer_create(POOL_BRICKS * BRICK_BYTES)
 	var none := PackedInt32Array()
 	none.resize(SLOTS)
@@ -123,12 +164,19 @@ func _setup_rd() -> void:
 	_cells = _rd.storage_buffer_create(LIST_MAX * 8)
 	zeros.resize(8)
 	_counter = _rd.storage_buffer_create(8, zeros)
+	zeros.resize(MAX_ACTIVE_BRICKS * BRICK * BRICK * BRICK * 8)
+	_flux = _rd.storage_buffer_create(zeros.size(), zeros)
+	_active_table = _rd.storage_buffer_create(SLOTS * 4, none.to_byte_array())
+	_materials = _rd.storage_buffer_create(MATERIALS_BYTES, material_table())
 	var buffers: Array[RID] = [_pool, _index, _dirty, _box_stats, edits.stats_rid(), _free, _needed, _cells]
 	_unpack_set = _uniform_set(_unpack_shader, buffers)
 	_pack_set = _uniform_set(_pack_shader, buffers)
 	var edit_buffers: Array[RID] = buffers.duplicate()
 	edit_buffers.append(_counter)
 	_edit_set = _uniform_set(_edit_shader, edit_buffers)
+	var sand_buffers: Array[RID] = buffers.duplicate()
+	sand_buffers.append_array([_flux, _active_table, _materials])
+	_sand_set = _uniform_set(_sand_shader, sand_buffers)
 
 
 func _compile(path: String) -> RID:
@@ -159,8 +207,211 @@ func _uniform_set(shader: RID, buffers: Array[RID]) -> RID:
 func _notification(what: int) -> void:
 	if what != NOTIFICATION_PREDELETE or _rd == null:
 		return
-	var rids: Array[RID] = [_unpack_shader, _pack_shader, _edit_shader, _pool, _index, _dirty, _box_stats, _free, _needed, _cells, _counter]
+	var rids: Array[RID] = [_unpack_shader, _pack_shader, _edit_shader, _sand_shader, _pool, _index, _dirty, _box_stats, _free, _needed, _cells, _counter, _flux, _active_table, _materials]
 	RenderingServer.call_on_render_thread(TerrainWindow._free_rids.bind(_rd, rids))
+
+
+## The Materials block of box_sand.glsl (std430, MATERIALS_BYTES): per material, tan of the solid's stand slope
+## dry and saturated (the stable slopes; rock never fails), the swell of its loose form, and the free height dry
+## and saturated (the roof spans).
+func material_table() -> PackedByteArray:
+	var b := PackedByteArray()
+	b.resize(MATERIALS_BYTES)
+	for m in 4:
+		b.encode_float(4 * m, tan(deg_to_rad(materials.stable_slope_dry[m])))
+		b.encode_float(16 + 4 * m, tan(deg_to_rad(materials.stable_slope_saturated[m])))
+		b.encode_float(32 + 4 * m, materials.swell_factor[m])
+		b.encode_float(48 + 4 * m, materials.roof_span_dry[m])
+		b.encode_float(64 + 4 * m, materials.roof_span_saturated[m])
+	return b
+
+
+## The slope stability rule with the free height: a solid step of `step` m over an edge distance w fails only
+## when it is both steeper than the stand slope and taller than the free height.
+static func wall_fails(step: float, w: float, stand_tan: float, free: float) -> bool:
+	return step > maxf(stand_tan * w, free)
+
+
+## The world brick in slot i under the origin.
+func brick_at_slot(i: int) -> Vector3i:
+	@warning_ignore("integer_division")
+	var s := Vector3i(i % BRICKS_ACROSS, (i / BRICKS_ACROSS) % BRICKS_ACROSS, i / (BRICKS_ACROSS * BRICKS_ACROSS))
+	return Vector3i(_origin.x + posmod(s.x - _origin.x, BRICKS_ACROSS), _origin.y + posmod(s.y - _origin.y, BRICKS_ACROSS),
+			_origin.z + posmod(s.z - _origin.z, BRICKS_UP))
+
+
+## Whether a world brick lies in the box (theta the short way round).
+func in_box(brick: Vector3i) -> bool:
+	@warning_ignore("integer_division")
+	var around := params.n_theta() / BRICK
+	return posmod(brick.x - _origin.x, around) < BRICKS_ACROSS and brick.y - _origin.y >= 0 and brick.y - _origin.y < BRICKS_ACROSS \
+			and brick.z - _origin.z >= 0 and brick.z - _origin.z < BRICKS_UP
+
+
+## The bookkeeping of one frame, CPU only: every active brick's quiet grows by delta, and the brick of each
+## slot flagged in `flags` (bit 0 or 1) is active with quiet 0. Bricks quiet for settle_time, then the quietest
+## beyond MAX_ACTIVE_BRICKS, leave the active set and are returned.
+func settle(delta: float, flags: PackedInt32Array) -> Array[Vector3i]:
+	for b: Vector3i in _active:
+		_active[b] += delta
+	for i in flags.size():
+		if flags[i] & 3:
+			_active[brick_at_slot(i)] = 0.0
+	var out: Array[Vector3i] = active_bricks().filter(func(b: Vector3i) -> bool: return _active[b] >= tool_params.settle_time)
+	drop(out)
+	if _active.size() > MAX_ACTIVE_BRICKS:
+		var by_quiet := active_bricks()
+		by_quiet.sort_custom(func(a: Vector3i, b: Vector3i) -> bool: return _active[a] > _active[b])
+		var extra := by_quiet.slice(0, _active.size() - MAX_ACTIVE_BRICKS)
+		drop(extra)
+		out.append_array(extra)
+	return out
+
+
+func has_active() -> bool:
+	return not _active.is_empty()
+
+
+func active_bricks() -> Array[Vector3i]:
+	var out: Array[Vector3i] = []
+	out.assign(_active.keys())
+	return out
+
+
+func is_active(brick: Vector3i) -> bool:
+	return _active.has(brick)
+
+
+func drop(bricks: Array[Vector3i]) -> void:
+	for b in bricks:
+		_active.erase(b)
+
+
+## Makes the four bricks of each cell's column active with quiet 0 (an obstacle lifted: a pile held against it
+## slumps on).
+func activate_cells(cells: Array[Vector2i]) -> void:
+	for c in cells:
+		for L in BRICKS_UP:
+			var b := brick_of_cell(c, bottom() + L * BRICK)
+			if in_box(b):
+				_active[b] = 0.0
+
+
+## One frame of the sand: settle on the flags landed since the last call, then the whole steps due (at most
+## MAX_STEPS; an idle stretch banks none), each one compute list of the allocate pass (bricks the last step
+## wanted), a flux dispatch per active brick, a barrier and an apply dispatch per active brick; then a
+## readback of the box_stats activity words and their clear, when a list ran or an op may have flagged a slot.
+func step(delta: float) -> void:
+	settle(delta, _flags)
+	_flags.fill(0)
+	if not exists():
+		return
+	_accum = minf(_accum + delta, MAX_STEPS * STEP)
+	var lists: Array[Array] = []
+	while _accum >= STEP:
+		_accum -= STEP
+		if not has_active():
+			continue
+		lists.append(_step_blocks())
+		steps += 1
+	if lists.is_empty() and not _stats_pending:
+		return
+	_stats_pending = false
+	if not lists.is_empty():
+		dirty_pending = true
+	RenderingServer.call_on_render_thread(_step_rd.bind(lists, _pc(_origin, MODE_ALLOCATE, FAR, 0)))
+
+
+## One step's active table (slot -> active index) and the flux and apply blocks of every active brick.
+func _step_blocks() -> Array:
+	var table := PackedInt32Array()
+	table.resize(SLOTS)
+	table.fill(-1)
+	var flux: Array[PackedByteArray] = []
+	var apply: Array[PackedByteArray] = []
+	var bricks := active_bricks()
+	for i in bricks.size():
+		table[slot_index(slot_of(bricks[i]))] = i
+		flux.append(_sand_pc(bricks[i], i, 0))
+		apply.append(_sand_pc(bricks[i], i, 1))
+	return [table.to_byte_array(), flux, apply]
+
+
+func _step_rd(lists: Array[Array], alloc_block: PackedByteArray) -> void:
+	if not _sand_set.is_valid():
+		return
+	for l: Array in lists:
+		_rd.buffer_update(_active_table, 0, SLOTS * 4, l[0])
+		_rd.capture_timestamp("box_sand_begin")
+		var list := _rd.compute_list_begin()
+		_rd.compute_list_bind_compute_pipeline(list, _unpack_pipeline)
+		_rd.compute_list_bind_uniform_set(list, _unpack_set, 0)
+		_rd.compute_list_set_push_constant(list, alloc_block, alloc_block.size())
+		@warning_ignore("integer_division")
+		_rd.compute_list_dispatch(list, SLOTS / 64, 1, 1)
+		_rd.compute_list_add_barrier(list)
+		_rd.compute_list_bind_compute_pipeline(list, _sand_pipeline)
+		_rd.compute_list_bind_uniform_set(list, _sand_set, 0)
+		for pass_blocks: Array[PackedByteArray] in [l[1], l[2]]:
+			for b in pass_blocks:
+				_rd.compute_list_set_push_constant(list, b, b.size())
+				_rd.compute_list_dispatch(list, 1, 1, 1)
+			_rd.compute_list_add_barrier(list)
+		_rd.compute_list_end()
+		_rd.capture_timestamp("box_sand_end")
+	_read_stats_rd()
+
+
+## The activity readback (box_stats' slot words), then their clear (the request copies the buffer before the
+## clear runs).
+func _read_stats_rd() -> void:
+	var err := _rd.buffer_get_data_async(_box_stats, _on_stats, 0, SLOTS * 4)
+	if err != OK:
+		push_error("box stats readback: %s" % error_string(err))
+	_rd.buffer_clear(_box_stats, 0, SLOTS * 4)
+
+
+## Inside the device's readback flush: ORs the landed activity words into _flags (settle reads them).
+func _on_stats(data: PackedByteArray) -> void:
+	var flags := data.to_int32_array()
+	if _flags.size() != flags.size():
+		_flags.resize(flags.size())
+	for i in flags.size():
+		_flags[i] |= flags[i]
+
+
+## The Params block of box_sand.glsl (std430, SAND_PC_BYTES) for brick (world index) at active index `active`.
+func _sand_pc(brick: Vector3i, active: int, mode: int) -> PackedByteArray:
+	var first := window.wanted_origin(window.center_tile)
+	var b := PackedByteArray()
+	b.resize(SAND_PC_BYTES)
+	b.encode_s32(0, _origin.x)
+	b.encode_s32(4, _origin.y)
+	b.encode_s32(8, _origin.z)
+	b.encode_s32(12, mode)
+	b.encode_s32(16, brick.x)
+	b.encode_s32(20, brick.y)
+	b.encode_s32(24, brick.z)
+	b.encode_s32(28, active)
+	b.encode_s32(32, first.x)
+	b.encode_s32(36, first.y)
+	b.encode_s32(40, params.n_theta())
+	b.encode_s32(44, window.slots)
+	b.encode_s32(48, params.n_z())
+	@warning_ignore("integer_division")
+	b.encode_s32(52, params.n_theta() / BRICK)
+	b.encode_float(56, params.radius)
+	b.encode_float(60, params.dtheta())
+	b.encode_s32(64, obstacle.x)
+	b.encode_s32(68, obstacle.y)
+	b.encode_s32(72, obstacle_radius)
+	b.encode_float(76, tool_params.slump_rate)
+	# Dirt's repose, dry, damp and saturated: all loose material is dirt.
+	b.encode_float(80, tan(deg_to_rad(materials.repose_dry[0])))
+	b.encode_float(84, tan(deg_to_rad(materials.repose_damp[0])))
+	b.encode_float(88, tan(deg_to_rad(materials.repose_saturated[0])))
+	b.encode_float(92, tool_params.move_eps)
+	return b
 
 
 ## The box origin in bricks for feet at cell feet_cell and height h_feet: the feet's brick is the middle one
@@ -214,6 +465,10 @@ func follow(feet: Vector3) -> void:
 		return
 	var old := _origin
 	_origin = o
+	# Bricks that leave the box leave the active set; landed flags name slots that change hands.
+	drop(active_bricks().filter(func(b: Vector3i) -> bool: return not in_box(b)))
+	_flags.fill(0)
+	_stats_pending = true
 	RenderingServer.call_on_render_thread(_move_rd.bind(old, o, _pc(old, 0, FAR, 0)))
 
 
@@ -241,10 +496,12 @@ func _move_rd(old: Vector3i, o: Vector3i, pack_block: PackedByteArray) -> void:
 
 
 ## Unpacks `cells` again from the window (after a window-side stamp over them), allocating any brick they now
-## need; their dirty flags are dropped, the window being the truth. Cells outside the box are ignored.
+## need; their dirty flags are dropped, the window being the truth, and bricks that take loose go active.
+## Cells outside the box are ignored.
 func reload(cells: Array[Vector2i]) -> void:
 	if cells.is_empty() or not exists():
 		return
+	_stats_pending = true
 	var data := PackedInt32Array()
 	for c in cells:
 		data.append(c.x)
@@ -260,7 +517,6 @@ func _reload_rd(data: PackedByteArray, o: Vector3i) -> void:
 		@warning_ignore("integer_division")
 		var count := chunk.size() / 8
 		_rd.buffer_update(_cells, 0, chunk.size(), chunk)
-		_rd.capture_timestamp("box_unpack_begin")
 		var list := _rd.compute_list_begin()
 		_rd.compute_list_bind_compute_pipeline(list, _unpack_pipeline)
 		_rd.compute_list_bind_uniform_set(list, _unpack_set, 0)
@@ -271,15 +527,20 @@ func _reload_rd(data: PackedByteArray, o: Vector3i) -> void:
 			_rd.compute_list_dispatch(list, step[1], 1, 1)
 			_rd.compute_list_add_barrier(list)
 		_rd.compute_list_end()
-		_rd.capture_timestamp("box_unpack_end")
 
 
-## Packs every dirty column into the window fields (box_pack.glsl), when an op flagged any since the last
-## call. From Terrain._process before sim.step.
-func pack_dirty() -> void:
+## Packs every dirty column into the window fields (box_pack.glsl), when an op or a step flagged any since
+## the last call. From Terrain._process before sim.step, with the count of the simulation's stats readbacks
+## asked so far: the tiles under the active bricks are marked in the edit layer as holding an unpacked change
+## at that count (EditLayer.stamped), so a window move within the readback's latency packs them before they
+## leave (the pack's own activity flag lands a few frames later).
+func pack_dirty(asked := 0) -> void:
 	if not dirty_pending or not exists():
 		return
 	dirty_pending = false
+	for b in active_bricks():
+		edits.stamped[window.tile_of_cell(posmod(b.x * BRICK, params.n_theta()), b.y * BRICK)] = asked
+		edits.stamped[window.tile_of_cell(posmod(b.x * BRICK + BRICK - 1, params.n_theta()), b.y * BRICK + BRICK - 1)] = asked
 	pack_all_sync()
 
 
@@ -370,6 +631,7 @@ func scoop(p: Vector3, radius: float, swell: PackedFloat32Array, counted: Callab
 	if bb[1] == Vector3i.ZERO:
 		return false
 	dirty_pending = true
+	_stats_pending = true
 	RenderingServer.call_on_render_thread(_edit_rd.bind(_edit_pc(EDIT_SCOOP, bb[0], bb[1], g, radius, swell, 0.0), PackedInt32Array(), PackedByteArray(), counted))
 	return true
 
@@ -388,6 +650,7 @@ func dump(p: Vector3, radius: float, volume: float, placed: Callable) -> bool:
 			for bx in range(floori(bb[0].x / 16.0), floori((bb[0].x + bb[1].x - 1) / 16.0) + 1):
 				slots.append(slot_index(slot_of(Vector3i(bx, by, bz))))
 	dirty_pending = true
+	_stats_pending = true
 	RenderingServer.call_on_render_thread(_edit_rd.bind(_edit_pc(EDIT_DUMP, bb[0], bb[1], g, radius, PackedFloat32Array([1, 1, 1, 1]), volume),
 			slots, _pc(_origin, MODE_ALLOCATE, FAR, 0), placed))
 	return true

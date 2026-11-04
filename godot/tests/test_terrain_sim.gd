@@ -64,17 +64,13 @@ func _initialize() -> void:
 	var gen := sim._generation
 	sim.invalidate([Vector2i(2, 2)])
 	check(sim.stats_reads == reads + 1 and sim.last_asked_generation == gen and sim._generation == gen + 1, "invalidate asks once, at the old generation, then bumps it")
-	# The push constants of sim.glsl: 112 bytes with the tunables at their offsets.
+	# The push constants of sim.glsl, water only (the loose half retired to the voxel box): 96 bytes with the
+	# tunables at their offsets, flow_rate at 60, the capacities from 64.
 	w.configure(p, 512, 1.0)
 	sim.materials = load("res://terrain/materials.tres")
 	var b := sim._params(w, Vector2i(3, 4), 1, 1)
-	check(b.size() == 112 and b.decode_s32(0) == 3 and b.decode_s32(20) == 4 and b.decode_s32(24) == 1 and b.decode_s32(28) == 1 \
-			and b.decode_float(60) == 0.125 and absf(b.decode_float(76) - tan(deg_to_rad(35.0))) < 1e-6 \
-			and absf(b.decode_float(84) - tan(deg_to_rad(20.0))) < 1e-6 and absf(b.decode_float(88) - 0.2) < 1e-6 \
-			and b.decode_float(96) == 0.0 and b.decode_float(104) == 3.0 and absf(b.decode_float(108) - 1e-4) < 1e-10, "sim push constants")
-	# The Materials block: tan of the stand slopes dry and saturated per material, then the swell.
-	var m := sim.material_table()
-	check(m.size() == 48 and absf(m.decode_float(0) - tan(deg_to_rad(45.0))) < 1e-6 and absf(m.decode_float(4) - tan(deg_to_rad(70.0))) < 1e-5 \
-			and absf(m.decode_float(16) - tan(deg_to_rad(35.0))) < 1e-6 and m.decode_float(32) == 1.25 and absf(m.decode_float(44) - 1.6) < 1e-6, "sim material table")
+	check(b.size() == 96 and b.decode_s32(0) == 3 and b.decode_s32(20) == 4 and b.decode_s32(24) == 1 and b.decode_s32(28) == 1 \
+			and b.decode_float(60) == 0.125 and absf(b.decode_float(64) - 0.2) < 1e-6 and b.decode_float(72) == 0.0 \
+			and b.decode_float(80) == 3.0 and absf(b.decode_float(84) - 1e-4) < 1e-10, "sim push constants")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

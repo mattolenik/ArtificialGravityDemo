@@ -963,7 +963,8 @@ func _pickup(a: Vector2i) -> void:
 	var shaft := _disc(a, _terrain.tool_params.bore_radius)
 	var swell := _terrain.materials.swell_factor[0]
 	var s0 := _read("surface")
-	var before := _vol(_read("loose"), s0, box)
+	var before := _vol(_read("loose"), s0, box) + _gap_loose(box)
+	var solid0 := _solid_volume(box)
 	_tools.pickup()
 	await get_tree().create_timer(1.0).timeout
 	var loose := _read("loose")
@@ -974,17 +975,18 @@ func _pickup(a: Vector2i) -> void:
 	var waited := await _settled(column, 20.0)
 	loose = _read("loose")
 	var s1 := _read("surface")
-	var after := _vol(loose, s1, box)
-	var cut := _removed(s0, s1, box)
+	var after := _vol(loose, s1, box) + _gap_loose(box)
+	var cut := solid0 - _solid_volume(box)
 	var want := before + 2.0 + cut * swell
 	var lowered := box.filter(func(c: Vector2i) -> bool: return not shaft.has(c) and _f(s1, c) < _f(s0, c) - 0.01).size()
 	var stand := tan(deg_to_rad(_terrain.materials.stable_slope_dry[0])) * 1.02
-	var wall := _steepest_wall(box)
+	var free := _terrain.materials.roof_span_dry[0]
+	var wall := _wall_excess(box, stand, free)
 	var ground := _steepest(box, [])
-	print("pickup: auger gone: %s, shaft loose max %.4f m after 1 s (the walls caving); a 2 m³ column at %s settled in %.2f s: %.6f m³ over the box, was %.6f + 2 + %.6f m³ cut · %.2f = %.6f (%+.4f %%); %d cells beyond the shaft lowered; steepest wall %.4f, ground %.4f, stand · 1.02 %.4f" % [
-			gone, held, column, waited, after, before, cut, swell, want, _residual("pickup", after, want), lowered, wall, ground, stand])
-	_report("pickup caves the shaft in to a bowl at the stand slope", gone and held > 0.05 and waited >= 0.0 and absf(after - want) <= 0.005 * want
-			and lowered > 0 and wall <= stand and ground <= stand)
+	print("pickup: auger gone: %s, shaft loose max %.4f m after 1 s (the walls caving); a 2 m³ column at %s settled in %.2f s: %.6f m³ loose over the box (surfaces and gaps), was %.6f + 2 + %.6f m³ solid lost (surfaces' annuli less gaps') · %.2f = %.6f (%+.4f %%; the surfaces' annuli alone %.6f m³); %d cells beyond the shaft lowered; the tallest wall over max(stand · 1.02 · w, %.1f m free) %+.4f m, ground %.4f, stand · 1.02 %.4f" % [
+			gone, held, column, waited, after, before, cut, swell, want, _residual("pickup", after, want), _removed(s0, s1, box), lowered, free, wall, ground, stand])
+	_report("pickup caves the shaft in to a bowl at the stand slope under the free height", gone and held > 0.05 and waited >= 0.0 and absf(after - want) <= 0.005 * want
+			and lowered > 0 and wall <= 0.02 and ground <= stand)
 	if not await _teleport(a + Vector2i(-3, 0)):
 		return
 	var theta := Cyl.theta_of(_station.to_local(_player.global_position))
@@ -1485,10 +1487,11 @@ func _restart_mid_bore(s7: Vector2i) -> bool:
 	var shaft := _disc(s7, t.bore_radius)
 	var walls: Array[Vector2i] = []
 	walls.assign(box.filter(func(c: Vector2i) -> bool: return not shaft.has(c)))
+	# Under the free height (4 m of dry dirt) the uncased 2.7 m shaft stands: its walls give no loose.
 	var caved := _removed(surface, surface1, walls) * _terrain.materials.swell_factor[0]
-	var l1 := _vol(_read("loose"), surface1, box) - caved
+	var l1 := _vol(_read("loose"), surface1, box)
 	var w1 := _water()
-	print("restart: auger at %s, %.4f m bored after 8 s; after the restart %d blobs loaded, no auger: %s; the hole %.4f m deep, was %.4f (%+.4f m, two steps %.4f); %.6f m³ loose over the box less the %.6f m³ the caved walls gave, was %.6f (%+.6f m³, %+.4f %%, allowed %.6f); window %s, was %s" % [
+	print("restart: auger at %s, %.4f m bored after 8 s; after the restart %d blobs loaded, no auger: %s; the hole %.4f m deep, was %.4f (%+.4f m, two steps %.4f); %.6f m³ loose over the box (the walls gave %.6f m³, standing under the free height), was %.6f (%+.6f m³, %+.4f %%, allowed %.6f); window %s, was %s" % [
 			s7, depth0, blobs, gone, ground - hole1, ground - hole0, hole0 - hole1, 2.0 * step, l1, caved, l0, l1 - l0, _residual("restart loose", l1, l0), 0.3 + 0.01 * l0,
 			_terrain.window.center_tile, center0])
 	print("restart: the window's water %.6f m³ after, %.6f m³ before (%+.4f %%); settled in %.2f s" % [w1, w0, _residual("restart water", w1, w0), waited])
@@ -1677,7 +1680,7 @@ func _settled(site: Vector2i, limit := 10.0) -> float:
 	var k := _texel(site)
 	while Time.get_ticks_msec() - start < limit * 1000.0:
 		await get_tree().process_frame
-		if _terrain.sim.has_active() or not edits.blobs.has(tile):
+		if _terrain.sim.has_active() or _terrain.box.has_active() or not edits.blobs.has(tile):
 			continue
 		var blob: PackedByteArray = edits.blobs[tile]
 		if blob.decode_u32(o + 24) == _read("loose").decode_u32(4 * k) and blob.decode_u32(o + 28) == _read("water_depth").decode_u32(4 * k) \
@@ -1797,6 +1800,53 @@ func _steepest_wall(cells: Array[Vector2i]) -> float:
 			var w := 1.0 if d.x == 0 else sqrt(across * across + d.y * d.y)
 			worst = maxf(worst, (_f(surface, c) - _f(surface, n) - _f(loose, n)) / w)
 	return worst
+
+
+## The tallest excess in m of a solid wall step over what stands: for every cell of cells and each edge or
+## diagonal neighbour, (s_c − H_n) − max(stand_tan · w, free), s the surface, H surface + loose, w as
+## _steepest; the slope stability rule with the free height (VoxelBox.wall_fails).
+func _wall_excess(cells: Array[Vector2i], stand_tan: float, free: float) -> float:
+	var p := _terrain.params
+	var loose := _read("loose")
+	var surface := _read("surface")
+	var worst := -INF
+	for c in cells:
+		for d in DIR4 + DIAG:
+			var n := Vector2i(posmod(c.x + d.x, p.n_theta()), c.y + d.y)
+			var across := 0.5 * ((p.radius - _f(surface, c)) + (p.radius - _f(surface, n))) * p.dtheta()
+			var w := 1.0 if d.x == 0 else sqrt(across * across + d.y * d.y)
+			worst = maxf(worst, (_f(surface, c) - _f(surface, n) - _f(loose, n)) - maxf(stand_tan * w, free))
+	return worst
+
+
+## The window's loose lying in gaps over cells: each gap's loose, m over the area at its floor.
+func _gap_loose(cells: Array[Vector2i]) -> float:
+	var p := _terrain.params
+	var v := 0.0
+	for g in 4:
+		var gb := _read("gap_bottom%d" % g)
+		var gl := _read("gap_loose%d" % g)
+		for c in cells:
+			v += _f(gl, c) * (p.radius - _f(gb, c)) * p.dtheta()
+	return v
+
+
+## The window's solid over cells: each column's annulus from the hull to its surface less its gaps' annuli.
+func _solid_volume(cells: Array[Vector2i]) -> float:
+	var p := _terrain.params
+	var surface := _read("surface")
+	var gb: Array[PackedByteArray] = []
+	var gt: Array[PackedByteArray] = []
+	for g in 4:
+		gb.append(_read("gap_bottom%d" % g))
+		gt.append(_read("gap_top%d" % g))
+	var v := 0.0
+	for c in cells:
+		v += Cyl.span_volume(0.0, _f(surface, c), p.radius, p.dtheta(), 1.0)
+		for g in 4:
+			if _f(gt[g], c) > _f(gb[g], c):
+				v -= Cyl.span_volume(_f(gb[g], c), _f(gt[g], c), p.radius, p.dtheta(), 1.0)
+	return v
 
 
 ## Σ v · (R − s) · Δθ over cells: the volume of a float field (loose or water_depth), in float64.

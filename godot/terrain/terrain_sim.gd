@@ -1,9 +1,10 @@
-## The loose-dirt and sheet-water simulation (the terrain slice 3 plan, decisions 2, 3, 4 and 9): sim.glsl
-## stepped at a fixed 1/60 s over the active tiles of the 1 m window only, slumping loose dirt to repose,
-## running sheet water down its surface, soaking it into the column and wetting dirt beside it, letting
-## the water carry loose, and caving in solid walls that stand too steep over disturbed ground (slope
-## stability: the material table, material_table). Activity is flagged by the GPU per window slot in the edit layer's stats buffer
-## (stamps, the edit layer's apply of a blob holding loose or water, and every simulated cell that moved),
+## The sheet-water simulation (the terrain slice 3 plan, decisions 2, 3, 4 and 9; its loose-dirt half and the
+## slope stability retired to the voxel box, VoxelBox.step, by the tunnels design): sim.glsl stepped at a
+## fixed 1/60 s over the active tiles of the 1 m window only, running sheet water down the surface (the
+## ground plus the loose the box packs each frame), soaking it into the column and wetting dirt beside it.
+## Activity is flagged by the GPU per window slot in the edit layer's stats buffer
+## (stamps, the edit layer's apply of a blob holding loose or water, the box's pack of a changed column, and
+## every simulated cell that moved),
 ## read back after every frame that ran a list, a stamp or an apply, and at every window move before its
 ## slots change, and bookkept here per tile in seconds of quiet: a tile quiet for settle_time is handed back by step for Terrain to pack and leaves the active set.
 ## The active mask is 64 bits, so the window is at most 1024 cells (8 x 8 slots). settle and the bookkeeping
@@ -56,16 +57,9 @@ var _window: TerrainWindow
 var _rd: RenderingDevice
 var _shader: RID
 var _pipeline: RID
-## Per window texel, what the flux pass sends each edge neighbour: loose and water in m³, pore quanta as bytes;
-## and the loose it sends each diagonal neighbour, in m³.
-var _flux_loose: RID
+## Per window texel, what the flux pass sends each edge neighbour: water in m³, pore quanta as bytes.
 var _flux_water: RID
 var _flux_pore: RID
-var _flux_loose_d: RID
-## Per window texel, the solid depth the flux pass found failing on the cell (slope stability), for the apply pass.
-var _flux_fail: RID
-## The Materials block of sim.glsl (material_table).
-var _materials: RID
 ## The edit layer's stats buffer and its size in bytes.
 var _stats: RID
 var _stats_size := 0
@@ -95,18 +89,13 @@ func _setup_rd(window: TerrainWindow, edits: EditLayer) -> void:
 		return
 	_stats = edits.stats_rid()
 	_stats_size = edits.stats_size()
-	_flux_loose = _flux_texture(window.size, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
 	_flux_water = _flux_texture(window.size, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
 	_flux_pore = _flux_texture(window.size, RenderingDevice.DATA_FORMAT_R8G8B8A8_UNORM)
-	_flux_loose_d = _flux_texture(window.size, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
-	_flux_fail = _flux_texture(window.size, RenderingDevice.DATA_FORMAT_R32_SFLOAT)
-	_materials = _rd.storage_buffer_create(48, material_table())
-	# Binding 0..10 the window's column fields in COLUMN_FIELDS order, 11..13 the flux textures, 14 the stats,
-	# 15 the diagonal loose flux, 16 the failing solid, 17 the material table.
+	# Binding 0..10 the window's column fields in COLUMN_FIELDS order, 11..12 the flux textures, 13 the stats.
 	var images: Array[RID] = []
 	for field: String in TerrainWindow.COLUMN_FIELDS:
 		images.append(window.texture_rid(field))
-	images.append_array([_flux_loose, _flux_water, _flux_pore])
+	images.append_array([_flux_water, _flux_pore])
 	var uniforms: Array[RDUniform] = []
 	for i in images.size():
 		var u := RDUniform.new()
@@ -119,21 +108,6 @@ func _setup_rd(window: TerrainWindow, edits: EditLayer) -> void:
 	s.binding = images.size()
 	s.add_id(_stats)
 	uniforms.append(s)
-	var d := RDUniform.new()
-	d.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
-	d.binding = s.binding + 1
-	d.add_id(_flux_loose_d)
-	uniforms.append(d)
-	var f := RDUniform.new()
-	f.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
-	f.binding = d.binding + 1
-	f.add_id(_flux_fail)
-	uniforms.append(f)
-	var m := RDUniform.new()
-	m.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	m.binding = f.binding + 1
-	m.add_id(_materials)
-	uniforms.append(m)
 	_set = _rd.uniform_set_create(uniforms, _shader, 0)
 
 
@@ -150,7 +124,7 @@ func _notification(what: int) -> void:
 	if what != NOTIFICATION_PREDELETE or _rd == null:
 		return
 	# Freeing the shader frees its pipeline and uniform set; the stats buffer is the edit layer's.
-	var rids: Array[RID] = [_shader, _flux_loose, _flux_water, _flux_pore, _flux_loose_d, _flux_fail, _materials]
+	var rids: Array[RID] = [_shader, _flux_water, _flux_pore]
 	RenderingServer.call_on_render_thread(TerrainWindow._free_rids.bind(_rd, rids))
 
 
@@ -318,7 +292,7 @@ func drop(tiles: Array[Vector2i]) -> void:
 		_active.erase(t)
 
 
-## The Params block of sim.glsl (std430, 112 bytes) for one dispatch of `mode` over `tile`.
+## The Params block of sim.glsl (std430, 96 bytes) for one dispatch of `mode` over `tile`.
 func _params(window: TerrainWindow, tile: Vector2i, mode: int, soak_tick: int) -> PackedByteArray:
 	var p := window.params
 	var mask := 0
@@ -326,7 +300,7 @@ func _params(window: TerrainWindow, tile: Vector2i, mode: int, soak_tick: int) -
 		var s := window.slot_of(t)
 		mask |= 1 << (s.y * window.slots + s.x)
 	var b := PackedByteArray()
-	b.resize(112)
+	b.resize(96)
 	var first := window.wanted_origin(window.center_tile)
 	b.encode_s32(0, tile.x)
 	b.encode_s32(4, tile.y)
@@ -343,28 +317,9 @@ func _params(window: TerrainWindow, tile: Vector2i, mode: int, soak_tick: int) -
 	b.encode_s32(48, obstacle_radius)
 	b.encode_float(52, p.dtheta())
 	b.encode_float(56, p.radius)
-	b.encode_float(60, params.slump_rate)
-	b.encode_float(64, params.flow_rate)
-	b.encode_float(68, params.transport_share)
-	b.encode_float(72, params.transport_depth)
-	# Dirt's repose, dry, damp and saturated: all loose material is dirt.
-	b.encode_float(76, tan(deg_to_rad(materials.repose_dry[0])))
-	b.encode_float(80, tan(deg_to_rad(materials.repose_damp[0])))
-	b.encode_float(84, tan(deg_to_rad(materials.repose_saturated[0])))
+	b.encode_float(60, params.flow_rate)
 	for m in 4:
-		b.encode_float(88 + 4 * m, materials.porosity[m] * params.soak_column)
-	b.encode_float(104, materials.wetting_distance[0])
-	b.encode_float(108, params.move_eps)
-	return b
-
-
-## The Materials block of sim.glsl (std430, 48 bytes): per material, tan of the solid's stand slope dry and
-## saturated (MaterialSet's stable slopes; the shader never fails rock) and the swell of its loose form.
-func material_table() -> PackedByteArray:
-	var b := PackedByteArray()
-	b.resize(48)
-	for m in 4:
-		b.encode_float(4 * m, tan(deg_to_rad(materials.stable_slope_dry[m])))
-		b.encode_float(16 + 4 * m, tan(deg_to_rad(materials.stable_slope_saturated[m])))
-		b.encode_float(32 + 4 * m, materials.swell_factor[m])
+		b.encode_float(64 + 4 * m, materials.porosity[m] * params.soak_column)
+	b.encode_float(80, materials.wetting_distance[0])
+	b.encode_float(84, params.move_eps)
 	return b
