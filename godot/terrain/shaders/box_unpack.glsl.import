@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://bq0m6t3i7fnhd"
+path="res://.godot/imported/box_unpack.glsl-7d96203f27b20900f8f88117c6edef8c.res"
+
+[deps]
+
+source_file="res://terrain/shaders/box_unpack.glsl"
+dest_files=["res://.godot/imported/box_unpack.glsl-7d96203f27b20900f8f88117c6edef8c.res"]
+
+[params]
+

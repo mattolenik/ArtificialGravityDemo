@@ -52,6 +52,9 @@ var window: TerrainWindow
 var patch: ColliderPatch
 ## The loose-dirt and sheet-water simulation over the window's active tiles.
 var sim: TerrainSim
+## The voxel box around the player's feet (the tunnels design): the owner of the ground and the loose dirt
+## inside it; it packs its changed columns into the window every frame.
+var box: VoxelBox
 ## Per-material numbers: swell, repose, porosity, wetting distance.
 var materials: MaterialSet = preload("res://terrain/materials.tres")
 
@@ -105,6 +108,8 @@ func _ready() -> void:
 	sim.params = tool_params
 	sim.materials = materials
 	sim.setup(window, window.edits)
+	box = VoxelBox.new()
+	box.setup(window, window.edits, materials)
 	# Before the first move_to, so the spawn tiles get their edits in their first dispatch.
 	window.edits.blobs = WorldIO.load_edits(world_name)
 	if not window.edits.blobs.is_empty():
@@ -242,6 +247,11 @@ func _process(delta: float) -> void:
 	var cell := viewer_cell()
 	_move_window(window.tile_of_cell(cell.x, cell.y))
 	far.follow(cell)
+	# The box follows the feet (1 m under the body's origin, toward the hull) and packs what changed before
+	# the simulation reads the window.
+	var q := station.to_local(_body.global_position)
+	box.follow(q + Vector3(q.x, q.y, 0.0).normalized())
+	box.pack_dirty()
 	# Settled tiles are packed after the step's lists, so the pack sees the last apply.
 	var settled := sim.step(window, delta)
 	if not settled.is_empty():
