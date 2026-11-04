@@ -47,7 +47,11 @@ const MODE_FILL := 3
 ## The ball ops' modes of box_edit.glsl, and its Params block.
 const EDIT_SCOOP := 0
 const EDIT_DUMP := 1
-const EDIT_PC_BYTES := 112
+const EDIT_PUSH := 2
+const EDIT_TAMP := 3
+const EDIT_BORE := 4
+const EDIT_SPOIL := 5
+const EDIT_PC_BYTES := 128
 ## Sub-samples per axis of a voxel for a ball's coverage (box_edit.glsl's SUB; Tools.ball_volume).
 const SUB := 8
 ## The sand step (box_sand.glsl): the fixed step in s, the most steps run in one frame, the most bricks stepped
@@ -656,6 +660,75 @@ func dump(p: Vector3, radius: float, volume: float, placed: Callable) -> bool:
 	return true
 
 
+## The bounding box of a disc op's columns and voxels: the disc of `radius` cells around the cell under grid
+## point g, the voxels from `below` under g's height to `above` over it; an extent of zero when it is not
+## wholly in the box (and on the station).
+func disc_box(g: Vector3, radius: int, below: int, above: int) -> Array[Vector3i]:
+	var first := Vector3i(floori(g.x) - radius, floori(g.y) - radius, floori(g.z) - below)
+	var extent := Vector3i(2 * radius + 1, 2 * radius + 1, below + above + 1)
+	@warning_ignore("integer_division")
+	var around := params.n_theta() / BRICK
+	var inside := first.y >= 0 and first.y + extent.y <= params.n_z() and first.z >= bottom() and first.z + extent.z <= bottom() + BRICKS_UP * BRICK \
+			and extent.x <= 8 and extent.y <= 8 and extent.z <= 16
+	for bx in [first.x, first.x + extent.x - 1]:
+		inside = inside and posmod(floori(bx / 16.0) - _origin.x, around) < BRICKS_ACROSS
+	for by in [first.y, first.y + extent.y - 1]:
+		inside = inside and floori(by / 16.0) - _origin.y >= 0 and floori(by / 16.0) - _origin.y < BRICKS_ACROSS
+	return [first, extent if inside else Vector3i.ZERO]
+
+
+## A disc op (box_edit.glsl's push, tamp, bore, spoil) at station-local p over the disc of `radius` cells,
+## the voxels from 2 under p's height to 2 over it (the bore 3 under to 4 over, the spoil 2 under to 13 over:
+## its pile grows); false, nothing dispatched, when it is not wholly in the box.
+func _disc_op(mode: int, p: Vector3, radius: int, amount: float, limit: float, dir: Vector2i, counted: Callable) -> bool:
+	var g := grid_of(p)
+	# The push's columns reach one past the disc each way: what the disc's edge sends ahead lands there.
+	var bb := disc_box(g, radius + (1 if mode == EDIT_PUSH else 0), 3 if mode == EDIT_BORE else 2, 13 if mode == EDIT_SPOIL else (4 if mode == EDIT_BORE else 2))
+	if bb[1] == Vector3i.ZERO:
+		return false
+	dirty_pending = true
+	_stats_pending = true
+	var pc := _edit_pc(mode, bb[0], bb[1], g, float(radius), PackedFloat32Array([1, 1, 1, 1]), amount)
+	pc.encode_s32(108, [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)].find(dir))
+	pc.encode_float(112, limit)
+	pc.encode_s32(116, obstacle_radius)
+	pc.encode_s32(120, obstacle.x)
+	pc.encode_s32(124, obstacle.y)
+	var slots := PackedInt32Array()
+	if mode == EDIT_SPOIL or mode == EDIT_PUSH:
+		for bz in range(floori(bb[0].z / 16.0), floori((bb[0].z + bb[1].z - 1) / 16.0) + 1):
+			for by in range(floori(bb[0].y / 16.0), floori((bb[0].y + bb[1].y - 1) / 16.0) + 1):
+				for bx in range(floori(bb[0].x / 16.0), floori((bb[0].x + bb[1].x - 1) / 16.0) + 1):
+					slots.append(slot_index(slot_of(Vector3i(bx, by, bz))))
+	RenderingServer.call_on_render_thread(_edit_rd.bind(pc, slots, _pc(_origin, MODE_ALLOCATE, FAR, 0) if not slots.is_empty() else PackedByteArray(), counted))
+	return true
+
+
+## The feet's push: each footprint column's top loose sends `share` of it, at most `cap` m, to the column
+## ahead along dir, never into the obstacle.
+func push(p: Vector3, radius: int, dir: Vector2i, share: float, cap: float) -> bool:
+	if dir == Vector2i.ZERO:
+		return false
+	return _disc_op(EDIT_PUSH, p, radius, share, cap, dir, Callable())
+
+
+## A landing's tamp: the footprint's loose gains `step` of compaction and folds into solid with the swell at 1.
+func tamp(p: Vector3, radius: int, step: float, swell: float) -> bool:
+	return _disc_op(EDIT_TAMP, p, radius, step, swell, Vector2i(1, 0), Callable())
+
+
+## An auger's dry tick: the disc's columns lose `step` m of solid from their top run, stopping at rock;
+## counted(m3, wet) lands with the annulus cut, or wet with nothing cut when the centre stands in water (the
+## window's bore pumps then).
+func bore(p: Vector3, radius: int, step: float, counted: Callable) -> bool:
+	return _disc_op(EDIT_BORE, p, radius, step, 0.0, Vector2i(1, 0), counted)
+
+
+## The auger's spoil: volume m³ of fresh loose spread over the disc; placed(m3, false) lands with what fit.
+func spoil(p: Vector3, radius: int, volume: float, placed: Callable) -> bool:
+	return _disc_op(EDIT_SPOIL, p, radius, volume, 0.0, Vector2i(1, 0), placed)
+
+
 ## One ball op: the counter cleared, the listed slots flagged needed and allocated (a dump), the op dispatched
 ## over its one workgroup, the counter read back into cb(m3, flag).
 func _edit_rd(block: PackedByteArray, slots: PackedInt32Array, alloc_block: PackedByteArray, cb: Callable) -> void:
@@ -723,6 +796,7 @@ func _edit_pc(mode: int, first: Vector3i, extent: Vector3i, g: Vector3, radius: 
 	b.encode_s32(100, fst.y)
 	@warning_ignore("integer_division")
 	b.encode_s32(104, params.n_theta() / BRICK)
+	b.encode_s32(116, -1)
 	return b
 
 

@@ -399,7 +399,7 @@ func _stamps(s1: Vector2i) -> void:
 
 	var row0 := _mean_row(loose, surface, box, s1)
 	for i in 3:
-		_stamp(_op(s1, 2, EditLayer.MODE_PUSH, t.push_share, Vector2i(0, 1), t.push_max))
+		_expect(_terrain.box.push(_tools.surface_point(s1), 2, Vector2i(0, 1), t.push_share, t.push_max), "push %d dispatched" % i)
 		await _frames(3)
 	loose = _read("loose")
 	surface = _read("surface")
@@ -411,7 +411,7 @@ func _stamps(s1: Vector2i) -> void:
 
 	var tamp_disc := _disc(s1, 2)
 	for i in 3:
-		_stamp(_op(s1, 2, EditLayer.MODE_TAMP, t.tamp_step, Vector2i.ZERO, swell))
+		_expect(_terrain.box.tamp(_tools.surface_point(s1), 2, t.tamp_step, swell), "tamp %d dispatched" % i)
 		await _frames(3)
 	loose = _read("loose")
 	surface = _read("surface")
@@ -424,7 +424,7 @@ func _stamps(s1: Vector2i) -> void:
 			bytes.append(_b(compaction, c))
 	var at_three := not tamped.is_empty() and bytes.all(func(k: int) -> bool: return absi(k - 191) <= 1)
 	var disc_loose := _vol(loose, surface, tamp_disc)
-	_stamp(_op(s1, 2, EditLayer.MODE_TAMP, t.tamp_step, Vector2i.ZERO, swell))
+	_expect(_terrain.box.tamp(_tools.surface_point(s1), 2, t.tamp_step, swell), "the fourth tamp dispatched")
 	await _frames(3)
 	var loose4 := _read("loose")
 	var surface4 := _read("surface")

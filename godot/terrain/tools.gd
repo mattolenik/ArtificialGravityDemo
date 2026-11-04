@@ -1,7 +1,7 @@
 ## The player's tools (the terrain slice 3 plan; the shovel of the tunnels design). The feet: walking pushes
 ## the loose dirt under them a little toward where the player is going, and a hard landing tamps it, the
-## fourth folding it into the solid ground; every stamp goes through Terrain.stamp_tool, from Player's
-## signals on the main thread after move_and_slide, one stamp per signal. The auger: E places one where the
+## fourth folding it into the solid ground; both act in the voxel box (VoxelBox.push and tamp) at the feet's
+## point, from Player's signals on the main thread after move_and_slide, one op per signal. The auger: E places one where the
 ## crosshair hits the ground within place_reach, its spoil on the far side from the player, and E within
 ## pickup_distance of it picks it up; one at a time, and E does nothing while the fly camera is the viewer
 ## (it climbs on E). The shovel: the crosshair's hit on the terrain colliders within shovel_reach (any
@@ -62,25 +62,34 @@ func _ready() -> void:
 	player.landed.connect(_on_landed)
 
 
-## A push along the floor velocity v (global), quantised to an axis, from push_min_speed up. The feet do
-## not stamp while the renderer is stalled (TerrainSim.stalled: the window not drawn), when every stamp's
-## timed list would pile into one GPU frame that never turns over.
+## A push along the floor velocity v (global), quantised to an axis, from push_min_speed up, at the feet in
+## the box. The feet do not act while the renderer is stalled (TerrainSim.stalled: the window not drawn), when
+## every op's timed list would pile into one GPU frame that never turns over.
 func _on_stepped(v: Vector3) -> void:
 	var t := terrain.tool_params
 	if v.length() < t.push_min_speed or terrain.sim.stalled():
 		return
-	var op := _foot(EditLayer.MODE_PUSH, t.push_share, t.push_max)
-	var theta := Cyl.theta_of(terrain.station.to_local(player.global_position))
-	op.dir = push_dir(terrain.station.global_basis.inverse() * v, theta)
-	pushes += int(terrain.stamp_tool(op))
+	var at := terrain.station.to_local(player.global_position)
+	var dir := push_dir(terrain.station.global_basis.inverse() * v, Cyl.theta_of(at))
+	if terrain.box.push(foot_point(at, terrain.station.global_basis.inverse() * player.up_direction), t.foot_radius, dir, t.push_share, t.push_max):
+		pushes += 1
+		terrain.touch(player_cell(), t.foot_radius + 1, false)
 
 
-## A tamp under the feet for a landing at speed (m/s, downward) from tamp_land_speed up.
+## A tamp under the feet for a landing at speed (m/s, downward) from tamp_land_speed up, in the box.
 func _on_landed(speed: float) -> void:
 	var t := terrain.tool_params
 	if speed < t.tamp_land_speed or terrain.sim.stalled():
 		return
-	tamps += int(terrain.stamp_tool(_foot(EditLayer.MODE_TAMP, t.tamp_step, terrain.materials.swell_factor[0])))
+	var at := terrain.station.to_local(player.global_position)
+	if terrain.box.tamp(foot_point(at, terrain.station.global_basis.inverse() * player.up_direction), t.foot_radius, t.tamp_step, terrain.materials.swell_factor[0]):
+		tamps += 1
+		terrain.touch(player_cell(), t.foot_radius + 1, false)
+
+
+## The feet: 1 m under the player's origin p along its up, both station-local.
+static func foot_point(p: Vector3, up: Vector3) -> Vector3:
+	return p - up.normalized()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -371,13 +380,3 @@ static func push_dir(v_local: Vector3, theta: float) -> Vector2i:
 	return Vector2i(0, int(signf(dz)))
 
 
-## A foot-sized stamp of mode at the player's cell that leaves packing to the settle pack.
-func _foot(mode: int, amount: float, limit: float) -> EditLayer.Op:
-	var op := EditLayer.Op.new()
-	op.cell = player_cell()
-	op.radius = terrain.tool_params.foot_radius
-	op.mode = mode
-	op.amount = amount
-	op.limit = limit
-	op.pack = false
-	return op

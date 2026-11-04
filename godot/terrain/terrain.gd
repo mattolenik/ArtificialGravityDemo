@@ -259,7 +259,8 @@ func _process(delta: float) -> void:
 		window.edits.pack_tiles(window, settled)
 	# A stamp whose later readback landed with its tile still quiet changed nothing: no pack is owed for it.
 	window.edits.forget_quiet(sim.stats_landed, sim.is_active)
-	_retouch(sim.is_active(window.tile_of_cell(_last_tool.x, _last_tool.y)), Engine.get_process_frames())
+	# The collider follows the last tool's ground while the water there or the box's loose anywhere moves.
+	_retouch(sim.is_active(window.tile_of_cell(_last_tool.x, _last_tool.y)) or box.has_active(), Engine.get_process_frames())
 	_flush_collider(Time.get_ticks_msec() / 1000.0)
 	var p := station.to_local(viewer.global_position)
 	patch.issue_again(window)
@@ -474,15 +475,17 @@ func stamp_tool(op: EditLayer.Op) -> bool:
 
 
 ## A box op (Tools, through VoxelBox) changed the ground within reach cells of cell: the collider follows as it
-## does after a tool stamp (_collider_touch, and _retouch while the tile is active).
-func touch(cell: Vector2i, reach: int) -> void:
+## does after a tool stamp (_collider_touch when `now`, and _retouch while the tile is active either way; the
+## feet pass false, as their stamps did: sixty pushes a second must not rebake the edit shape).
+func touch(cell: Vector2i, reach: int, now := true) -> void:
 	for t in EditLayer.stamp_tiles(window, cell, reach):
 		window.edits.stamped[t] = sim.stats_reads
 	_last_tool = cell
 	_last_reach = reach
 	_last_frame = Engine.get_process_frames()
 	_last_active = false
-	_collider_touch(cell, reach)
+	if now:
+		_collider_touch(cell, reach)
 
 
 ## Keeps tool stamps and the simulation from moving loose dirt or water into the cells within radius cells

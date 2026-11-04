@@ -21,7 +21,24 @@
 // 1 dump, one invocation per voxel: `amount` m³ of loose fill the air of the ball's voxels nearest the
 //   centre first (each invocation sums the room of the voxels before it in that order, so no two write one
 //   voxel); what fits is counted in counter[0], the rest stays in the hand; the voxel's compaction is reset.
-// A changed voxel flags its column dirty.
+// The disc ops, one invocation per column of the box's footprint (z = 0 threads), the disc of `radius` cells
+// around the centre's cell, over the voxels of the box's height range (the feet's or the surface's height,
+// a few voxels either way), `limit` and `dir_code` as EditLayer's push constants carry them:
+// 2 push: each column's top loose voxel (the highest holding loose in the range) sends `amount` (the share)
+//   of its loose, at most `limit` m, to the column ahead along the direction, onto that column's stack top
+//   (its ground voxel while it has a quarter of room, else the voxel over it; never into the obstacle); a
+//   gather, so each column writes its own voxels only: what the column behind sends it is computed the same
+//   way from the old state.
+// 3 tamp: every loose voxel of the column in the range gains `amount` of compaction; at 1 it folds: its loose
+//   becomes solid over the swell (`limit`), dirt, compaction 0, and the column's solid settles onto the solid
+//   under it so the pack reads one run.
+// 4 bore: each column's top run loses `amount` m of solid from its top (the voxel's solid, then the one
+//   under it), stopping at rock (the window's bedrock_top floors it, as it floors the scoop: a voxel holds
+//   one material, and the dirt over the rock's top shares its voxel with rock); counter[0] gets the annulus cut. The centre column wet (static water over
+//   its ground, or a sheet over 1 cm) refuses the tick with counter[1] set: the window's bore pumps instead.
+// 5 spoil: `amount` m³ of fresh loose spread evenly over the disc's columns, each share onto the column's
+//   stack top as the push places it (the voxel over a full top), counted in counter[0].
+// A changed voxel flags its column dirty and wakes its brick.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
@@ -72,13 +89,16 @@ layout(push_constant, std430) uniform Params {
 	vec3 centre;       // the ball's centre (theta index, z index, height), continuous
 	float radius;      // m
 	vec4 swell;        // the materials' swell factors
-	float amount;      // dump: m³
+	float amount;      // dump, spoil: m³; push: the share; tamp: the compaction step; bore: the step in m
 	float R;
 	float dtheta;
 	int n_z;
 	ivec2 first_tile;
 	int around;
-	int pad;
+	int dir_code;      // push: 0 +theta, 1 +z, 2 -theta, 3 -z
+	float limit;       // push: the cap in m per column; tamp: the swell
+	int obstacle_radius;
+	ivec2 obstacle;    // nothing moves into a cell within obstacle_radius cells of it
 } pc;
 
 #include "box_column.glslh"
@@ -171,6 +191,285 @@ float vol(int k) {
 	return pc.dtheta * (pc.R - float(k) - 0.5);
 }
 
+const ivec2 DIR4[4] = ivec2[4](ivec2(1, 0), ivec2(0, 1), ivec2(-1, 0), ivec2(0, -1));
+
+// The rock in voxel k of the column at cxz, in counts: the window's bedrock_top is the ground truth (a voxel
+// holds one material, and the dirt over the rock's top shares its voxel with rock).
+uint rock_in(ivec2 cxz, int k) {
+	ivec2 t;
+	if (!texel(ivec2(wrap(cxz.x, pc.n_theta), cxz.y), t)) {
+		return 0u;
+	}
+	return uint(roundh(clamp(imageLoad(w_bedrock, t).r - float(k), 0.0, 1.0) * ONE));
+}
+
+// Whether a column (theta unwrapped, z) lies in the disc of `radius` around the centre's cell, in integers
+// as EditLayer.disc_cells counts them, and within obstacle_radius of the obstacle (theta the short way).
+bool in_disc(ivec2 cxz) {
+	ivec2 d = cxz - ivec2(int(floor(pc.centre.x)), int(floor(pc.centre.y)));
+	return d.x * d.x + d.y * d.y <= int(pc.radius) * int(pc.radius);
+}
+
+bool blocked(ivec2 cxz) {
+	if (pc.obstacle_radius < 0) {
+		return false;
+	}
+	int half_n = pc.n_theta / 2;
+	ivec2 d = ivec2(wrap(wrap(cxz.x, pc.n_theta) - pc.obstacle.x + half_n, pc.n_theta) - half_n, cxz.y - pc.obstacle.y);
+	return d.x * d.x + d.y * d.y <= pc.obstacle_radius * pc.obstacle_radius;
+}
+
+// A column's voxels over the box's height range: fractions and words, and whether each lies in an allocated
+// brick.
+const int COLH = 16;
+
+struct Column {
+	int addr[COLH];
+	bool ok[COLH];
+	uint fs[COLH], fl[COLH], w1[COLH];
+	int col;
+	bool whole;
+};
+
+Column load_column(ivec2 cxz) {
+	Column c;
+	c.col = -1;
+	c.whole = true;
+	for (int i = 0; i < COLH; i++) {
+		c.fs[i] = 0u;
+		c.fl[i] = 0u;
+		c.w1[i] = 0u;
+		c.ok[i] = false;
+		if (i >= pc.extent.z) {
+			continue;
+		}
+		int col;
+		c.ok[i] = voxel_addr(ivec3(cxz, pc.first.z + i), c.addr[i], col);
+		if (c.ok[i]) {
+			c.col = col;
+			uint w0 = pool[c.addr[i]];
+			c.fs[i] = w0 & 0xFFFFu;
+			c.fl[i] = w0 >> 16;
+			c.w1[i] = pool[c.addr[i] + 1];
+		} else {
+			c.whole = false;
+		}
+	}
+	return c;
+}
+
+void store_column(ivec2 cxz, Column c) {
+	for (int i = 0; i < pc.extent.z; i++) {
+		if (c.ok[i]) {
+			pool[c.addr[i]] = c.fs[i] | (c.fl[i] << 16);
+			pool[c.addr[i] + 1] = c.w1[i];
+		}
+	}
+	if (c.col >= 0) {
+		dirty[c.col] = 1u;
+	}
+	wake(ivec3(cxz, pc.first.z));
+	wake(ivec3(cxz, pc.first.z + pc.extent.z - 1));
+}
+
+// The index of a column's top loose voxel in the range, -1 for none.
+int top_loose(Column c) {
+	int top = -1;
+	for (int i = 0; i < pc.extent.z; i++) {
+		top = c.fl[i] > 0u ? i : top;
+	}
+	return top;
+}
+
+// Where loose arriving on a column lands: its ground voxel (the highest holding material in the range) while
+// it has a quarter of room, else the voxel over it; -1 when the column has no material in the range or no
+// room there.
+int landing(Column c) {
+	int g = -1;
+	for (int i = 0; i < pc.extent.z; i++) {
+		g = c.fs[i] + c.fl[i] > 0u ? i : g;
+	}
+	if (g < 0) {
+		return -1;
+	}
+	int room = int(ONE) - int(c.fs[g]) - int(c.fl[g]);
+	if (room >= int(ONE) / 4) {
+		return g;
+	}
+	return g + 1 < pc.extent.z && c.ok[g + 1] ? g + 1 : -1;
+}
+
+// What the column at cxz sends ahead, in counts of its top loose voxel (0 when it is out of the disc, has no
+// loose, or the column ahead is blocked or cannot take it), and where it goes: the index of the top voxel
+// and the landing voxel ahead.
+uint push_out(ivec2 cxz, out int from, out int to) {
+	from = -1;
+	to = -1;
+	if (!in_disc(cxz)) {
+		return 0u;
+	}
+	ivec2 ahead = cxz + DIR4[pc.dir_code];
+	if (blocked(ahead)) {
+		return 0u;
+	}
+	Column c = load_column(cxz);
+	from = top_loose(c);
+	if (from < 0) {
+		return 0u;
+	}
+	Column a = load_column(ahead);
+	to = landing(a);
+	if (to < 0) {
+		return 0u;
+	}
+	uint q = min(uint(roundh(pc.amount * float(c.fl[from]))), uint(roundh(pc.limit * ONE)));
+	int room = int(ONE) - int(a.fs[to]) - int(a.fl[to]);
+	return min(q, uint(max(room, 0)));
+}
+
+// Every invocation of the workgroup calls it (the barrier): each column's sends are read from the state
+// before any column is stored.
+void push_column(ivec2 cxz, bool mine) {
+	int from = -1, to = -1, bfrom = -1, bto = -1;
+	uint out_q = mine ? push_out(cxz, from, to) : 0u;
+	uint in_q = mine ? push_out(cxz - DIR4[pc.dir_code], bfrom, bto) : 0u;
+	memoryBarrierBuffer();
+	barrier();
+	if (out_q == 0u && in_q == 0u) {
+		return;
+	}
+	Column c = load_column(cxz);
+	if (out_q > 0u) {
+		c.fl[from] -= out_q;
+	}
+	if (in_q > 0u) {
+		// The counts of the voxel behind, by the annuli of the two voxels.
+		uint q = uint(roundh(float(in_q) * vol(pc.first.z + bfrom) / vol(pc.first.z + bto)));
+		c.fl[bto] = min(c.fl[bto] + q, uint(ONE) - c.fs[bto]);
+		c.w1[bto] &= ~0xFF00u;
+	}
+	store_column(cxz, c);
+}
+
+void tamp_column(ivec2 cxz) {
+	if (!in_disc(cxz)) {
+		return;
+	}
+	Column c = load_column(cxz);
+	bool any = false;
+	for (int i = 0; i < pc.extent.z; i++) {
+		if (c.fl[i] <= uint(0.001 * ONE)) {
+			continue;
+		}
+		any = true;
+		float k = float((c.w1[i] >> 8) & 255u) / 255.0 + pc.amount;
+		if (k >= 1.0 - 1e-3) {
+			uint folded = uint(roundh(float(c.fl[i]) / pc.limit));
+			c.fs[i] = min(c.fs[i] + folded, uint(ONE));
+			c.fl[i] = 0u;
+			c.w1[i] = (c.w1[i] & 0xFF000000u) | (c.w1[i] & 0x00FF0000u);  // dirt, compaction 0
+		} else {
+			c.w1[i] = (c.w1[i] & ~0xFF00u) | (uint(roundh(k * 255.0)) << 8);
+		}
+	}
+	if (!any) {
+		return;
+	}
+	// The folded solid settles onto the solid under it: each voxel's solid moves down while the voxel under
+	// has room, so the column packs as one run.
+	for (int i = 1; i < pc.extent.z; i++) {
+		if (c.fs[i] == 0u || !c.ok[i - 1]) {
+			continue;
+		}
+		int room = int(ONE) - int(c.fs[i - 1]) - int(c.fl[i - 1]);
+		if (room <= 0) {
+			continue;
+		}
+		uint q = min(c.fs[i], uint(float(room) * vol(pc.first.z + i - 1) / vol(pc.first.z + i)));
+		uint qd = uint(roundh(float(q) * vol(pc.first.z + i) / vol(pc.first.z + i - 1)));
+		c.fs[i] -= q;
+		c.fs[i - 1] = min(c.fs[i - 1] + qd, uint(ONE));
+		if (c.fs[i] == 0u) {
+			c.w1[i] &= ~1u << 24;
+		}
+	}
+	store_column(cxz, c);
+}
+
+// Whether the centre column is wet: static water over its ground or a sheet over 1 cm (edit.glsl's bore).
+bool centre_wet() {
+	ivec2 t;
+	if (!texel(ivec2(wrap(int(floor(pc.centre.x)), pc.n_theta), int(floor(pc.centre.y))), t)) {
+		return false;
+	}
+	float ground = imageLoad(w_surface, t).r + imageLoad(w_loose, t).r;
+	return imageLoad(w_water, t).r > ground + 1e-3 || imageLoad(w_depth, t).r > 0.01;
+}
+
+void bore_column(ivec2 cxz) {
+	if (!in_disc(cxz)) {
+		return;
+	}
+	Column c = load_column(cxz);
+	int top = -1;
+	for (int i = 0; i < pc.extent.z; i++) {
+		top = c.fs[i] > 0u ? i : top;
+	}
+	if (top < 0) {
+		return;
+	}
+	float cut = pc.amount;
+	float got = 0.0;
+	for (int i = top; i >= 0 && cut > 0.0; i--) {
+		uint rk = rock_in(cxz, pc.first.z + i);
+		if ((c.w1[i] & 255u) >= 2u || c.fs[i] <= rk) {
+			break;
+		}
+		uint q = min(c.fs[i] - rk, uint(roundh(cut * ONE)));
+		if (q == 0u) {
+			break;
+		}
+		c.fs[i] -= q;
+		got += float(q) / ONE * vol(pc.first.z + i);
+		cut -= float(q) / ONE;
+		// The loose that lay on it falls with it: it stays in the voxel (the sand settles it).
+	}
+	if (got <= 0.0) {
+		return;
+	}
+	atomicAdd(counter[0], uint(roundh(got * 1e6)));
+	store_column(cxz, c);
+}
+
+void spoil_column(ivec2 cxz) {
+	if (!in_disc(cxz) || blocked(cxz)) {
+		return;
+	}
+	Column c = load_column(cxz);
+	int to = landing(c);
+	if (to < 0) {
+		return;
+	}
+	// The disc's cell count: the integer disc of radius r.
+	int n = 0;
+	int r = int(pc.radius);
+	for (int y = -r; y <= r; y++) {
+		for (int x = -r; x <= r; x++) {
+			n += x * x + y * y <= r * r ? 1 : 0;
+		}
+	}
+	float share = pc.amount / float(n);
+	int room = int(ONE) - int(c.fs[to]) - int(c.fl[to]);
+	uint q = min(uint(floor(share / vol(pc.first.z + to) * ONE)), uint(max(room, 0)));
+	if (q == 0u) {
+		return;
+	}
+	c.fl[to] += q;
+	c.w1[to] &= ~0xFF00u;
+	atomicAdd(counter[0], uint(roundh(float(q) / ONE * vol(pc.first.z + to) * 1e6)));
+	store_column(cxz, c);
+}
+
 // Whether a scoop would give the column at ckxy a fifth gap: four stored already, and the ball's voxels
 // there plus one either side all full solid.
 bool fifth_gap(ivec2 ckxy) {
@@ -253,6 +552,7 @@ void scoop_column(ivec2 cxz) {
 		float a = float(fs[i]) / ONE;
 		float b = float(fl[i]) / ONE;
 		uint took_s = (fs[i] > 0u && mt[i] < 2u && !keep_top) ? uint(roundh(float(fs[i]) * covered(ck, hanging ? 1.0 - a : 0.0, hanging ? 1.0 : a))) : 0u;
+		took_s = min(took_s, fs[i] - min(fs[i], rock_in(cxz, ck.z)));
 		uint took_l = fl[i] > 0u ? uint(roundh(float(fl[i]) * covered(ck, hanging ? 0.0 : a, (hanging ? 0.0 : a) + b))) : 0u;
 		if (took_s == 0u && took_l == 0u) {
 			continue;
@@ -331,32 +631,35 @@ float dist_of(ivec3 ck) {
 	return dx * dx + (c.y - pc.centre.y) * (c.y - pc.centre.y) + (c.z - pc.centre.z) * (c.z - pc.centre.z);
 }
 
-void dump(ivec3 l, ivec3 ck) {
-	int addr, col;
-	float mine = room_of(ck, addr, col);
-	if (mine <= 0.0) {
-		return;
-	}
-	float d = dist_of(ck);
-	int me = (l.z * 8 + l.y) * 8 + l.x;
-	float before = 0.0;
-	for (int z = 0; z < pc.extent.z; z++) {
-		for (int y = 0; y < pc.extent.y; y++) {
-			for (int x = 0; x < pc.extent.x; x++) {
-				int i = (z * 8 + y) * 8 + x;
-				if (i == me) {
-					continue;
-				}
-				ivec3 o = pc.first + ivec3(x, y, z);
-				float od = dist_of(o);
-				if (od < d || (od == d && i < me)) {
-					int oa, oc;
-					before += room_of(o, oa, oc);
+// Every invocation of the workgroup calls it (the barrier): the rooms are all read before any is filled.
+void dump(ivec3 l, ivec3 ck, bool in_box) {
+	int addr = -1, col = -1;
+	float mine = in_box ? room_of(ck, addr, col) : 0.0;
+	float share = 0.0;
+	if (mine > 0.0) {
+		float d = dist_of(ck);
+		int me = (l.z * 8 + l.y) * 8 + l.x;
+		float before = 0.0;
+		for (int z = 0; z < pc.extent.z; z++) {
+			for (int y = 0; y < pc.extent.y; y++) {
+				for (int x = 0; x < pc.extent.x; x++) {
+					int i = (z * 8 + y) * 8 + x;
+					if (i == me) {
+						continue;
+					}
+					ivec3 o = pc.first + ivec3(x, y, z);
+					float od = dist_of(o);
+					if (od < d || (od == d && i < me)) {
+						int oa, oc;
+						before += room_of(o, oa, oc);
+					}
 				}
 			}
 		}
+		share = clamp(pc.amount - before, 0.0, mine);
 	}
-	float share = clamp(pc.amount - before, 0.0, mine);
+	memoryBarrierBuffer();
+	barrier();
 	uint q = uint(floor(share / vol(ck.z) * ONE));
 	if (q == 0u) {
 		return;
@@ -393,7 +696,36 @@ void main() {
 		}
 		return;
 	}
-	if (pc.mode == 1 && in_box) {
-		dump(l, ck);
+	if (pc.mode == 1) {
+		dump(l, ck, in_box);
+		return;
+	}
+	if (pc.mode == 4) {
+		// The centre decides for the whole disc, before any store.
+		if (l == ivec3(0)) {
+			refuse = centre_wet() ? 1u : 0u;
+		}
+		barrier();
+		if (refuse != 0u) {
+			if (l == ivec3(0)) {
+				atomicOr(counter[1], 1u);
+			}
+			return;
+		}
+	}
+	bool in_col = l.z == 0 && l.x < pc.extent.x && l.y < pc.extent.y;
+	if (pc.mode == 2) {
+		push_column(ck.xy, in_col);
+		return;
+	}
+	if (!in_col) {
+		return;
+	}
+	if (pc.mode == 3) {
+		tamp_column(ck.xy);
+	} else if (pc.mode == 4) {
+		bore_column(ck.xy);
+	} else if (pc.mode == 5) {
+		spoil_column(ck.xy);
 	}
 }

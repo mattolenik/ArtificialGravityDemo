@@ -1,9 +1,12 @@
-## The auger (the terrain slice 3 plan, decisions 5, 6 and 11): a prop standing in the tangent frame at its
-## cell's centre, under Station, that bores the bore_radius disc under it bore_step a tick, bore_rate ticks a
-## second, and heaps what each tick's counter readback says it cut, times the swell, as loose dirt on the
-## spoil disc spoil_offset cells to its side (or spills it there as water when the tick pumped). It stops at
-## bore_depth or at rock, pauses while its bore or spoil tiles are out of the window (Terrain.can_stamp) and
-## resumes when they return, and is never saved. Tools places and picks it up.
+## The auger (the terrain slice 3 plan, decisions 5, 6 and 11; the tunnels design): a prop standing in the
+## tangent frame at its cell's centre, under Station, that bores the bore_radius disc under it bore_step a
+## tick, bore_rate ticks a second, in the voxel box (VoxelBox.bore, dry: the solid's top run cut down, never
+## rock), and heaps what each tick's counter readback says it cut, times the swell, as loose dirt on the spoil
+## disc spoil_offset cells to its side (VoxelBox.spoil). A tick whose centre stands in water is refused by the
+## box as wet: the auger then pumps through the window's bore stamp (Terrain.stamp_tool, MODE_BORE: lifts
+## the water, spills it on the spoil disc) until a landing reads dry again. It stops at bore_depth or at rock,
+## pauses while its discs are out of the box or the window and resumes when they return, and is never saved.
+## Tools places and picks it up.
 class_name Auger
 extends Node3D
 
@@ -18,8 +21,11 @@ var terrain: Terrain
 var cell: Vector2i
 ## The axis step from the auger to its spoil disc.
 var side: Vector2i
-## "pump" when the last landed tick was wet, "bore" when it was dry (decision 5).
+## "pump" when the last landed tick was wet (the window's bore stamp pumps), "bore" when it was dry (the box
+## cuts) (decision 5).
 var mode := "bore"
+## The ground the auger stood on, m over the hull.
+var ground := 0.0
 ## m bored: the steps of the ticks issued while the mode read bore.
 var depth := 0.0
 var running := true
@@ -53,7 +59,14 @@ func setup(t: Terrain, c: Vector2i, s: Vector2i, ground_h: float) -> void:
 	var z := -p.length / 2.0 + c.y + 0.5
 	transform = ColliderPatch.tangent_frame(theta, z, p.radius)
 	transform.origin = Cyl.position(theta, z, ground_h, p.radius)
+	ground = ground_h
 	_next_tick = Time.get_ticks_msec()
+
+
+## The station-local point of a cell's centre at height h over the hull.
+func _point(c: Vector2i, h: float) -> Vector3:
+	var p := terrain.params
+	return Cyl.position((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5, h, p.radius)
 
 
 ## The spoil disc's centre cell.
@@ -86,12 +99,13 @@ func _process(_delta: float) -> void:
 	var stalled := terrain.sim.stalled()
 	if _pending > 0.0 and not stalled:
 		var amount := _pending if _pending_wet else _pending * terrain.materials.swell_factor[0]
-		if terrain.stamp_tool(_op(spoil_cell(), t.spoil_radius, EditLayer.MODE_SPILL if _pending_wet else EditLayer.MODE_DEPOSIT, amount)):
-			if _pending_wet:
+		if _pending_wet:
+			if terrain.stamp_tool(_op(spoil_cell(), t.spoil_radius, EditLayer.MODE_SPILL, amount)):
 				spilled += amount
-			else:
-				deposited += amount
+				_pending = 0.0
+		elif terrain.box.spoil(_point(spoil_cell(), ground), t.spoil_radius, amount, _spoiled):
 			_pending = 0.0
+			terrain.touch(spoil_cell(), t.spoil_radius + 1)
 	if running and stop_reason != "":
 		running = false
 		print("Auger stopped: " + stop_reason)
@@ -102,20 +116,31 @@ func _process(_delta: float) -> void:
 	if not running or now < _next_tick or (mode == "bore" and depth >= t.bore_depth - DEPTH_EPS):
 		return
 	_next_tick = maxi(_next_tick + roundi(1000.0 / t.bore_rate), now)
-	var op := _op(cell, t.bore_radius, EditLayer.MODE_BORE, t.bore_step)
-	op.limit = t.pump_rate / t.bore_rate
-	op.counted = _counted
-	if terrain.can_stamp(spoil_cell(), t.spoil_radius) and terrain.stamp_tool(op):
+	var ok := false
+	if mode == "bore":
+		ok = terrain.can_stamp(spoil_cell(), t.spoil_radius) and terrain.box.bore(_point(cell, ground - depth), t.bore_radius, t.bore_step, _counted)
+	else:
+		var op := _op(cell, t.bore_radius, EditLayer.MODE_BORE, t.bore_step)
+		op.limit = t.pump_rate / t.bore_rate
+		op.counted = _counted
+		ok = terrain.can_stamp(spoil_cell(), t.spoil_radius) and terrain.stamp_tool(op)
+	if ok:
 		ticks += 1
 		if mode == "bore":
 			depth += t.bore_step
+			terrain.touch(cell, t.bore_radius + 1)
 	else:
 		refused += 1
 
 
 ## A tick's counter landing, inside the readback flush: stores only. A method, so the callable goes invalid
-## once the auger is freed and EditLayer drops a landing for a picked-up auger.
+## once the auger is freed and the landing for a picked-up auger is dropped. A dry tick the box refused as
+## wet (nothing cut) turns the mode to pump without judging the stop; a box tick counted its step back.
 func _counted(volume: float, wet: bool) -> void:
+	if mode == "bore" and wet:
+		depth -= terrain.tool_params.bore_step
+		mode = "pump"
+		return
 	_pending += volume
 	_pending_wet = wet
 	mode = "pump" if wet else "bore"
@@ -123,6 +148,11 @@ func _counted(volume: float, wet: bool) -> void:
 		removed += volume
 	if running and stop_reason == "":
 		stop_reason = stop_reason_for(depth, terrain.tool_params.bore_depth, volume, wet)
+
+
+## A spoil's landing: what the box placed.
+func _spoiled(volume: float, _flag: bool) -> void:
+	deposited += volume
 
 
 ## A stamp of kind around c that leaves packing to the settle pack.
