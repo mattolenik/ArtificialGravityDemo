@@ -45,7 +45,8 @@ const int CELL0 = -3;
 const int CELLS = 21;
 const int EDGE0 = -2;
 const int EDGES = 20;
-const int K = 64;
+const int BRICKS_UP = 6;  // VoxelBox.BRICKS_UP
+const int K = 16 * BRICKS_UP;
 
 struct S {
 	float d;      // the density less the half: solid where positive
@@ -57,9 +58,9 @@ struct S {
 // box: its edge continues outward.
 S sample_at(ivec3 ck) {
 	ivec3 lo = pc.origin * 16;
-	ck = clamp(ck, lo, lo + ivec3(255, 255, 63));
+	ck = clamp(ck, lo, lo + ivec3(255, 255, K - 1));
 	ivec3 b = ck >> 4;
-	int e = ((b.z & 3) * 16 + (b.y & 15)) * 16 + (b.x & 15);
+	int e = (((b.z % BRICKS_UP + BRICKS_UP) % BRICKS_UP) * 16 + (b.y & 15)) * 16 + (b.x & 15);
 	S r;
 	r.d = -0.5;
 	r.mat = 0u;

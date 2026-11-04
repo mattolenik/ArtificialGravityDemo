@@ -120,7 +120,7 @@ int slot_of_voxel(ivec3 ck) {
 	if (!inbox || ck.z < k0 || ck.z >= k0 + K) {
 		return -1;
 	}
-	return slot_index(ivec3(s.x / 16, s.y / 16, wrap(ck.z >> 4, 4)));
+	return slot_index(ivec3(s.x / 16, s.y / 16, wrap(ck.z >> 4, BRICKS_UP)));
 }
 
 // Wakes the brick holding voxel ck (bit 0 of its slot: the sand steps it).
@@ -144,7 +144,7 @@ bool voxel_addr(ivec3 ck, out int addr, out int col) {
 	if (!inbox || ck.z < k0 || ck.z >= k0 + K) {
 		return false;
 	}
-	int b = index[slot_index(ivec3(s.x / 16, s.y / 16, wrap(ck.z >> 4, 4)))];
+	int b = index[slot_index(ivec3(s.x / 16, s.y / 16, wrap(ck.z >> 4, BRICKS_UP)))];
 	if (b < 0) {
 		return false;
 	}

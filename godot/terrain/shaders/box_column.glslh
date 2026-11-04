@@ -9,9 +9,10 @@
 const int TILE = 128;
 const float ONE = 65535.0;
 const float BELOW = -1.0e9;
-const int K = 64;
+const int BRICKS_UP = 6;  // VoxelBox.BRICKS_UP
+const int K = 16 * BRICKS_UP;
 const int COLUMNS = 256;
-const int SLOTS = 1024;
+const int SLOTS = 256 * BRICKS_UP;
 const int VOXELS_PER_BRICK = 4096;
 
 uint sol[K];
@@ -46,7 +47,7 @@ bool texel(ivec2 c, out ivec2 t) {
 	return true;
 }
 
-// The index of brick slot s (16 x 16 x 4).
+// The index of brick slot s (16 x 16 x BRICKS_UP).
 int slot_index(ivec3 s) {
 	return (s.z * 16 + s.y) * 16 + s.x;
 }

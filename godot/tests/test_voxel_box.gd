@@ -12,10 +12,11 @@ func check(ok: bool, msg: String) -> void:
 
 func _initialize() -> void:
 	# The feet's brick is the middle one across and along; the bottom brick is 40 m under the feet.
-	check(VoxelBox.box_origin_for(Vector2i(100, 200), 410.0) == Vector3i(-2, 4, 23), "origin %s" % VoxelBox.box_origin_for(Vector2i(100, 200), 410.0))
-	check(VoxelBox.box_origin_for(Vector2i(16380, 0), 40.0) == Vector3i(1023 - 8, -8, 0), "origin at the seam")
+	check(VoxelBox.box_origin_for(Vector2i(100, 200), 410.0) == Vector3i(-2, 4, 21), "origin %s" % VoxelBox.box_origin_for(Vector2i(100, 200), 410.0))
+	check(VoxelBox.box_origin_for(Vector2i(16380, 0), 40.0) == Vector3i(1023 - 8, -8, -2), "origin at the seam")
+	check(VoxelBox.BRICKS_UP * VoxelBox.BRICK == VoxelBox.UP_ABOVE + VoxelBox.DOWN_BELOW and VoxelBox.DOWN_BELOW == 72 and VoxelBox.POOL_BRICKS == VoxelBox.SLOTS, "a box 96 m tall (24 m over the feet to 72 m under, to the brick), a brick per slot")
 	# Slots wrap 16, 16, 4.
-	check(VoxelBox.slot_of(Vector3i(-2, 4, 23)) == Vector3i(14, 4, 3) and VoxelBox.slot_of(Vector3i(17, 16, 4)) == Vector3i(1, 0, 0), "slots")
+	check(VoxelBox.slot_of(Vector3i(-2, 4, 23)) == Vector3i(14, 4, 5) and VoxelBox.slot_of(Vector3i(17, 16, 6)) == Vector3i(1, 0, 0), "slots")
 	check(VoxelBox.slot_index(Vector3i(1, 2, 3)) == (3 * 16 + 2) * 16 + 1, "slot index")
 	# The brick of a cell, in the origin's frame (theta the short way round past the seam).
 	var p := WorldParams.new()
@@ -23,7 +24,7 @@ func _initialize() -> void:
 	b.configure(p)
 	b._origin = VoxelBox.box_origin_for(Vector2i(100, 200), 410.0)
 	check(b.brick_of_cell(Vector2i(100, 200), 410) == Vector3i(6, 12, 25) and b.brick_of_cell(Vector2i(16380, 200), 400) == Vector3i(-1, 12, 25), "brick of cell %s %s" % [b.brick_of_cell(Vector2i(100, 200), 410), b.brick_of_cell(Vector2i(16380, 200), 400)])
-	check(b.origin() == Vector3i(-2, 4, 23) and b.bottom() == 23 * 16, "origin and bottom")
+	check(b.origin() == Vector3i(-2, 4, 21) and b.bottom() == 21 * 16 and b.top() == 21 * 16 + 96, "origin, bottom and top")
 	check(b.column_slot(Vector2i(100, 200)) == Vector2i(100, 200) and b.column_slot(Vector2i(16380, 300)) == Vector2i(15 * 16 + 12, 2 * 16 + 12), "column slot %s" % b.column_slot(Vector2i(16380, 300)))
 	# A voxel's two words: solid16 | loose16 << 16, material | compaction << 8 | saturation << 16.
 	var brick := PackedByteArray()
@@ -60,7 +61,7 @@ func _initialize() -> void:
 	check(b.active_bricks().size() == VoxelBox.MAX_ACTIVE_BRICKS and out.size() == 10, "capped at %d: %d active, %d out" % [VoxelBox.MAX_ACTIVE_BRICKS, b.active_bricks().size(), out.size()])
 	b.drop(b.active_bricks())
 	b.activate_cells([Vector2i(100, 200)])
-	check(b.active_bricks().size() == 4 and b.is_active(Vector3i(6, 12, 23)) and b.is_active(Vector3i(6, 12, 26)), "activate_cells wakes a column's four bricks")
+	check(b.active_bricks().size() == 6 and b.is_active(Vector3i(6, 12, 21)) and b.is_active(Vector3i(6, 12, 26)), "activate_cells wakes a column's six bricks")
 	# Chunks of 16 m (the tunnels design's drawing and colliding; a brick column): the chunk of a cell, and the
 	# touched chunks from the chunk words the pack and the unpack flag (a word per chunk slot, chunk mod 32
 	# along each axis; bit 1 a column with a gap in the box's height range), resolved to world chunks within

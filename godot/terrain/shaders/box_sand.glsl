@@ -131,7 +131,7 @@ V find(ivec3 ck) {
 	if (!inbox || ck.z < k0 || ck.z >= k0 + K) {
 		return v;
 	}
-	v.e = slot_index(ivec3(s.x / 16, s.y / 16, wrap(ck.z >> 4, 4)));
+	v.e = slot_index(ivec3(s.x / 16, s.y / 16, wrap(ck.z >> 4, BRICKS_UP)));
 	v.col = s.y * COLUMNS + s.x;
 	v.vi = ((ck.z & 15) * 16 + (s.y & 15)) * 16 + (s.x & 15);
 	int b = index[v.e];
@@ -490,7 +490,7 @@ void main() {
 	ivec2 l = ivec2(gl_LocalInvocationID.xy);
 	ivec2 cxz = pc.brick.xy * 16 + l;
 	int kz0 = pc.brick.z * 16;
-	int my_e = slot_index(ivec3(wrap(pc.brick.x, 16), wrap(pc.brick.y, 16), wrap(pc.brick.z, 4)));
+	int my_e = slot_index(ivec3(wrap(pc.brick.x, 16), wrap(pc.brick.y, 16), wrap(pc.brick.z, BRICKS_UP)));
 	if (index[my_e] < 0) {
 		return;
 	}

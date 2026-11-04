@@ -1,6 +1,6 @@
 ## The voxel box of the tunnels design: a 256 x 256 x 64 m box of 1 m voxels in cylindrical grid coordinates
-## (theta index, z index, height index) around the player's feet, 24 m over them to 40 m under, in sparse
-## bricks of 16³ voxels: a pool of POOL_BRICKS bricks in one storage buffer and an index of 16 x 16 x 4 brick
+## (theta index, z index, height index) around the player's feet, 24 m over them to 72 m under, in sparse
+## bricks of 16³ voxels: a pool of POOL_BRICKS bricks in one storage buffer and an index of 16 x 16 x 6 brick
 ## slots (slot = brick mod (16, 16, 4), toroidal like the window's tiles) holding a pool brick only where a
 ## column has something in that 16 m. The box follows the feet by whole bricks (follow): the leaving bricks'
 ## dirty columns are packed into the window, the bricks freed, the entering columns unpacked from the resident
@@ -24,15 +24,17 @@ extends RefCounted
 
 const BRICK := 16
 const BRICKS_ACROSS := 16
-const BRICKS_UP := 4
-## The box's height range from the feet: UP_ABOVE m over them, DOWN_BELOW m under.
+const BRICKS_UP := 6
+## The box's height range from the feet: UP_ABOVE m over them, DOWN_BELOW m under (to the brick: the bottom
+## brick holds the height DOWN_BELOW under the feet). 72 m down by the user's choice after the project's
+## review, over the design's 40 (the memory, a brick per slot, is accepted).
 const UP_ABOVE := 24
-const DOWN_BELOW := 40
+const DOWN_BELOW := 72
 const BRICK_BYTES := BRICK * BRICK * BRICK * 8
-const POOL_BRICKS := 1536
-## Box columns per axis, and brick slots.
+## Box columns per axis, and brick slots; the pool holds a brick per slot.
 const COLUMNS := BRICKS_ACROSS * BRICK
 const SLOTS := BRICKS_ACROSS * BRICKS_ACROSS * BRICKS_UP
+const POOL_BRICKS := SLOTS
 ## The origin of a box that does not exist yet.
 const FAR := Vector3i(1 << 20, 1 << 20, 1 << 20)
 ## Cells one reload may list at once.
@@ -51,7 +53,7 @@ const STATS_WORDS := CHUNK_WORDS + CHUNK_SLOTS
 const MESH_PC_BYTES := 64
 const MESH_VERTS := 8192
 const MESH_INDS := MESH_VERTS * 6
-const MESH_CELLS := 21 * 21 * 64
+const MESH_CELLS := 21 * 21 * BRICKS_UP * BRICK
 ## The Params block of box_unpack.glsl and box_pack.glsl, std430.
 const PC_BYTES := 96
 const MODE_FREE := 0
@@ -1095,10 +1097,10 @@ func _mesh_rd(pc0: PackedByteArray, pc1: PackedByteArray) -> void:
 	_rd.compute_list_bind_compute_pipeline(list, _mesh_pipeline)
 	_rd.compute_list_bind_uniform_set(list, _mesh_set, 0)
 	_rd.compute_list_set_push_constant(list, pc0, pc0.size())
-	_rd.compute_list_dispatch(list, 3, 3, 16)
+	_rd.compute_list_dispatch(list, 3, 3, BRICKS_UP * BRICK / 4)
 	_rd.compute_list_add_barrier(list)
 	_rd.compute_list_set_push_constant(list, pc1, pc1.size())
-	_rd.compute_list_dispatch(list, 3, 3, 16)
+	_rd.compute_list_dispatch(list, 3, 3, BRICKS_UP * BRICK / 4)
 	_rd.compute_list_end()
 	_rd.capture_timestamp("box_mesh_end")
 	for r: Array in [[_mesh_counts, "counts", 16], [_mesh_verts, "verts", MESH_VERTS * 32], [_mesh_inds, "inds", MESH_INDS * 4]]:

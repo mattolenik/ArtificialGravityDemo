@@ -1,7 +1,7 @@
 #[compute]
 #version 450
 
-// The voxel box's entry side (VoxelBox, the tunnels design): the box of 16 x 16 x 4 bricks of 16³ voxels
+// The voxel box's entry side (VoxelBox, the tunnels design): the box of 16 x 16 x 6 bricks of 16³ voxels
 // around the player, sparse: a brick slot holds a pool brick only where a column has something in its 16 m.
 // Modes (pc.mode), one invocation each per slot or per box column, barriers between (VoxelBox._move_rd):
 // 0 free: a slot whose brick (under the old origin) lies outside the new box gives its brick back to the
@@ -84,9 +84,9 @@ void main() {
 			return;
 		}
 		ivec3 s = ivec3(gid % 16, (gid / 16) % 16, gid / 256);
-		ivec3 b = pc.old + ivec3(wrap(s.x - pc.old.x, 16), wrap(s.y - pc.old.y, 16), wrap(s.z - pc.old.z, 4));
+		ivec3 b = pc.old + ivec3(wrap(s.x - pc.old.x, 16), wrap(s.y - pc.old.y, 16), wrap(s.z - pc.old.z, BRICKS_UP));
 		bool inside = wrap(b.x - pc.origin.x, pc.around) < 16 && b.y >= pc.origin.y && b.y < pc.origin.y + 16
-				&& b.z >= pc.origin.z && b.z < pc.origin.z + 4;
+				&& b.z >= pc.origin.z && b.z < pc.origin.z + BRICKS_UP;
 		if (inside) {
 			return;
 		}
@@ -109,7 +109,7 @@ void main() {
 				}
 			} else {
 				atomicAdd(free_top, 1);
-				atomicAdd(box_stats[SLOTS + 1], 1u);  // the pool ran dry (never for the ground: 1024 slots, 1536 bricks)
+				atomicAdd(box_stats[SLOTS + 1], 1u);  // the pool ran dry (never: a brick per slot)
 			}
 		}
 		needed[gid] = 0u;
@@ -126,7 +126,7 @@ void main() {
 		if (!inbox) {
 			return;
 		}
-		mask = 15;
+		mask = (1 << BRICKS_UP) - 1;
 	} else {
 		if (gid >= COLUMNS * COLUMNS) {
 			return;
@@ -135,9 +135,9 @@ void main() {
 		ivec2 b = pc.origin.xy + ivec2(wrap(s.x / 16 - pc.origin.x, 16), wrap(s.y / 16 - pc.origin.y, 16));
 		bool was = wrap(b.x - pc.old.x, pc.around) < 16 && b.y >= pc.old.y && b.y < pc.old.y + 16;
 		mask = 0;
-		for (int L = 0; L < 4; L++) {
+		for (int L = 0; L < BRICKS_UP; L++) {
 			int bk = pc.origin.z + L;
-			if (!was || bk < pc.old.z || bk >= pc.old.z + 4) {
+			if (!was || bk < pc.old.z || bk >= pc.old.z + BRICKS_UP) {
 				mask |= 1 << L;
 			}
 		}
@@ -171,11 +171,11 @@ void main() {
 		dirty[s.y * COLUMNS + s.x] = 0u;
 	}
 	ivec2 within = s % 16;
-	for (int L = 0; L < 4; L++) {
+	for (int L = 0; L < BRICKS_UP; L++) {
 		if ((mask & (1 << L)) == 0) {
 			continue;
 		}
-		int e = slot_index(ivec3(s.x / 16, s.y / 16, wrap(pc.origin.z + L, 4)));
+		int e = slot_index(ivec3(s.x / 16, s.y / 16, wrap(pc.origin.z + L, BRICKS_UP)));
 		if (pc.mode == 1) {
 			bool any = false;
 			for (int y = 0; y < 16; y++) {

@@ -7,7 +7,7 @@
 // its ceiling, any other on its floor), merged with the stored runs outside the box's range, the
 // loose on each run converted back to m over the run's top; the top run's top to surface, its loose and
 // compaction, the gaps under it (at most four: beyond that the lowest two merge, the sliver between turned to loose on the merged gap's floor by its swell,
-// counted in box_stats[1024]), the material by the strata at the surface, the clay clamped to it, edit_mask
+// counted in box_stats[SLOTS]), the material by the strata at the surface, the clay clamped to it, edit_mask
 // set, the tile's activity flagged in the edit layer's stats (so the settle pack saves it); the dirty flag
 // cleared. A column the box never changed is never packed, so its heights stay bit for bit.
 
@@ -142,8 +142,8 @@ void main() {
 	}
 	int k0 = pc.origin.z * 16;
 	ivec2 within = s % 16;
-	for (int L = 0; L < 4; L++) {
-		int bidx = index[slot_index(ivec3(s.x / 16, s.y / 16, wrap(pc.origin.z + L, 4)))];
+	for (int L = 0; L < BRICKS_UP; L++) {
+		int bidx = index[slot_index(ivec3(s.x / 16, s.y / 16, wrap(pc.origin.z + L, BRICKS_UP)))];
 		for (int y = 0; y < 16; y++) {
 			int i = L * 16 + y;
 			if (bidx < 0) {
