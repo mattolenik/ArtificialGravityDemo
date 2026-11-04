@@ -517,15 +517,21 @@ func ground_point(p: Vector3, lift: float) -> Vector3:
 		if q.is_finite():
 			return q
 	var theta := Cyl.theta_of(p)
+	var hit := ground_below(Cyl.position(theta, p.z, height_at(theta, p.z) + 20.0, params.radius), 100.0)
+	return hit + Vector3(-sin(theta), cos(theta), 0.0) * lift if hit.is_finite() else p
+
+
+## The first collider a ray from station-space p meets within reach m toward the hull, the body itself
+## excluded: the point, station-space, or INF with none (the tunnels design's clearance and unbury rules
+## inside a chunk's mesh, where only what lies under the feet counts).
+func ground_below(p: Vector3, reach: float) -> Vector3:
+	var theta := Cyl.theta_of(p)
 	var up := Vector3(-sin(theta), cos(theta), 0.0)
-	var from := Cyl.position(theta, p.z, height_at(theta, p.z) + 20.0, params.radius)
-	var ray := PhysicsRayQueryParameters3D.create(station.global_transform * from, station.global_transform * (from - up * 100.0))
+	var ray := PhysicsRayQueryParameters3D.create(station.global_transform * p, station.global_transform * (p - up * reach))
 	if _body is PhysicsBody3D:
 		ray.exclude = [(_body as PhysicsBody3D).get_rid()]
 	var hit := get_world_3d().direct_space_state.intersect_ray(ray)
-	if hit.is_empty():
-		return p
-	return station.to_local(hit.position) + up * lift
+	return station.to_local(hit.position) if not hit.is_empty() else Vector3.INF
 
 
 ## The touched chunks' material (chunk.gdshader): the tiles' colours and speckle on the box's meshes.

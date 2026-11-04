@@ -42,6 +42,13 @@
 ##    (Terrain.covered, and a ray down from the feet within 0..0.3 m), at least 3 m walked; a shot from inside
 ##    looking back out (user://debug/box_tunnel.png); the remesh lists' GPU time against 0.5 ms a chunk and the
 ##    trimesh build CPU ms against 2 ms, printed.
+## inside (the tunnel of the tunnel phase, the player two cells in, facing its end): a dump of 4 m³ at the floor
+##    2 m ahead lands on the floor (the loose over the tunnel's columns, surface and gaps, grows by 4 m³ within
+##    0.1 %) and the clearance rule, with the pile confined to the tunnel, moves the player back toward the
+##    pit (0.5 to 1.5 m, at the floor's level, not onto the surface over the roof); a dump of 2 m³ aimed at the roof ends up on the floor too
+##    (no loose floating in the box's voxels once settled); a dump of 2 m³ at the feet leaves
+##    the player standing on the pile (a ray from the head down to under the feet meets the ground no higher
+##    than the feet; the unbury rule fired at most once).
 ## The GPU time of the unpack lists (the first fill, the moves, the reload) and the pack lists is printed
 ## against 0.5 ms per brick allocated.
 extends "res://terrain/tool_run.gd"
@@ -62,9 +69,9 @@ func _route() -> void:
 		"unpack": _unpack.bind(spawn), "move": _move.bind(spawn), "seam": _seam_move.bind(spawn), "reload": _reload.bind(spawn + Vector2i(0, 40)),
 		"shovel": _shovel_box.bind(spawn + Vector2i(0, 80)), "rock": _rock_box, "sand": _sand.bind(spawn + Vector2i(0, -40)), "edge": _edge.bind(spawn),
 		"cave": _cave.bind(spawn + Vector2i(0, -80)), "pickup": _pickup_box.bind(spawn + Vector2i(40, 0)),
-		"tunnel": _tunnel.bind(Vector2i(t_site.x / 16 * 16 + 8, t_site.y / 16 * 16 + 5))}
+		"tunnel": _tunnel.bind(Vector2i(t_site.x / 16 * 16 + 8, t_site.y / 16 * 16 + 5)), "inside": _inside}
 	for phase: String in phases:
-		if not only.is_empty() and phase != only:
+		if not only.is_empty() and phase != only and not (only == "inside" and phase == "tunnel"):
 			continue
 		_phase = phase
 		if not await phases[phase].call():
@@ -569,7 +576,7 @@ func _box_summary() -> void:
 		print("  %-11s per list %s" % [pass_name, Smoke._stat(ms, BOX_BUDGET * bricks)])
 		if not ms.is_empty():
 			print("  %-11s the longest list per brick allocated %.4f ms (budget %.2f)" % [pass_name, ms.max() / bricks, BOX_BUDGET])
-	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup", "tunnel"]:
+	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup", "tunnel", "inside"]:
 		var st := _stat_of(phase)
 		if st.cpu.is_empty():
 			continue
@@ -660,6 +667,8 @@ func _tunnel(c: Vector2i) -> bool:
 	_report("the player walks the tunnel on its trimesh through a remesh", walked >= 3.0 and held == 0 and uncovered == 0 and low >= -0.05 and high <= 0.3 and box.remeshes - remeshes0 >= 1)
 	_face(Vector3(0, 0, -1))
 	await _shot("box_tunnel")
+	_tunnel_site = c
+	_tunnel_floor = floor_h
 	var ms: Array[float] = []
 	for t in _timed:
 		if t.name == "box_mesh":
@@ -670,6 +679,107 @@ func _tunnel(c: Vector2i) -> bool:
 			build = maxf(build, st.node.build_ms)
 	print("tunnel: the remesh lists %s; the longest trimesh build %.2f ms (budget 2)" % [Smoke._stat(ms, 0.5), build])
 	return true
+
+
+## The tunnel phase's pit cell and the tunnel's floor height, for the inside phase.
+var _tunnel_site := TerrainSim.NO_CELL
+var _tunnel_floor := 0.0
+
+
+## Phase inside (see the header): after the tunnel phase, in its tunnel. False after quitting on a timeout.
+func _inside() -> bool:
+	if _tunnel_site == TerrainSim.NO_CELL:
+		return _quit("The inside phase needs the tunnel phase's tunnel.")
+	var p := _terrain.params
+	var c := _tunnel_site
+	# The tunnel's columns and the wall columns either side (the balls cut into them: loose slumps there).
+	var cells: Array[Vector2i] = []
+	for row in range(0, 8):
+		for x in range(-1, 3):
+			cells.append(c + Vector2i(x, row))
+	# The player two cells into the tunnel, facing its end: the pit behind is the room the clearance rule has.
+	_player.global_position = _station.global_transform * Cyl.position((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 2.5, _tunnel_floor + 1.0 + Tools.STAND, p.radius)
+	_face(Vector3(0, 0, 1))
+	await _frames(10)
+	var me := _station.to_local(_player.global_position)
+	var h_me := Cyl.height_of(me, p.radius)
+	var at := func(d: float, h: float) -> Vector3:
+		return Cyl.position((c.x + 0.5) * p.dtheta(), me.z + d, _tunnel_floor + h, p.radius)
+	var lifts0 := _tools.lifts
+	# 4 m³ at the floor 2 m ahead: confined to the tunnel, a pile the clearance rule keeps the player 2.9 m
+	# from, so the player is moved back toward the pit, at the floor's level.
+	var v0 := _vol(_read("loose"), _read("surface"), cells) + _gap_loose(cells)
+	_tools.held = 4.0
+	_tools.dump(at.call(2.0, 0.0))
+	for i in 30:
+		if not _tools._dump_pending:
+			break
+		await get_tree().process_frame
+	var waited := await _settled(c)
+	var v1 := _vol(_read("loose"), _read("surface"), cells) + _gap_loose(cells)
+	var q := _station.to_local(_player.global_position)
+	var hit := _ray_down()
+	var clear: float = (hit.position.distance_to(_player.global_position) - 1.0) if not hit.is_empty() else -INF
+	var head := _head_ray()
+	print("inside: 4 m³ dumped at the floor 2 m ahead (held %.6f after), settled in %.2f s: the loose over the tunnel's columns grew %.6f m³ (%+.4f %%); the player moved %+.2f m along z and %+.2f m up, the feet %.3f m over the ground below, the ground met from the head %s; lifts %d" % [
+			_tools.held, waited, v1 - v0, _residual("inside floor", v1 - v0, 4.0), q.z - me.z, Cyl.height_of(q, p.radius) - h_me, clear, ("%.3f m over the feet" % head) if is_finite(head) else "nowhere", _tools.lifts - lifts0])
+	_report("a dump at the tunnel's floor lands there, the player kept clear along the tunnel", _tools.held == 0.0 and waited >= 0.0 and absf(v1 - v0 - 4.0) <= 4e-3
+			and me.z - q.z >= 0.5 and me.z - q.z <= 1.5 and absf(Cyl.height_of(q, p.radius) - h_me) <= 1.0 and clear >= -0.05 and clear <= 0.3 and (not is_finite(head) or head <= 0.05) and _tools.lifts - lifts0 <= 1)
+	# 2 m³ at the roof 2 m ahead: it falls to the floor.
+	_tools.held = 2.0
+	_tools.dump(at.call(2.0, 2.4))
+	for i in 30:
+		if not _tools._dump_pending:
+			break
+		await get_tree().process_frame
+	var waited2 := await _settled(c)
+	var v2 := _vol(_read("loose"), _read("surface"), cells) + _gap_loose(cells)
+	# Loose floating in the box's voxels: in a voxel with no solid of its own over a voxel with room (the sand
+	# leaves at most three counts of room under a resting fraction).
+	var floating := 0.0
+	var stacks := {}
+	for x in cells:
+		var key := Vector2i(floori(x.x / 16.0), floori(x.y / 16.0))
+		if not stacks.has(key):
+			stacks[key] = _stack(x)
+		var vox := _column_vox(stacks[key], x)
+		for i in range(1, vox.loose.size()):
+			if vox.loose[i] > 0 and vox.solid[i] == 0 and vox.solid[i - 1] + vox.loose[i - 1] < VoxelColumn.FRACTION_ONE - 4:
+				floating += vox.loose[i] / float(VoxelColumn.FRACTION_ONE) * VoxelColumn.voxel_volume(_terrain.box.bottom() + i, p.radius, p.dtheta())
+	print("inside: 2 m³ dumped at the roof (held %.6f after), settled in %.2f s: the loose over the tunnel's columns grew %.6f m³ more (%+.4f %%), %.6f m³ of it floating" % [
+			_tools.held, waited2, v2 - v1, _residual("inside roof", v2 - v1, 2.0), floating])
+	_report("a dump at the tunnel's roof ends up on its floor", _tools.held == 0.0 and waited2 >= 0.0 and absf(v2 - v1 - 2.0) <= 2e-3 and floating <= 1e-6)
+	# 2 m³ at the player's own feet: the pile rises under them and the player ends up standing on it.
+	me = _station.to_local(_player.global_position)
+	_tools.held = 2.0
+	_tools.dump(Cyl.position(Cyl.theta_of(me), me.z, _tunnel_floor, p.radius))
+	for i in 30:
+		if not _tools._dump_pending:
+			break
+		await get_tree().process_frame
+	var waited3 := await _settled(c)
+	var v3 := _vol(_read("loose"), _read("surface"), cells) + _gap_loose(cells)
+	q = _station.to_local(_player.global_position)
+	hit = _ray_down()
+	clear = (hit.position.distance_to(_player.global_position) - 1.0) if not hit.is_empty() else -INF
+	head = _head_ray()
+	print("inside: 2 m³ dumped at the feet (held %.6f after), settled in %.2f s: the loose over the tunnel's columns grew %.6f m³ more (%+.4f %%); the player %+.2f m up, the feet %.3f m over the ground below, the ground met from the head %s; lifts %d" % [
+			_tools.held, waited3, v3 - v2, _residual("inside feet", v3 - v2, 2.0), Cyl.height_of(q, p.radius) - Cyl.height_of(me, p.radius), clear, ("%.3f m over the feet" % head) if is_finite(head) else "nowhere", _tools.lifts - lifts0])
+	_report("a dump at the feet leaves the player standing on it", _tools.held == 0.0 and waited3 >= 0.0 and absf(v3 - v2 - 2.0) <= 2e-3 and clear >= -0.05 and clear <= 0.3 and (not is_finite(head) or head <= 0.05) and _tools.lifts - lifts0 <= 1)
+	return true
+
+
+## The ground met by a ray from the player's head down to under the feet, as m over the feet (INF with none):
+## positive when the ground has risen over the feet.
+func _head_ray() -> float:
+	var up := _player.up_direction
+	var from := _player.global_position + up * 0.9
+	var ray := PhysicsRayQueryParameters3D.create(from, _player.global_position - up * 1.2)
+	ray.exclude = [_player.get_rid()]
+	var hit := _player.get_world_3d().direct_space_state.intersect_ray(ray)
+	if hit.is_empty():
+		return INF
+	return (hit.position - (_player.global_position - up)).dot(up)
 
 
 ## The faces of a chunk's landed mesh, 0 with none.

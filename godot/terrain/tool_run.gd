@@ -1686,8 +1686,8 @@ func _settled(site: Vector2i, limit := 10.0) -> float:
 				and (blob.decode_u32(o + 20) >> 16) & 255 == _read("saturation")[k]:
 			return (Time.get_ticks_msec() - start) / 1000.0
 	var has_blob := edits.blobs.has(tile)
-	print("not settled and packed at %s after %.0f s: sim active %s, box active %d bricks, blob %s%s" % [
-			site, limit, _terrain.sim.has_active(), _terrain.box.active_bricks().size(), "present" if has_blob else "missing",
+	print("not settled and packed at %s after %.0f s: sim active %s %s, box active %d bricks, blob %s%s" % [
+			site, limit, _terrain.sim.has_active(), _terrain.sim.active_tiles(), _terrain.box.active_bricks().size(), "present" if has_blob else "missing",
 			(": loose %d vs the window's %d, depth %d vs %d" % [edits.blobs[tile].decode_u32(o + 24), _read("loose").decode_u32(4 * k), edits.blobs[tile].decode_u32(o + 28), _read("water_depth").decode_u32(4 * k)]) if has_blob else ""])
 	return -1.0
 

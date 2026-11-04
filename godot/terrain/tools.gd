@@ -298,10 +298,20 @@ func _physics_process(_delta: float) -> void:
 		return
 	var up := player.up_direction
 	var feet := terrain.station.to_local(player.global_position - up)
-	var ground := terrain.patch
-	if not ground.covers(feet):
+	if not terrain.covered(feet):
 		return
-	var under := (ground.surface_point(feet, 0.0) - feet).dot(ground.transform.basis.y)
+	var ground := terrain.patch
+	var q := ground.surface_point(feet, 0.0) if ground.covers(feet) else Vector3.INF
+	var under: float
+	if q.is_finite():
+		under = (q - feet).dot(ground.transform.basis.y)
+	else:
+		# Over a chunk drawn by its mesh (the patch has no height there): the ground a ray from the head down
+		# to under the feet meets, so a tunnel's roof never counts.
+		var hit := terrain.ground_below(terrain.station.to_local(player.global_position + up * 0.9), 2.1)
+		if not hit.is_finite():
+			return
+		under = (hit - feet).dot(terrain.station.global_basis.inverse() * up)
 	if under > BURIED:
 		player.global_position += up * (under + STAND)
 		lifts += 1
@@ -347,14 +357,23 @@ func _clear_of(c: Vector2i, v: float) -> void:
 	var centre := Vector2((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5)
 	var r := p.radius - Cyl.height_of(me, p.radius)
 	var off := Vector2(wrapf(Cyl.theta_of(me) - centre.x, -PI, PI) * r, me.z - centre.y)
-	var keep := pile_radius(v, terrain.materials.repose_dry[0]) + PILE_MARGIN
+	# Under a roof (the patch has no height at the dump point: a chunk's mesh is the ground) the pile cannot
+	# spread as a cone: it runs along the tunnel as a ridge at repose over a floor about a ball wide.
+	var repose := terrain.materials.repose_dry[0]
+	var at := Cyl.position(centre.x, centre.y, Cyl.height_of(me, p.radius), p.radius)
+	var confined := terrain.patch.covers(at) and not terrain.patch.surface_point(at, 0.0).is_finite()
+	var keep := (sqrt(v / (terrain.tool_params.scoop_ball * tan(deg_to_rad(repose)))) if confined else pile_radius(v, repose)) + PILE_MARGIN
 	if off.length() <= terrain.tool_params.scoop_ball + 0.5 or off.length() >= keep:
 		return
 	off = off.normalized() * keep
 	var to := Cyl.position(centre.x + off.x / r, centre.y + off.y, Cyl.height_of(me, p.radius), p.radius)
-	if not terrain.covered(to):
+	# The ground under that spot, from a metre over the player's height down 3 m: a tunnel's floor, or the
+	# open ground; none (a wall, a drop) keeps the player put.
+	var up_to := Vector3(-sin(Cyl.theta_of(to)), cos(Cyl.theta_of(to)), 0.0)
+	var ground := terrain.ground_below(to + up_to, 3.0)
+	if not ground.is_finite():
 		return
-	player.global_position = terrain.station.global_transform * terrain.ground_point(to, 1.0 + STAND)
+	player.global_position = terrain.station.global_transform * (ground + up_to * (1.0 + STAND))
 
 
 func _show_held() -> void:
