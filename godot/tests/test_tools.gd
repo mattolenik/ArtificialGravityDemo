@@ -59,5 +59,11 @@ func _initialize() -> void:
 	check(Tools.PILE_MARGIN == 0.5 and Tools.BURIED == 0.1 and Tools.STAND == 0.05, "clearance numbers")
 	# The feet: 1 m under the player's origin along its up, station-local; the push direction as before.
 	check(Tools.foot_point(Vector3(0, -2790, 5), Vector3(0, 1, 0)) == Vector3(0, -2791, 5) and Tools.foot_point(Vector3(10, 0, 0), Vector3(-2, 0, 0)) == Vector3(11, 0, 0), "foot point")
+	# The shovel at a wall cuts level: the ball's floor is the last wall scoop's while the feet are within half a
+	# metre under it or a metre over it (the tunnel's own floor), else half a metre under the feet (a new tunnel
+	# from a pit: the first bite steps down half a metre, its roof 2.5 m over the pit's floor).
+	check(is_equal_approx(Tools.level_floor(INF, 410.3), 409.8), "a first wall scoop: half a metre under the feet")
+	check(Tools.level_floor(409.8, 409.85) == 409.8 and Tools.level_floor(409.8, 409.35) == 409.8 and Tools.level_floor(409.8, 410.75) == 409.8, "on the tunnel's floor, or near it: the same floor")
+	check(is_equal_approx(Tools.level_floor(409.8, 409.2), 408.7) and is_equal_approx(Tools.level_floor(409.8, 410.8), 410.3), "off it: anchored anew")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

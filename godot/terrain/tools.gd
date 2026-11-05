@@ -5,8 +5,11 @@
 ## crosshair hits the ground within place_reach, its spoil on the far side from the player, and E within
 ## pickup_distance of it picks it up; one at a time, and E does nothing while the fly camera is the viewer
 ## (it climbs on E). The shovel: the crosshair's hit on the terrain colliders within shovel_reach (any
-## surface: floor, wall or roof) is the aim, shown as a ring decal (ShovelPatch) while there is one; T scoops
-## the ball of scoop_ball m there in the voxel box (loose first, then solid dirt and clay with the swell,
+## surface: floor, wall or roof) is the aim, shown as a ring decal (ShovelPatch) while there is one; at a wall
+## (a face steeper than about 40°, no lower than a metre under the feet) the ball is lifted onto a level floor,
+## the last wall scoop's while the feet are near it, else half a metre under the feet (level_floor), so a tunnel
+## dug walking in runs level instead of ramping with its half-cut floor; T scoops the ball of scoop_ball m there
+## in the voxel box (loose first, then solid dirt and clay with the swell,
 ## never rock) and, held, scoops again every scoop_interval, the scoops adding up in the hand; Y dumps what
 ## it holds there as loose dirt, what does not fit the ball staying in the hand. The held dirt shows on the HUD
 ## line and is not saved; under a litre left after a dump (the ball's voxels round down) counts as empty. The
@@ -55,6 +58,8 @@ var _dump_result := -1.0
 var _t_down := false
 var _t_scooped := false
 var _t_scoop_at := 0
+## The floor of the wall scoops' ball, in m of height (level_floor); INF before the first.
+var _floor := INF
 
 
 func _ready() -> void:
@@ -162,15 +167,32 @@ func pickup() -> void:
 
 
 ## The shovel's aim: the crosshair's hit on the colliders (the player's body excluded) within shovel_reach of
-## the player, as station-local `position` and `normal`; empty when there is none.
+## the player, as station-local `position` and `normal`, a wall hit lifted onto the level floor (the header,
+## `level` true); empty when there is none.
 func shovel_hit() -> Dictionary:
 	var hit := DebugEdit.look_hit(get_viewport(), [player.get_rid()])
 	if hit.is_empty():
 		return {}
+	var R := terrain.params.radius
+	var at := terrain.station.to_local(player.global_position)
+	var up := terrain.station.global_basis.inverse() * player.up_direction
 	var q := terrain.station.to_local(hit.position)
-	if q.distance_to(terrain.station.to_local(player.global_position)) > terrain.tool_params.shovel_reach:
+	var n: Vector3 = terrain.station.global_basis.inverse() * hit.normal
+	var feet_h := Cyl.height_of(foot_point(at, up), R)
+	var level := absf(n.dot(up)) < 0.75 and Cyl.height_of(q, R) >= feet_h - 1.0
+	if level:
+		_floor = level_floor(_floor, feet_h)
+		q = Cyl.position(Cyl.theta_of(q), q.z, _floor + terrain.tool_params.scoop_ball, R)
+	if q.distance_to(at) > terrain.tool_params.shovel_reach:
 		return {}
-	return {"position": q, "normal": terrain.station.global_basis.inverse() * hit.normal}
+	return {"position": q, "normal": n, "level": level}
+
+
+## The floor of a wall scoop's ball, in m of height: `prev` (the last one's) while the feet at feet_h stand within
+## half a metre under it or a metre over it (the tunnel's own floor, a lump on it), else half a metre under the
+## feet (a new tunnel: its first bite steps down half a metre, so a 3 m pit under the free height keeps a roof).
+static func level_floor(prev: float, feet_h: float) -> float:
+	return prev if feet_h >= prev - 0.5 and feet_h < prev + 1.0 else feet_h - 0.5
 
 
 ## The station-local point of cell c's centre on the collider (Terrain.ground_point: the patch, or a chunk's

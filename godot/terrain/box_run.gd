@@ -63,9 +63,9 @@
 ## play (P, flat ground; the shovel as the user plays it, through Tools and the crosshair): the player looks
 ##    down and holds T for four scoops, looking a little lower and pressing again whenever the sinking hit
 ##    leaves the shovel's reach (a pit ahead, at least 1.5 m deep and under the free height, so its walls
-##    stand), is stood in the pit facing its +z wall, holds W for 6 s with the crosshair's hit steered over
-##    the wall and T whenever the ring is on its mark (a metre over the floor, two columns: a tunnel the player walks
-##    into as it opens; at least three cells along +z with a gap under a surface the dig left alone, their
+##    stand), is stood in the pit facing its +z wall, holds W for 6 s looking at the wall ahead and T whenever
+##    the crosshair's hit is on it (the shovel's level rule puts the ball a metre over the floor: a tunnel the
+##    player walks into as it opens; at least three cells along +z with a gap under a surface the dig left alone, their
 ##    chunk touched and meshed), then walks on by W for 2 s: at least eight scoops, the hand not empty, never
 ##    held, the feet over ground every frame, walked along +z from the pit's floor a metre past the tunnel's
 ##    mouth.
@@ -780,23 +780,6 @@ func _aim_at(target: Vector3) -> void:
 	_player.look(Vector2(-yaw, -pitch) / _player.mouse_sensitivity)
 
 
-## Nudges the look so the crosshair's hit lands at station-local target's height and side, as a player does
-## watching the ring: the hit's distance from the target across the view, INF with no hit in reach (the look
-## turns toward the target itself then).
-func _aim_hit(target: Vector3) -> float:
-	var hit := _tools.shovel_hit()
-	if hit.is_empty():
-		_aim_at(target)
-		return INF
-	var cam: Camera3D = get_viewport().get_camera_3d()
-	var at: Vector3 = _station.global_transform * hit.position
-	var err := at - _station.global_transform * target
-	var d := (at - cam.global_position).length()
-	var across := Vector2(err.dot(cam.global_basis.x), err.dot(cam.global_basis.y))
-	_player.look(Vector2(-atan2(across.x, d), atan2(across.y, d)) / _player.mouse_sensitivity)
-	return across.length()
-
-
 ## Phase play at P (see the header). False after quitting on a timeout.
 func _play(c: Vector2i) -> bool:
 	if not await _teleport(c + Vector2i(0, -3)):
@@ -836,10 +819,12 @@ func _play(c: Vector2i) -> bool:
 			pit = x
 	var pit_scoops := _tools.scoops - scoops0
 	print("play: T held 4 s looking down: %d scoops, the hand %.3f m³, the pit's deepest cell %s %.2f m down" % [pit_scoops, _tools.held - held0, pit, deepest])
-	# Into the pit, facing its +z wall: W held for 6 s, the crosshair's hit steered over the wall a metre over
-	# the pit's floor (the 1.5 m ball reaches half a metre under it, so the tunnel steps down and its roof is
-	# the pit's depth less 2.5 m) at two columns (half a metre either side), T held while the ring is within
-	# 0.3 m of its mark, the player walking in as the cut opens.
+	# Into the pit, facing its +z wall: W held for 6 s with T whenever the crosshair's hit is on a face ahead
+	# (the shovel's level rule: a wall, a ramp or a step's riser, the ball's floor half a metre under the feet,
+	# so the tunnel steps down with its roof the pit's depth less 2.5 m and keeps its level), the look swept
+	# as a player's would be: from under the feet upward a little a frame until the hit is such a face, and
+	# from under the feet again once it passes 3 m ahead or leaves the ground in reach; the player walks in
+	# as the cut opens. The aim is logged once a second.
 	var floor_h := _f(s1, pit) + _f(_read("loose"), pit)
 	await _settled(pit)
 	_player.global_position = _station.global_transform * Cyl.position((pit.x + 0.5) * p.dtheta(), -p.length / 2.0 + pit.y + 0.5, floor_h + 1.0 + Tools.STAND, p.radius)
@@ -847,20 +832,34 @@ func _play(c: Vector2i) -> bool:
 	await _frames(10)
 	var touched0 := box.touched.size()
 	var z0 := _station.to_local(_player.global_position).z
+	_player.look(Vector2(0.0, 1000.0))
 	_press(KEY_W, true)
 	t0 = Time.get_ticks_msec()
 	pressed = t0
+	var frames := 0
+	var on_frames := 0
 	while Time.get_ticks_msec() - t0 < 6000:
 		await get_tree().process_frame
-		var me := _station.to_local(_player.global_position)
-		var k := (Time.get_ticks_msec() - t0) / 300
-		var off := _aim_hit(Cyl.position(Cyl.theta_of(me) + (0.5 if k % 2 == 0 else -0.5) / (p.radius - floor_h), me.z + 1.0, floor_h + 1.0, p.radius))
-		if off > 0.3:
+		frames += 1
+		var hit := _tools.shovel_hit()
+		var dz: float = hit.position.z - _station.to_local(_player.global_position).z if not hit.is_empty() else INF
+		var level: bool = hit.get("level", false)
+		if frames % 60 == 1:
+			var up := _station.global_basis.inverse() * _player.up_direction
+			var me := _station.to_local(_player.global_position)
+			var cam := _station.to_local(get_viewport().get_camera_3d().global_position)
+			print("play: the look at %.1f s (pitch %.2f, the camera z%+.2f h%+.2f, the player z%+.2f h%+.2f): the hit %s" % [(Time.get_ticks_msec() - t0) / 1000.0,
+					_player._pivot.rotation.x, cam.z - me.z, Cyl.height_of(cam, p.radius) - floor_h, me.z - z0, Cyl.height_of(me, p.radius) - 1.0 - floor_h,
+					("z%+.2f h%+.2f n.up %.2f%s" % [dz, Cyl.height_of(hit.position, p.radius) - floor_h, hit.normal.dot(up), ", level" if level else ""]) if not hit.is_empty() else "none"])
+		if not level or dz <= 0.0:
+			_player.look(Vector2(0.0, 1000.0 if hit.is_empty() or dz > 3.0 else -15.0))
 			if _tools._t_down:
 				_press(KEY_T, false)
-		elif not _tools._t_down and Time.get_ticks_msec() - pressed >= 250:
-			_press(KEY_T, true)
-			pressed = Time.get_ticks_msec()
+		else:
+			on_frames += 1
+			if not _tools._t_down and Time.get_ticks_msec() - pressed >= 250:
+				_press(KEY_T, true)
+				pressed = Time.get_ticks_msec()
 	_press(KEY_T, false)
 	_press(KEY_W, false)
 	await _shot("box_play")
@@ -879,8 +878,8 @@ func _play(c: Vector2i) -> bool:
 	var ch := VoxelBox.chunk_of_cell(pit + Vector2i(0, roofed[0] if not roofed.is_empty() else 2))
 	var landed := await _chunk_landed(ch, 3.0)
 	var wall_scoops := _tools.scoops - scoops0 - pit_scoops
-	print("play: W held 6 s at the pit's +z wall, T while the ring was on its mark: %d scoops, the hand %.3f m³; roofed cells along +z (row: the gap over the pit's floor) [%s]; touched chunks %d -> %d, chunk %s meshed in %.2f s with %d faces" % [
-			wall_scoops, _tools.held - held0, ", ".join(spans), touched0, box.touched.size(), ch, landed, _chunk_faces(ch)])
+	print("play: W held 6 s at the pit's +z wall, T while the crosshair was on it (%d of %d frames): %d scoops, the hand %.3f m³; roofed cells along +z (row: the gap over the pit's floor) [%s]; touched chunks %d -> %d, chunk %s meshed in %.2f s with %d faces" % [
+			on_frames, frames, wall_scoops, _tools.held - held0, ", ".join(spans), touched0, box.touched.size(), ch, landed, _chunk_faces(ch)])
 	await _frames(20)
 	var held := 0
 	var uncovered := 0
