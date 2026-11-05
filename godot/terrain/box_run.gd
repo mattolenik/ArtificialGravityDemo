@@ -95,10 +95,11 @@
 ##    under the tunnel's floor (solid over it, as a wall's) stands nothing; place_pillar on the open ground
 ##    3 cells antispinward of the pit stands nothing (no roof within the reach). Tools.pillars counts each.
 ##    Then the post stood again and the tunnel dug round it to a room 6 m wide and 8 m long (balls on its line
-##    and 1.5 cells either side, every half metre from 1.5 to 7.5 m along): 10 s on, the solid in the post's
-##    column and the columns either side, on its row and the row before it, loses under 0.25 m³ (at most the
-##    underside's sliver); the post taken away, within 10 s the room's two middle columns (the post's and the
-##    one past it) lose 0.9 m³ of solid or more each (the roof fell and the surface opened). The solid is summed from the voxels, the post's left out.
+##    and 1.5 cells either side, every half metre from 1.5 to 7.5 m along): 10 s on, over the post's column
+##    and the one past it (the room's middle), on its row and the row before it, the surface is unchanged
+##    since before the pit within 0.05 m and the solid loses under 0.25 m³ (at most the underside's sliver);
+##    the post taken away, within 10 s the post's column and the one past it lose 0.9 m³ of solid or more
+##    each (the roof fell and the surface opened). The solid is summed from the voxels, the post's left out.
 ## The GPU time of the unpack lists (the first fill, the moves, the reload) and the pack lists is printed
 ## against 0.5 ms per brick allocated.
 extends "res://terrain/tool_run.gd"
@@ -605,11 +606,18 @@ func _box_summary() -> void:
 	for pass_name: String in ["box_unpack", "box_pack", "box_edit", "box_sand"]:
 		var ms: Array[float] = []
 		for t in _timed:
-			if t.name == pass_name:
+			if t.name == pass_name or t.name.begins_with(pass_name + "_"):
 				ms.append(t.ms)
 		print("  %-11s per list %s" % [pass_name, Smoke._stat(ms, BOX_BUDGET * bricks)])
 		if not ms.is_empty():
 			print("  %-11s the longest list per brick allocated %.4f ms (budget %.2f)" % [pass_name, ms.max() / bricks, BOX_BUDGET])
+	# A sand step's list per active brick (its timestamps carry the step's count, box_sand_<n>), against the
+	# step's budget of 0.25 ms an active brick; the fixed overhead of a list is in it.
+	var per: Array[float] = []
+	for t in _timed:
+		if t.name.begins_with("box_sand_") and t.name.trim_prefix("box_sand_").to_int() > 0:
+			per.append(t.ms / t.name.trim_prefix("box_sand_").to_int())
+	print("  box_sand    per step per active brick %s" % Smoke._stat(per, 0.25))
 	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup", "tunnel", "inside", "tscroll", "trestart", "play", "shell", "roof", "pillar"]:
 		var st := _stat_of(phase)
 		if st.cpu.is_empty():
@@ -912,10 +920,6 @@ func _play(c: Vector2i) -> bool:
 	_player.global_position = _station.global_transform * Cyl.position((pit.x + 0.5) * p.dtheta(), -p.length / 2.0 + pit.y + 0.5, floor_h + 1.0 + Tools.STAND, p.radius)
 	_face(Vector3(0, 0, 1))
 	await _frames(10)
-	# The level floor anew from the feet on the pit's floor: the ring's aim keeps the one it last took while
-	# the feet are within a metre over it, and where the dig left the player on the pit's slope (a metre and
-	# more up it) the tunnel ran 0.75 m high under a roof thinner than a voxel, which the span rule drops.
-	_tools._floor = INF
 	var touched0 := box.touched.size()
 	var z0 := _station.to_local(_player.global_position).z
 	_player.look(Vector2(0.0, 1000.0))
@@ -1020,7 +1024,7 @@ func _play(c: Vector2i) -> bool:
 	var walked := _station.to_local(_player.global_position).z - z0
 	var mouth := roofed[0] if not roofed.is_empty() else 99
 	print("play: walked %.2f m along +z from the pit's floor (W held through the dig and 2 s more), the tunnel's mouth %d m along; held %d frames, the feet uncovered %d frames" % [walked, mouth, held, uncovered])
-	_report("the shovel as played digs a pit and a tunnel the player walks into", pit_scoops + wall_scoops >= 8 and _tools.held > held0 and deepest >= 1.5
+	_report("the shovel as played digs a pit and a tunnel the player walks into", pit_scoops + wall_scoops >= 8 and _tools.held > held0 and deepest >= 4.2
 			and roofed.size() >= 3 and box.touched.has(ch) and landed >= 0.0 and walked >= mouth + 1.0 and held == 0 and uncovered == 0)
 	return true
 
@@ -1259,6 +1263,7 @@ func _pillar(c: Vector2i) -> bool:
 	if not await _teleport(c + Vector2i(5, 0)):
 		return false
 	var p := _terrain.params
+	var s0 := _read("surface")
 	var depth := await _pit(c, 4.2)
 	var waited := await _settled(c)
 	_terrain.teleport((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5)
@@ -1359,28 +1364,30 @@ func _pillar(c: Vector2i) -> bool:
 	for x: float in [0.5, -1.0, 2.0]:
 		for k in 13:
 			await _scoop_at(aim.call(x, 1.5 + 0.5 * k, 1.5))
-	# The post's column and those either side, on its row and the row before it (by the pit): the first three
-	# also the room's middle, which falls when the post goes.
-	var sides: Array[Vector2i] = []
-	for dz in [0, -1]:
-		for dx in [-1, 0, 1]:
-			sides.append(cell + Vector2i(dx, dz))
+	# The room's middle on the post's row and the row before it (by the pit): the post's column and the one
+	# past it, which fall when the post goes. The column on the post's other side keeps a ledge when it goes
+	# (it loses only its underside, about 0.25 m³), so it is not watched. The surface over the four, unchanged
+	# since before the pit, shows a fall during the dig; their solid, a fall in the 10 s after it.
+	var sides: Array[Vector2i] = [cell, cell + Vector2i(1, 0), cell + Vector2i(0, -1), cell + Vector2i(1, -1)]
 	var solid0: Array[float] = []
 	for x in sides:
 		solid0.append(_box_volumes([x])[1])
 	await get_tree().create_timer(10.0).timeout
+	var s1 := _read("surface")
 	var drift := 0.0
-	for i in sides.size():
-		drift = maxf(drift, absf(_box_volumes([sides[i]])[1] - solid0[i]))
+	var moved := 0.0
 	var drifts: Array[String] = []
 	for i in sides.size():
-		drifts.append("%s %+.4f" % [sides[i] - cell, _box_volumes([sides[i]])[1] - solid0[i]])
-	print("pillar: stood again at %s (pillars %d), the room dug to 6 m by 8: 10 s on the solid in its column and those either side, on its row and the one before, changed %.4f m³ at most (%s)" % [
-			cell, _tools.pillars, drift, ", ".join(drifts)])
+		var d := _box_volumes([sides[i]])[1] - solid0[i]
+		drift = maxf(drift, absf(d))
+		moved = maxf(moved, absf(_f(s1, sides[i]) - _f(s0, sides[i])))
+		drifts.append("%s %+.4f" % [sides[i] - cell, d])
+	print("pillar: stood again at %s (pillars %d), the room dug to 6 m by 8: 10 s on the surface over the room's middle moved %.3f m at most since before the pit, its solid %.4f m³ (%s)" % [
+			cell, _tools.pillars, moved, drift, ", ".join(drifts)])
 	# A column off the post's row and column may drop its roof's underside sliver, under a quarter voxel (0.11 m³
 	# at (1, -1) over a 4.20 m pit), as the roof phase's tunnel does: it reads its supports a voxel down, where
 	# the bore is widest. The roof over it holds; a fall loses a metre of it.
-	_report("a pillar holds a 6 m room", _tools.pillars == n0 + 1 and drift <= 0.25)
+	_report("a pillar holds a 6 m room", _tools.pillars == n0 + 1 and moved <= 0.05 and drift <= 0.25)
 	_tools.place_pillar(cell)
 	var start := Time.get_ticks_msec()
 	var fell := -1.0
@@ -1390,10 +1397,11 @@ func _pillar(c: Vector2i) -> bool:
 		await _frames(30)
 		for i in sides.size():
 			lost[i] = solid0[i] - _box_volumes([sides[i]])[1]
-		if minf(lost[1], lost[2]) >= 0.9:
+		if minf(lost[0], lost[1]) >= 0.9:
 			fell = (Time.get_ticks_msec() - start) / 1000.0
 			break
-	print("pillar: taken away (pillars %d): its column and those either side lost %.3f, %.3f and %.3f m³ of solid in %.2f s" % [_tools.pillars, lost[0], lost[1], lost[2], fell])
+	print("pillar: taken away (pillars %d): the room's middle lost %.3f and %.3f m³ of solid on the post's row, %.3f and %.3f on the row before, in %.2f s" % [
+			_tools.pillars, lost[0], lost[1], lost[2], lost[3], fell])
 	_report("the roof falls when the pillar goes", _tools.pillars == n0 and fell >= 0.0)
 	return true
 

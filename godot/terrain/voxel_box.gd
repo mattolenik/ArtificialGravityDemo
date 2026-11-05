@@ -420,7 +420,8 @@ func _step_rd(lists: Array[Array], alloc_block: PackedByteArray) -> void:
 		return
 	for l: Array in lists:
 		_rd.buffer_update(_active_table, 0, SLOTS * 4, l[0])
-		_rd.capture_timestamp("box_sand_begin")
+		# The pair's name carries the step's active brick count (box_sand_<n>), for the time per active brick.
+		_rd.capture_timestamp("box_sand_%d_begin" % l[1].size())
 		var list := _rd.compute_list_begin()
 		_rd.compute_list_bind_compute_pipeline(list, _unpack_pipeline)
 		_rd.compute_list_bind_uniform_set(list, _unpack_set, 0)
@@ -436,7 +437,7 @@ func _step_rd(lists: Array[Array], alloc_block: PackedByteArray) -> void:
 				_rd.compute_list_dispatch(list, 1, 1, 1)
 			_rd.compute_list_add_barrier(list)
 		_rd.compute_list_end()
-		_rd.capture_timestamp("box_sand_end")
+		_rd.capture_timestamp("box_sand_%d_end" % l[1].size())
 	_read_stats_rd()
 
 
