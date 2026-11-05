@@ -1,7 +1,8 @@
-## The player's tools (the terrain slice 3 plan; the shovel of the tunnels design). The feet: walking pushes
-## the loose dirt under them a little toward where the player is going, and a hard landing tamps it, the
-## fourth folding it into the solid ground; both act in the voxel box (VoxelBox.push and tamp) at the feet's
-## point, from Player's signals on the main thread after move_and_slide, one op per signal. The auger: E places one where the
+## The player's tools (the terrain slice 3 plan; the shovel of the tunnels design). The feet: a hard landing
+## tamps the loose dirt under them, the fourth folding it into the solid ground, in the voxel box
+## (VoxelBox.tamp) at the feet's point, from Player's landed signal on the main thread after move_and_slide
+## (walking no longer pushes the loose ahead of the feet: removed 2026-11-04 by the user's choice, for how
+## it looked and felt). The auger: E places one where the
 ## crosshair hits the ground within place_reach, its spoil on the far side from the player, and E within
 ## pickup_distance of it picks it up; one at a time, and E does nothing while the fly camera is the viewer
 ## (it climbs on E). The shovel: the crosshair's hit on the terrain colliders within shovel_reach (any
@@ -36,8 +37,7 @@ const EMPTY := 1e-3
 ## The ring shown at the shovel's aim.
 @export var patch: ShovelPatch
 
-## Stamps made (accepted by stamp_tool), for the driver.
-var pushes := 0
+## Tamps made, for the driver.
 var tamps := 0
 ## The placed auger, null while there is none.
 var auger: Auger
@@ -64,22 +64,7 @@ var _floor := INF
 
 
 func _ready() -> void:
-	player.stepped.connect(_on_stepped)
 	player.landed.connect(_on_landed)
-
-
-## A push along the floor velocity v (global), quantised to an axis, from push_min_speed up, at the feet in
-## the box. The feet do not act while the renderer is stalled (TerrainSim.stalled: the window not drawn), when
-## every op's timed list would pile into one GPU frame that never turns over.
-func _on_stepped(v: Vector3) -> void:
-	var t := terrain.tool_params
-	if v.length() < t.push_min_speed or terrain.sim.stalled():
-		return
-	var at := terrain.station.to_local(player.global_position)
-	var dir := push_dir(terrain.station.global_basis.inverse() * v, Cyl.theta_of(at))
-	if terrain.box.push(foot_point(at, terrain.station.global_basis.inverse() * player.up_direction), t.foot_radius, dir, t.push_share, t.push_max):
-		pushes += 1
-		terrain.touch(player_cell(), t.foot_radius + 1, false)
 
 
 ## A tamp under the feet for a landing at speed (m/s, downward) from tamp_land_speed up, in the box.

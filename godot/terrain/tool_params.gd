@@ -36,12 +36,6 @@ extends Resource
 @export var scoop_interval := 0.25
 ## The feet's disc radius in cells (1: a five-cell plus).
 @export var foot_radius := 1
-## The share of each footprint cell's loose a push moves to the cell ahead.
-@export var push_share := 0.05
-## The most loose a push moves out of one cell, in m.
-@export var push_max := 0.03
-## The slowest floor speed that pushes, in m/s.
-@export var push_min_speed := 0.5
 ## Compaction a landing adds to loose cells; at 1 the cell folds into the solid surface.
 @export var tamp_step := 0.25
 ## The slowest downward landing speed that tamps, in m/s.

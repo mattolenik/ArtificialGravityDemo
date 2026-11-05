@@ -337,7 +337,7 @@ func _deferred() -> void:
 	var at := _terrain.viewer_cell()
 	var a := Vector2i(posmod(at.x - 40, n), at.y)
 	var b := Vector2i(posmod(at.x - 20, n), at.y)
-	# The forced edits need a quiet collider: until the trench's tiles settle, the player's last pushes are
+	# The forced edits need a quiet collider: until the trench's tiles settle, the player's last tamps are
 	# re-touched while their tile is active (Terrain._retouch), and the last of those touches may still be
 	# waiting in the throttle, or its bake in flight, a few frames after.
 	var patch := _terrain.patch

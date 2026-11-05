@@ -32,8 +32,7 @@ func _initialize() -> void:
 		check(player.velocity.slide(down).length() < 0.05, "no drift at %d°" % deg)
 		# The drop (about 0.45 s airborne, longer than AIRBORNE_TICKS) lands exactly once at a few m/s; any
 		# settling contact after it is too short to count. Standing still, every step reports no floor speed;
-		# the landing tick's step still carries the drop's Coriolis drift (2ω · 1 m, about 0.11 m/s, under
-		# push_min_speed), which the floor's grip takes the tick after.
+		# the landing tick's step still carries the drop's Coriolis drift (2ω · 1 m, about 0.11 m/s), which the floor's grip takes the tick after.
 		check(Player.AIRBORNE_TICKS == 9, "airborne ticks")
 		check(landings.size() == 1 and landings[0] > 1.0 and landings[0] < 10.0, "landed once at %s" % [landings])
 		check(steps.size() > 1 and steps[0].length() < 0.5 and steps.slice(1).all(func(v: Vector3) -> bool: return v.length() < 0.05),

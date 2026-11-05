@@ -63,7 +63,6 @@ const MODE_FILL := 3
 ## The ball ops' modes of box_edit.glsl, and its Params block.
 const EDIT_SCOOP := 0
 const EDIT_DUMP := 1
-const EDIT_PUSH := 2
 const EDIT_TAMP := 3
 const EDIT_BORE := 4
 const EDIT_SPOIL := 5
@@ -757,13 +756,12 @@ func disc_box(g: Vector3, radius: int, below: int, above: int) -> Array[Vector3i
 	return [first, extent if inside else Vector3i.ZERO]
 
 
-## A disc op (box_edit.glsl's push, tamp, bore, spoil) at station-local p over the disc of `radius` cells,
+## A disc op (box_edit.glsl's tamp, bore, spoil) at station-local p over the disc of `radius` cells,
 ## the voxels from 2 under p's height to 2 over it (the bore 3 under to 4 over, the spoil 2 under to 13 over:
 ## its pile grows); false, nothing dispatched, when it is not wholly in the box.
 func _disc_op(mode: int, p: Vector3, radius: int, amount: float, limit: float, dir: Vector2i, counted: Callable) -> bool:
 	var g := grid_of(p)
-	# The push's columns reach one past the disc each way: what the disc's edge sends ahead lands there.
-	var bb := disc_box(g, radius + (1 if mode == EDIT_PUSH else 0), 3 if mode == EDIT_BORE else 2, 13 if mode == EDIT_SPOIL else (4 if mode == EDIT_BORE else 2))
+	var bb := disc_box(g, radius, 3 if mode == EDIT_BORE else 2, 13 if mode == EDIT_SPOIL else (4 if mode == EDIT_BORE else 2))
 	if bb[1] == Vector3i.ZERO:
 		return false
 	dirty_pending = true
@@ -775,21 +773,13 @@ func _disc_op(mode: int, p: Vector3, radius: int, amount: float, limit: float, d
 	pc.encode_s32(120, obstacle.x)
 	pc.encode_s32(124, obstacle.y)
 	var slots := PackedInt32Array()
-	if mode == EDIT_SPOIL or mode == EDIT_PUSH:
+	if mode == EDIT_SPOIL:
 		for bz in range(floori(bb[0].z / 16.0), floori((bb[0].z + bb[1].z - 1) / 16.0) + 1):
 			for by in range(floori(bb[0].y / 16.0), floori((bb[0].y + bb[1].y - 1) / 16.0) + 1):
 				for bx in range(floori(bb[0].x / 16.0), floori((bb[0].x + bb[1].x - 1) / 16.0) + 1):
 					slots.append(slot_index(slot_of(Vector3i(bx, by, bz))))
 	RenderingServer.call_on_render_thread(_edit_rd.bind(pc, slots, _pc(_origin, MODE_ALLOCATE, FAR, 0) if not slots.is_empty() else PackedByteArray(), counted))
 	return true
-
-
-## The feet's push: each footprint column's top loose sends `share` of it, at most `cap` m, to the column
-## ahead along dir, never into the obstacle.
-func push(p: Vector3, radius: int, dir: Vector2i, share: float, cap: float) -> bool:
-	if dir == Vector2i.ZERO:
-		return false
-	return _disc_op(EDIT_PUSH, p, radius, share, cap, dir, Callable())
 
 
 ## A landing's tamp: the footprint's loose gains `step` of compaction and folds into solid with the swell at 1.

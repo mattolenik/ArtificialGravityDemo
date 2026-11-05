@@ -13,7 +13,7 @@ func _initialize() -> void:
 	var t := ToolParams.new()
 	check(is_equal_approx(t.bore_step * t.bore_rate * 30.0, 10.0) and t.bore_depth == 10.0 and t.bore_radius == 1, "bore numbers")
 	check(t.spoil_radius == 2 and t.spoil_offset == 7 and t.pump_rate == 1.0, "spoil and pump")
-	check(t.tamp_step == 0.25 and t.tamp_land_speed == 2.0 and t.push_share == 0.05 and t.push_max == 0.03 and t.foot_radius == 1, "feet")
+	check(t.tamp_step == 0.25 and t.tamp_land_speed == 2.0 and t.foot_radius == 1, "feet")
 	check(t.slump_rate == 0.125 and t.flow_rate == 0.125 and t.soak_every == 6 and t.settle_time == 1.0 and t.move_eps == 1e-4, "simulation")
 	check(t.collider_edit_interval == 0.2 and t.collider_zone_interval == 1.0, "collider throttle")
 	# 0.4 is not a float32 (the arrays are PackedFloat32Array): it reads back as the nearest one, so approx.

@@ -5,8 +5,7 @@
 ## stamps (k = 1, S1; Task 2):
 ## 1. a 1.5 m³ deposit of spoil_radius: the loose volume over the box of 6 around S1 is 1.5 m³, the disc
 ##    fresh (compaction 0) and masked;
-## 2. three pushes of radius 2 along +z: the loose volume over the box holds and its centre moves forward;
-## 3. four tamps of radius 2: after three the loose cells' compaction is 0.75, after the fourth they are folded
+## 2. four tamps of radius 2: after three the loose cells' compaction is 0.75, after the fourth they are folded
 ##    (loose, compaction and material 0) and the surface gained the disc's loose volume over the swell;
 ## 4. a 0.5 m³ spill at S1 + (0, 10): the window's sheet water plus its pore water grew by 0.5 m³;
 ## 5. 30 bore ticks at S1 + (0, 20), 10 a second: the counter's landings add up to the annulus between the
@@ -14,7 +13,7 @@
 ##    floor, cave a little: slope stability), no tick wet, the disc 1 m down, its clay under the surface, its
 ##    material by the strata;
 ## 6. pack_tiles of six resident tiles, S1's first: two lists, the second reusing slot 0; every blob lands,
-##    and S1's tile holds the window's loose.
+##    and S1's blob holds the window's surface and loose words at S1 bit for bit, the cell masked.
 ## slump (k = 2, S2; Task 3):
 ## 1. a wall (an obstacle of radius 1 at S2 + (0, 3)), then a 30 m³ deposit of radius 1 (a 5.6 m column),
 ##    left to settle: the loose volume over the box of 24 is 30 m³, the steepest slope from a loose cell to a
@@ -33,9 +32,8 @@
 ##    spill, a sheet still standing (it has soaked away by the time it settles) and the dirt round it
 ##    darkened, the shot (below) saves user://debug/tool_puddle.png.
 ## walk (k = -2, S4; Task 4): a 12 m³ deposit of radius 2 settles; the player, stood 8 m before it along -z
-##    and facing +z, holds W for 1.5 s and walks over it: at least 10 pushes, no landing counted, the loose
-##    volume over the box of 24 kept within 0.5 %, its loose-weighted mean row 0.1 cells further on, and the
-##    feet (1 m under the player's origin) never more than 0.3 m under surface + loose at their cell. The
+##    and facing +z, holds W for 1.5 s and walks over it: no landing counted, the loose volume over the box of 24 kept
+##    within 0.5 % (the feet's push went 2026-11-04), and the feet (1 m under the player's origin) never more than 0.3 m under surface + loose at their cell. The
 ##    feet are sampled every 0.1 s of the walk, a synchronous surface and loose read each: this phase too
 ##    carries the driver's own reads.
 ## jumps (S4): stood on the pile's highest cell, the player jumps four times 1.2 s apart: at least four
@@ -397,18 +395,6 @@ func _stamps(s1: Vector2i) -> void:
 			deposited, _residual("deposit", deposited, 1.5), fresh])
 	_report("deposit conserves", absf(deposited - 1.5) <= 1.5e-3 and fresh)
 
-	var row0 := _mean_row(loose, surface, box, s1)
-	for i in 3:
-		_expect(_terrain.box.push(_tools.surface_point(s1), 2, Vector2i(0, 1), t.push_share, t.push_max), "push %d dispatched" % i)
-		await _frames(3)
-	loose = _read("loose")
-	surface = _read("surface")
-	var pushed := _vol(loose, surface, box)
-	var row1 := _mean_row(loose, surface, box, s1)
-	print("push: %.6f m³ loose over the box, was %.6f (%+.3f ppm); mean row %+.4f -> %+.4f cells" % [
-			pushed, deposited, _residual("push", pushed, deposited) * 1e4, row0, row1])
-	_report("push moves forward, conserves", absf(pushed - deposited) <= 1e-4 * deposited and row1 - row0 >= 0.05)
-
 	var tamp_disc := _disc(s1, 2)
 	for i in 3:
 		_expect(_terrain.box.tamp(_tools.surface_point(s1), 2, t.tamp_step, swell), "tamp %d dispatched" % i)
@@ -490,20 +476,19 @@ func _stamps(s1: Vector2i) -> void:
 	window.edits.pack_tiles(window, tiles)
 	await _frames(4)
 	loose = _read("loose")
-	# S1 itself was folded by the tamp: the cell of S1's tile with the most loose in the box stands for it.
+	# S1, folded by the tamp (its surface raised by the deposit, its loose 0): the blob's surface and loose
+	# words are the window's, bit for bit, and the cell is masked.
 	var probe := s1
-	for c in box:
-		if window.tile_of_cell(c.x, c.y) == tile and _f(loose, c) > _f(loose, probe):
-			probe = c
+	surface = _read("surface")
 	var landed := tiles.all(func(x: Vector2i) -> bool: return window.edits.blobs.has(x))
 	var same := false
 	if landed:
 		var o := EditLayer.cell_offset(posmod(probe.x, TerrainWindow.TILE), posmod(probe.y, TerrainWindow.TILE))
 		var blob: PackedByteArray = window.edits.blobs[tile]
-		same = _f(loose, probe) > 0.0 and blob.decode_u32(o + 24) == loose.decode_u32(4 * _texel(probe)) \
+		same = blob.decode_u32(o) == surface.decode_u32(4 * _texel(probe)) and blob.decode_u32(o + 24) == loose.decode_u32(4 * _texel(probe)) \
 				and blob.decode_u32(o + 20) >> 24 == 255
-	print("pack: %d tiles %s, all landed: %s; %s in %s: %.6f m loose, blob matches the window and is masked: %s" % [
-			tiles.size(), tiles, landed, probe, tile, _f(loose, probe), same])
+	print("pack: %d tiles %s, all landed: %s; %s in %s: surface %.4f m, %.6f m loose, blob matches the window and is masked: %s" % [
+			tiles.size(), tiles, landed, probe, tile, _f(surface, probe), _f(loose, probe), same])
 	_report("pack slots reused across lists", landed and same)
 
 
@@ -657,7 +642,6 @@ func _walk(s4: Vector2i) -> bool:
 		return false
 	_face(Vector3(0, 0, 1))
 	await get_tree().create_timer(0.5).timeout
-	var pushes0 := _tools.pushes
 	var tamps0 := _tools.tamps
 	var low := INF
 	_press(KEY_W, true)
@@ -671,11 +655,10 @@ func _walk(s4: Vector2i) -> bool:
 	loose = _read("loose")
 	var v1 := _vol(loose, surface, box)
 	var row1 := _mean_row(loose, surface, box, s4)
-	var pushes := _tools.pushes - pushes0
-	print("walk: pile settled in %.2f s, again in %.2f s after; %d pushes, %d landings counted; %.6f m³ loose over the box, was %.6f (%+.4f %%); mean row %+.4f -> %+.4f cells (%+.4f); lowest feet %+.3f m" % [
-			waited, waited2, pushes, _tools.tamps - tamps0, v1, v0, _residual("walk", v1, v0), row0, row1, row1 - row0, low])
-	_report("walking pushes forward, conserves, stands on it", waited >= 0.0 and waited2 >= 0.0 and pushes >= 10
-			and _tools.tamps == tamps0 and absf(v1 - v0) <= 0.005 * v0 and row1 - row0 >= 0.1 and low >= -0.3)
+	print("walk: pile settled in %.2f s, again in %.2f s after; %d landings counted; %.6f m³ loose over the box, was %.6f (%+.4f %%); mean row %+.4f -> %+.4f cells (%+.4f); lowest feet %+.3f m" % [
+			waited, waited2, _tools.tamps - tamps0, v1, v0, _residual("walk", v1, v0), row0, row1, row1 - row0, low])
+	_report("walking over a pile conserves it and stands on it", waited >= 0.0 and waited2 >= 0.0
+			and _tools.tamps == tamps0 and absf(v1 - v0) <= 0.005 * v0 and low >= -0.3)
 	return true
 
 

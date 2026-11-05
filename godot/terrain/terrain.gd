@@ -488,8 +488,8 @@ func can_stamp(cell: Vector2i, reach: int) -> bool:
 
 ## Runs a tool stamp (EditLayer.stamp_op) with the obstacle set_obstacle gave, unless can_stamp refuses it
 ## (false, nothing changes). A bore, deposit or spill touches the collider there (_collider_touch, decision
-## 10). A push or a tamp does not: either may change nothing (bare ground: a landing there would send an edit
-## bake and move the zone), and sixty pushes a second would keep the edit shape rebaking; one that changed
+## 10). A tamp does not: it may change nothing (bare ground: a landing there would send an edit bake and move the
+## zone); one that changed
 ## loose flags its tile, and the simulation re-touches the last stamp's place while that tile is active
 ## (_retouch).
 func stamp_tool(op: EditLayer.Op) -> bool:
@@ -505,14 +505,14 @@ func stamp_tool(op: EditLayer.Op) -> bool:
 	_last_reach = op.reach()
 	_last_frame = Engine.get_process_frames()
 	_last_active = false
-	if op.mode != EditLayer.MODE_PUSH and op.mode != EditLayer.MODE_TAMP:
+	if op.mode != EditLayer.MODE_TAMP:
 		_collider_touch(op.cell, op.reach())
 	return true
 
 
 ## A box op (Tools, through VoxelBox) changed the ground within reach cells of cell: the collider follows as it
 ## does after a tool stamp (_collider_touch when `now`, and _retouch while the tile is active either way; the
-## feet pass false, as their stamps did: sixty pushes a second must not rebake the edit shape).
+## feet pass false, as their stamps did: a landing must not rebake the edit shape).
 func touch(cell: Vector2i, reach: int, now := true) -> void:
 	for t in EditLayer.stamp_tiles(window, cell, reach):
 		window.edits.stamped[t] = sim.stats_reads

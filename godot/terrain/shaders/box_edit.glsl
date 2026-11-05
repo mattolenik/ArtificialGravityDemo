@@ -1,7 +1,7 @@
 #[compute]
 #version 450
 
-// The box's tool ops (VoxelBox.scoop and dump; push, tamp, bore and spoil follow): one workgroup of 8 x 8 x 8
+// The box's tool ops (VoxelBox.scoop and dump; tamp, bore and spoil follow): one workgroup of 8 x 8 x 8
 // invocations over the ball's bounding box of voxels (`first`, `extent`; theta index unwrapped near the
 // centre), the ball of `radius` m around `centre` (theta index, z index, height, continuous) in metres
 // (across: cells times (R - h) dtheta). Modes:
@@ -24,7 +24,7 @@
 // The disc ops, one invocation per column of the box's footprint (z = 0 threads), the disc of `radius` cells
 // around the centre's cell, over the voxels of the box's height range (the feet's or the surface's height,
 // a few voxels either way), `limit` and `dir_code` as EditLayer's push constants carry them:
-// 2 push: each column's top loose voxel (the highest holding loose in the range) sends `amount` (the share)
+// 2 push (unused since 2026-11-04, the feet's push removed; the mode number stays): each column's top loose voxel (the highest holding loose in the range) sends `amount` (the share)
 //   of its loose, at most `limit` m, to the column ahead along the direction, onto that column's stack top
 //   (its ground voxel while it has a quarter of room, else the voxel over it; never into the obstacle); a
 //   gather, so each column writes its own voxels only: what the column behind sends it is computed the same
@@ -297,58 +297,6 @@ int landing(Column c) {
 		return g;
 	}
 	return g + 1 < pc.extent.z && c.ok[g + 1] ? g + 1 : -1;
-}
-
-// What the column at cxz sends ahead, in counts of its top loose voxel (0 when it is out of the disc, has no
-// loose, or the column ahead is blocked or cannot take it), and where it goes: the index of the top voxel
-// and the landing voxel ahead.
-uint push_out(ivec2 cxz, out int from, out int to) {
-	from = -1;
-	to = -1;
-	if (!in_disc(cxz)) {
-		return 0u;
-	}
-	ivec2 ahead = cxz + DIR4[pc.dir_code];
-	if (blocked(ahead)) {
-		return 0u;
-	}
-	Column c = load_column(cxz);
-	from = top_loose(c);
-	if (from < 0) {
-		return 0u;
-	}
-	Column a = load_column(ahead);
-	to = landing(a);
-	if (to < 0) {
-		return 0u;
-	}
-	uint q = min(uint(roundh(pc.amount * float(c.fl[from]))), uint(roundh(pc.limit * ONE)));
-	int room = int(ONE) - int(a.fs[to]) - int(a.fl[to]);
-	return min(q, uint(max(room, 0)));
-}
-
-// Every invocation of the workgroup calls it (the barrier): each column's sends are read from the state
-// before any column is stored.
-void push_column(ivec2 cxz, bool mine) {
-	int from = -1, to = -1, bfrom = -1, bto = -1;
-	uint out_q = mine ? push_out(cxz, from, to) : 0u;
-	uint in_q = mine ? push_out(cxz - DIR4[pc.dir_code], bfrom, bto) : 0u;
-	memoryBarrierBuffer();
-	barrier();
-	if (out_q == 0u && in_q == 0u) {
-		return;
-	}
-	Column c = load_column(cxz);
-	if (out_q > 0u) {
-		c.fl[from] -= out_q;
-	}
-	if (in_q > 0u) {
-		// The counts of the voxel behind, by the annuli of the two voxels.
-		uint q = uint(roundh(float(in_q) * vol(pc.first.z + bfrom) / vol(pc.first.z + bto)));
-		c.fl[bto] = min(c.fl[bto] + q, uint(ONE) - c.fs[bto]);
-		c.w1[bto] &= ~0xFF00u;
-	}
-	store_column(cxz, c);
 }
 
 void tamp_column(ivec2 cxz) {
@@ -716,10 +664,6 @@ void main() {
 		}
 	}
 	bool in_col = l.z == 0 && l.x < pc.extent.x && l.y < pc.extent.y;
-	if (pc.mode == 2) {
-		push_column(ck.xy, in_col);
-		return;
-	}
 	if (!in_col) {
 		return;
 	}
