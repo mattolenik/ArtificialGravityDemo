@@ -63,7 +63,8 @@
 ## The exit (any run with the tunnel): a scoop at the tunnel's end in the quit's frame (no pack of the box in
 ##    between): the exit pack must carry its gap into the tile's blob, else an ERROR line fails the run.
 ## play (P, flat ground; the shovel as the user plays it, through Tools and the crosshair): the player looks
-##    down and holds T until the pit is 4.2 m deep (at most eight scoops), looking a little lower and
+##    down and holds T until the pit is 4.0 m deep (at most eight scoops; 4.2 took a seventh scoop to 5.2 m once
+##    the rim's slivers sagged, since a scoop aimed at the drawn sag lands partly in air), looking a little lower and
 ##    pressing again whenever the sinking hit leaves the shovel's reach (a pit under the free height, so its
 ##    walls stand, and deep enough for a tunnel's roof over a voxel thick, which the span rule lets stand), is stood in the pit facing its +z wall, holds W for 6 s looking at the wall ahead and T whenever
 ##    the crosshair's hit is on it (the shovel's level rule puts the ball a metre over the floor: a tunnel the
@@ -904,7 +905,7 @@ func _play(c: Vector2i) -> bool:
 	var deepest := 0.0
 	var counted := scoops0
 	var depths: Array[String] = []
-	while Time.get_ticks_msec() - t0 < 6000 and deepest < 4.2 and _tools.scoops - scoops0 < 8:
+	while Time.get_ticks_msec() - t0 < 6000 and deepest < 4.0 and _tools.scoops - scoops0 < 8:
 		await get_tree().process_frame
 		if _tools.scoops != counted and not _tools._scoop_pending:
 			counted = _tools.scoops
@@ -1050,7 +1051,7 @@ func _play(c: Vector2i) -> bool:
 	var walked := _station.to_local(_player.global_position).z - z0
 	var mouth := roofed[0] if not roofed.is_empty() else 99
 	print("play: walked %.2f m along +z from the pit's floor (W held through the dig and 2 s more), the tunnel's mouth %d m along; held %d frames, the feet uncovered %d frames" % [walked, mouth, held, uncovered])
-	_report("the shovel as played digs a pit and a tunnel the player walks into", pit_scoops + wall_scoops >= 8 and _tools.held > held0 and deepest >= 4.2
+	_report("the shovel as played digs a pit and a tunnel the player walks into", pit_scoops + wall_scoops >= 8 and _tools.held > held0 and deepest >= 4.0
 			and roofed.size() >= 3 and box.touched.has(ch) and landed >= 0.0 and walked >= mouth + 1.0 and held == 0 and uncovered == 0)
 	return true
 
@@ -1252,6 +1253,7 @@ func _roof(c: Vector2i) -> bool:
 	var lost0 := _swelled_loss(cells, sw, cb0, ct0)
 	var loose0 := _vol(lw, sw, cells) + _gap_loose(cells)
 	var held0 := _tools.held
+	var clipped0: int = _terrain.box.read_stats()[VoxelBox.SLOTS + 2]
 	# The roof's underside over the room's middle: the lowest vertex of the chunk's mesh over the cell that faces
 	# down, between the window's roof there (the first gap's top) and a metre under it, while that roof stays
 	# where it was once the room reached the cell: the sag the mesh draws before the roof fails (a failing
@@ -1337,9 +1339,10 @@ func _roof(c: Vector2i) -> bool:
 	var got := _tools.held - held0 + _vol(l2, s2, cells) + _gap_loose(cells) - loose0
 	print("roof: widened to %d rows of balls by %d along (%.6f m³ in the hand), the ground over the room's middle %s sank %.2f m or more in %.2f s; settled in %.2f s; the ground's sinking, x %d..%d from the pit's cell: %s" % [
 			rows.size(), nk, _tools.held - held0, mid - c, sank, fell, waited3, -(wide / 2 + 1), wide / 2 + 1, "; ".join(grid)])
-	print("roof: over the box of %d the solid lost (swelled) %.6f m³ for %.6f held + %.6f loose = %.6f (%+.4f %%)" % [
-			wide + 2, lost, _tools.held - held0, got - (_tools.held - held0), got, _residual("roof", got, lost)])
-	_report("a room too wide climbs to a sinkhole, conserved", fell >= 0.0 and waited3 >= 0.0 and absf(got - lost) <= 1e-3 * lost)
+	var clipped: int = _terrain.box.read_stats()[VoxelBox.SLOTS + 2] - clipped0
+	print("roof: over the box of %d the solid lost (swelled) %.6f m³ for %.6f held + %.6f loose = %.6f (%+.4f %%); the sand clipped %d counts of arriving loose at full voxels" % [
+			wide + 2, lost, _tools.held - held0, got - (_tools.held - held0), got, _residual("roof", got, lost), clipped])
+	_report("a room too wide climbs to a sinkhole, conserved", fell >= 0.0 and waited3 >= 0.0 and absf(got - lost) <= 1e-3 * lost and clipped == 0)
 	print("roof: the underside over the room's middle was first met %.2f m over the floor (the window's roof there %.2f) and sagged %.3f m at most while that roof stood; the ground over the middle had sunk a metre %.2f s after the lowest reading" % [
 			st[0] - floor_h, st[2] - floor_h, sag, lag])
 	_report("a room too wide sags before its roof falls", fell >= 0.0 and sag >= 0.3)

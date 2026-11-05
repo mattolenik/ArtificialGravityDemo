@@ -38,10 +38,12 @@
 //   sags: its strain (the top seven bits of its second word, not saved) rises sag_rate a step, slower near
 //   the cantilever limit (so a room's middle goes first and the sag is a bowl), falls back at a quarter of that
 //   while it holds (a layer resting a moment on the rubble of the one under it keeps nearly all of it), keeps
-//   its brick active, and box_mesh.glsl draws its underside lower by it. At full strain the whole voxel goes, as
-//   fast as the room under it takes it, and the failure hands full strain to the dirt or clay voxel over it
-//   and to any neighbour already straining, so a roof and its overburden come down together rather than
-//   layer by sagging layer.
+//   its brick active, and box_mesh.glsl draws its underside lower by it. At full strain the whole voxel goes in
+//   a step, its loose placed in the air voxels under it (half of each one's room, nearest first, down to solid
+//   or six voxels; none in its own voxel, whose rubble would prop the voxel over it; with less room, as much
+//   as fits, the rest the steps after), and the failure hands full strain to the dirt or clay voxel over it
+//   and to any neighbour already straining, so a roof and its overburden come down together in a few steps
+//   rather than layer by sagging layer, and the ceiling never recedes upward as a slab dissolves.
 // 1 apply: each voxel takes its arrivals, loses what it sent, stores the result when it changed, flags its
 //   column dirty (the pack writes the window) and, over move_eps, its brick active (bit 0 of its slot) and the
 //   brick across any face it lies on (bit 1).
@@ -550,13 +552,12 @@ void span_column(ivec2 cxz, int kz0, int my_ai) {
 			atomicOr(box_stats[me.e], 1u);
 			continue;
 		}
-		// The failure: the whole of the solid, leaving as `out`'s high half and arriving as loose times the swell
-		// in this voxel's room (half of it at most; a quarter when a roof voxel over this one may fail into it
-		// too) and the room of the air voxel under it (a quarter at most), so cut · swell ≤ (room + cut) / share
-		// + room_dn / 4; less fails when less fits, the rest the steps after. The voxel over it, dirt or clay,
-		// takes full strain (it fails as soon as this one is out from under it), as does any neighbour at this
-		// height already straining.
-		uint cut = fs[y];
+		// The failure: the whole of the solid in a step, leaving as `out`'s high half and arriving as loose times
+		// the swell in the air voxels under it, nearest first, half of each one's room (the falls' and slumps'
+		// shares still fit beside it), down to the first voxel holding a quarter of solid or six voxels; nothing
+		// in this voxel itself (its own rubble would prop the voxel over it). With less room, as much as fits,
+		// the rest the steps after. The voxel over it, dirt or clay, takes full strain (it fails as soon as this
+		// one is out from under it), as does any neighbour at this height already straining.
 		V vu = find(ivec3(cxz, k + 1));
 		if (vu.ok && (pool[vu.addr] & 0xFFFFu) > 0u && (pool[vu.addr + 1] & 255u) < 2u) {
 			atomicOr(pool[vu.addr + 1], 127u << 25);
@@ -567,20 +568,42 @@ void span_column(ivec2 cxz, int kz0, int my_ai) {
 				atomicOr(pool[vn.addr + 1], 127u << 25);
 			}
 		}
-		V vd = find(ivec3(cxz, k - 1));
-		int ai = my_ai;
-		int room = int(ONE) - int(fs[y]) - int(fl[y]);
-		int room_dn = 0;
-		if (y > 0) {
-			room_dn = int(ONE) - int(fs[y - 1]) - int(fl[y - 1]);
-		} else if (open(vd, ai)) {
-			uint w0 = pool[vd.addr];
-			room_dn = int(ONE) - int(w0 & 0xFFFFu) - int(w0 >> 16);
-		}
-		room_dn = int(float(room_dn) * vol(k - 1) / vol(k));
-		int share = fs[y] < quarter && s_up > 0u && m_up < 2u ? QUARTER : FAIL_SHARE;
 		float swell = mt.swell[m];
-		cut = min(cut, uint(floor((float(room) + float(share) * 0.25 * float(room_dn)) / (float(share) * swell - 1.0))));
+		V tv[6];
+		int ta[6];
+		int tk[6];
+		uint tq[6];
+		int nt = 0;
+		float cap = 0.0;
+		for (int j = 1; j <= 6; j++) {
+			int kj = k - j;
+			V vj = find(ivec3(cxz, kj));
+			int aj = my_ai;
+			uint w0j;
+			if (y - j >= 0) {
+				w0j = fs[y - j] | (fl[y - j] << 16);
+			} else {
+				if (!open(vj, aj)) {
+					break;
+				}
+				w0j = pool[vj.addr];
+			}
+			if ((w0j & 0xFFFFu) >= quarter) {
+				break;
+			}
+			int roomj = int(ONE) - int(w0j & 0xFFFFu) - int(w0j >> 16);
+			if (roomj <= 0) {
+				continue;
+			}
+			uint q = uint(floor(float(roomj / 2) * vol(kj) / vol(k)));
+			tv[nt] = vj;
+			ta[nt] = aj;
+			tk[nt] = kj;
+			tq[nt] = q;
+			nt++;
+			cap += float(q);
+		}
+		uint cut = min(fs[y], uint(floor(cap / swell)));
 		if (cut == 0u) {
 			// No room to fall into (a pile up to the roof): it holds, and the sag goes out of it.
 			pool[me.addr + 1] = (w1 & 0x01FFFFFFu) | (uint(max(strain - max(1, rate / 4), 0)) << 25);
@@ -591,16 +614,13 @@ void span_column(ivec2 cxz, int kz0, int my_ai) {
 		if (cut == fs[y]) {
 			pool[me.addr + 1] = w1 & 0x01FFFFFFu;  // the last of it goes: no strain on the air left
 		}
-		uint gain = uint(roundh(float(cut) * swell));
-		uint dn = min(gain - min(gain, uint((room + int(cut)) / share)), uint(room_dn / QUARTER));
-		uint here = gain - dn;
-		if (dn > 0u) {
-			send(vd, ai, k, k - 1, dn);
+		uint left = uint(roundh(float(cut) * swell));
+		for (int i = 0; i < nt && left > 0u; i++) {
+			uint q = min(left, tq[i]);
+			send(tv[i], ta[i], k, tk[i], q);
+			left -= q;
 		}
 		flux[fi] |= cut << 16;
-		if (here > 0u) {
-			atomicAdd(flux[fi + 1], here);
-		}
 	}
 }
 
