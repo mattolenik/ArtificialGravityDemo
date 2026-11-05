@@ -888,6 +888,40 @@ func _play(c: Vector2i) -> bool:
 	_press(KEY_T, false)
 	_press(KEY_W, false)
 	await _shot("box_play")
+	# The seam between the chunk's skirt and the ground tile around it, from 5 m inside the chunk's +z edge on
+	# the surface, looking along +z a little down (user://debug/box_seam.png).
+	var edge_row: int = (VoxelBox.chunk_of_cell(pit + Vector2i(0, 2)).y + 1) * VoxelBox.BRICK
+	_terrain.teleport((pit.x + 0.5) * p.dtheta(), -p.length / 2.0 + edge_row - 5.0)
+	await _settled_patch()
+	# The collider's height against the packed surface across the tunnel's line there.
+	var sf := _read("surface")
+	var across: Array[String] = []
+	var off := 0.0
+	for dx in range(-3, 4):
+		var cell := Vector2i(pit.x + dx, edge_row - 6)
+		var g := _terrain.ground_below(Cyl.position((cell.x + 0.5) * p.dtheta(), -p.length / 2.0 + cell.y + 0.5, _f(sf, cell) + 20.0, p.radius), 40.0)
+		var d: float = Cyl.height_of(g, p.radius) - _f(sf, cell) if g.is_finite() else INF
+		off = maxf(off, absf(d))
+		across.append("%+d: %s" % [dx, ("%+.2f" % d) if g.is_finite() else "none"])
+	print("play: 6 m inside the chunk's +z edge, the collider over the packed surface across the tunnel's line: %s" % ", ".join(across))
+	# A tunnel's roof thinner than a voxel is a slab split over two partial voxels: the mesher once lost it
+	# (the collider 3.5 m under the surface there, a player over the tunnel falling in) or drew its top 0.6 m
+	# low.
+	_report("the ground over the tunnel stays in the collider", off <= 0.3)
+	_face(Vector3(0, 0, 1))
+	_player.look(Vector2(0.0, 60.0))
+	await _frames(5)
+	await _shot("box_seam")
+	_player.look(Vector2(0.0, -60.0))
+	_terrain.teleport((pit.x - 5.5) * p.dtheta(), -p.length / 2.0 + edge_row - 5.0)
+	await _settled_patch()
+	_face(Vector3(0, 0, 1))
+	_player.look(Vector2(0.0, 60.0))
+	await _frames(5)
+	await _shot("box_seam_flat")
+	_player.look(Vector2(0.0, -60.0))
+	_terrain.teleport((pit.x + 0.5) * p.dtheta(), -p.length / 2.0 + pit.y + 0.5 + 6.0)
+	await _settled_patch()
 	# The roofed cells along +z from the pit: a gap under a surface the dig left alone (the pit's angled
 	# scoops leave a ramp on its +z side, trenched to the floor before the wall proper).
 	var s2 := _read("surface")

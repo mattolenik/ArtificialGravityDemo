@@ -3,12 +3,13 @@
 
 // Surface nets over a touched chunk of the voxel box (VoxelBox.remesh_dirty; the tunnels design's drawing
 // and colliding), two dispatches over the chunk's 16 x 16 columns with a skirt of cells each way (the mesh
-// overlaps the tile mesh, which steps back from the chunk and sinks under it) and the box's 64 m:
+// overlaps the tile mesh, which steps back from the chunk and sinks under it; the skirt's edge sinks to meet
+// the tile's ramp) and the box's 96 m:
 // 0 vertices: one invocation per dual cell (the cube between eight voxel centres): where the density (the
 //   signed distance along the column from the voxel's centre to its run's end, sample_at) crosses zero along
-//   any of the cube's twelve edges, a vertex at the mean of the crossings (a vertical edge's by that
-//   distance, a lateral edge's by the fill less a half: a wall's foot would bulge by the floor's nearness
-//   otherwise), bent into station space (Cyl.position), its normal from the density gradient (a cell spans
+//   any of the cube's twelve edges, a vertex at the mean of the crossings (a vertical edge's by the
+//   distances toward each other, a lateral edge's by the fill less a half: a wall's foot would bulge by the
+//   floor's nearness otherwise), bent into station space (Cyl.position), its normal from the density gradient (a cell spans
 //   (R - h) dtheta across), its material the densest corner's (loose counts as dirt) with that corner's loose
 //   share; the vertex's index into vmap (-1 for none).
 // 1 quads: one invocation per voxel centre and axis: an edge to the next centre that crosses the half gets
@@ -51,7 +52,9 @@ const int BRICKS_UP = 6;  // VoxelBox.BRICKS_UP
 const int K = 16 * BRICKS_UP;
 
 struct S {
-	float d;      // the density: the signed distance along the column to the run's end, solid where positive
+	float d;      // the density: the signed distance along the column to the run's nearer end, solid where positive
+	float up;     // the same toward the run's end above the centre, and
+	float down;   // below it: a vertical edge's crossing lies where the lower's `up` meets the upper's `down`
 	float df;     // the fill less a half, for the lateral edges
 	uint mat;
 	float loose;  // the loose share of what fills the voxel
@@ -101,23 +104,58 @@ float run_past(ivec3 ck, int dir, float solid) {
 }
 
 // The voxel at ck: its density is the signed distance along the column from its centre to the nearest end of
-// its run, solid positive, within 2.5 voxels (run_past, two neighbours each way: a cell's eight corners on a
-// slope up to 45 degrees all read their exact distance, so its gradient normal is the slope's; with one
-// neighbour the far corners clipped at 1.5 and the normals checkered cell by cell). The ends then
-// interpolate to their exact heights and a planar slope meshes flat with one normal: the fill less a half
-// (the density before 2026-11-04) put every end in the middle third of its voxel, which meshed a slope as a
-// stair of bricks and lit it as one.
+// its run, solid positive, and `up` and `down` the distances to the end in each direction (run_past, two
+// neighbours each way), so a vertical edge's crossing interpolates to the run's exact end whichever voxel
+// the end lies in: a partial voxel holds its fill as a slab at its floor (where the voxel under it holds
+// at least as much as the one over it) or at its roof, its centre solid when the slab passes it. A slab
+// thinner than a voxel across the face between two partials holds no centre at all (a tunnel's roof under
+// a shallow pit): the voxel with the larger share stands solid for it (the upper on a tie), the slab's far
+// end exact across the face, its near end snapped to that centre. The fill less a half (the density before
+// 2026-11-04) put every end in the middle third of its voxel, which meshed a slope as a stair of bricks and
+// lit it as one, drew a thin roof's top 0.6 m low as a dark riser and lost it where no centre was solid.
 S sample_at(ivec3 ck) {
 	float f = fill_at(ck);
 	S r;
-	if (f >= 1.0) {
-		r.d = 0.5 + min(run_past(ck, 1, 1.0), run_past(ck, -1, 1.0));
-	} else if (f <= 0.0) {
-		r.d = -0.5 - min(run_past(ck, 1, 0.0), run_past(ck, -1, 0.0));
-	} else {
-		r.d = f - 0.5;
-	}
 	r.df = f - 0.5;
+	bool solid;
+	if (f >= 1.0) {
+		solid = true;
+		r.up = 0.5 + run_past(ck, 1, 1.0);
+		r.down = 0.5 + run_past(ck, -1, 1.0);
+	} else if (f <= 0.0) {
+		solid = false;
+		r.up = -(0.5 + run_past(ck, 1, 0.0));
+		r.down = -(0.5 + run_past(ck, -1, 0.0));
+	} else {
+		float fu = fill_at(ck + ivec3(0, 0, 1));
+		float fd = fill_at(ck - ivec3(0, 0, 1));
+		bool floor_slab = fd >= fu;
+		int dir = floor_slab ? -1 : 1;
+		float fa = floor_slab ? fd : fu;
+		solid = f > 0.5;
+		float free_end;
+		float attached;
+		if (solid) {
+			free_end = f - 0.5;
+			attached = 0.5 + run_past(ck, dir, 1.0);
+		} else {
+			// The neighbour on the attached side, a partial with no solid centre either, holds its slab
+			// against ours when it lies at its far end: ours stands for both when ours is the larger.
+			float faa = fill_at(ck + ivec3(0, 0, 2 * dir));
+			bool joined = fa > 0.0 && fa <= 0.5 && (floor_slab ? faa < f : faa <= f);
+			if (joined && (f > fa || (f == fa && floor_slab))) {
+				solid = true;
+				free_end = 0.0;
+				attached = 0.5 + fa;
+			} else {
+				free_end = -(0.5 + run_past(ck, -dir, 0.0));
+				attached = -(0.5 - f);
+			}
+		}
+		r.up = floor_slab ? free_end : attached;
+		r.down = floor_slab ? attached : free_end;
+	}
+	r.d = (solid ? 1.0 : -1.0) * min(abs(r.up), abs(r.down));
 	r.mat = 0u;
 	r.loose = 0.0;
 	int a = word_at(ck);
@@ -166,9 +204,15 @@ void vertex_pass(ivec3 l) {
 			if ((s[c].d < 0.0) == (s[d].d < 0.0)) {
 				continue;
 			}
-			float dc = a == 2 ? s[c].d : s[c].df;
-			float dd = a == 2 ? s[d].d : s[d].df;
-			float t = dc / (dc - dd);
+			float t;
+			if (a == 2) {
+				float lc = abs(s[c].up);
+				t = lc / max(lc + abs(s[d].down), 1e-6);
+			} else {
+				float dc = (s[c].d < 0.0 ? -1.0 : 1.0) * abs(s[c].df);
+				float dd = (s[d].d < 0.0 ? -1.0 : 1.0) * abs(s[d].df);
+				t = clamp(dc / (dc - dd), 0.0, 1.0);
+			}
 			sum += mix(corner(c), corner(d), t);
 			n++;
 		}
@@ -186,6 +230,14 @@ void vertex_pass(ivec3 l) {
 	vmap[mi] = int(vi);
 	// Voxel centres lie half a cell past their indices.
 	vec3 p = vec3(cell) + 0.5 + sum / float(n);
+	// The skirt's outer vertices sink to meet the ground tile's ramp: the tile, its vertices at cell centres,
+	// sinks a quarter cell within two cells of the chunk (tile.gdshader), so it ramps from a quarter down at
+	// 1.5 cells out to level at 2.5, and the skirt's last vertex row at 2 would stand an eighth of a metre
+	// over it, a ledge around every chunk (and a gap to the sky from under it).
+	vec2 in_chunk = p.xy - vec2(pc.c0);
+	vec2 past = max(-in_chunk, in_chunk - 16.0);
+	float out_cells = max(past.x, past.y);
+	p.z -= 0.25 * clamp(min(out_cells - 1.5, 2.5 - out_cells), 0.0, 0.5);
 	vec3 g = vec3(0.0);
 	int best = 0;
 	for (int c = 0; c < 8; c++) {
