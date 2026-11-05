@@ -1034,9 +1034,10 @@ func _on_mesh_data(data: PackedByteArray, key: String) -> void:
 		_remesh[key] = data
 
 
-## The landed arrays into the chunk's node (made under chunk_root on its first landing); the mask follows a
-## mesh appearing or going empty.
+## The landed arrays into the chunk's node (made under chunk_root on its first landing), the whole timed into
+## the node's build_ms; the mask follows a mesh appearing or going empty.
 func _land_chunk(ch: Vector2i, vdata: PackedByteArray, idata: PackedByteArray) -> void:
+	var t := Time.get_ticks_usec()
 	var st: Dictionary = touched[ch]
 	if st.node == null:
 		st.node = ChunkMesh.new(chunk_material)
@@ -1057,6 +1058,7 @@ func _land_chunk(ch: Vector2i, vdata: PackedByteArray, idata: PackedByteArray) -
 		cs[i] = Color(f[o + 3] / 255.0, f[o + 7], 0.0, 1.0)
 	var had: bool = st.node.faces > 0
 	st.node.set_arrays(vs, ns, cs, idata.to_int32_array() if vs.size() > 0 else PackedInt32Array())
+	st.node.build_ms = (Time.get_ticks_usec() - t) / 1000.0
 	remeshes += 1
 	if (st.node.faces > 0) != had:
 		_set_mask(ch)

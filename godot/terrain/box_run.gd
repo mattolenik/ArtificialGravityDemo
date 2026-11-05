@@ -41,7 +41,7 @@
 ##    its end half way (a remesh under the feet): never held, the feet over ground every frame
 ##    (Terrain.covered, and a ray down from the feet within 0..0.3 m), at least 3 m walked; a shot from inside
 ##    looking back out (user://debug/box_tunnel.png); the remesh lists' GPU time against 0.5 ms a chunk and the
-##    trimesh build CPU ms against 2 ms, printed.
+##    chunk landings' CPU ms (the arrays, the surface and the trimesh) against 2 ms, printed.
 ## inside (the tunnel of the tunnel phase, the player two cells in, facing its end): a dump of 8 m³ at the floor
 ##    2 m ahead lands on the floor (the loose over the tunnel's columns, surface and gaps, grows by 4 m³ within
 ##    0.1 %) and the clearance rule, with the pile confined to the tunnel, moves the player back toward the
@@ -671,10 +671,12 @@ func _tunnel(c: Vector2i) -> bool:
 		if t.name == "box_mesh":
 			ms.append(t.ms)
 	var build := 0.0
+	var parts := Vector2.ZERO
 	for st: Dictionary in box.touched.values():
-		if st.node != null:
-			build = maxf(build, st.node.build_ms)
-	print("tunnel: the remesh lists %s; the longest trimesh build %.2f ms (budget 2)" % [Smoke._stat(ms, 0.5), build])
+		if st.node != null and st.node.build_ms > build:
+			build = st.node.build_ms
+			parts = Vector2(st.node.mesh_ms, st.node.shape_ms)
+	print("tunnel: the remesh lists %s; the longest chunk landing %.2f ms (budget 2; of it the surface %.2f, the trimesh %.2f)" % [Smoke._stat(ms, 0.5), build, parts.x, parts.y])
 	return true
 
 
