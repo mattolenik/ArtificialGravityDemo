@@ -183,12 +183,14 @@ func shovel_hit() -> Dictionary:
 	var feet_h := Cyl.height_of(foot_point(at, up), R)
 	var h := Cyl.height_of(q, R)
 	var level := (absf(n.dot(up)) < 0.75 and h >= feet_h - 1.0) or (h >= feet_h + 0.25 and h < feet_h + 2.25)
+	# The floor this hit's ball would take; scoop keeps it (the ring's aim each frame must not, or a look at
+	# a wall from up a slope sets the floor a step down keeps).
+	var fl := level_floor(_floor, feet_h)
 	if level:
-		_floor = level_floor(_floor, feet_h)
-		q = Cyl.position(Cyl.theta_of(q), q.z, _floor + terrain.tool_params.scoop_ball, R)
+		q = Cyl.position(Cyl.theta_of(q), q.z, fl + terrain.tool_params.scoop_ball, R)
 	if q.distance_to(at) > terrain.tool_params.shovel_reach:
 		return {}
-	return {"position": q, "normal": n, "level": level, "surface": surface}
+	return {"position": q, "normal": n, "level": level, "surface": surface, "floor": fl}
 
 
 ## The floor of a wall scoop's ball, in m of height: `prev` (the last one's) while the feet at feet_h stand within
@@ -213,8 +215,11 @@ func surface_point(c: Vector2i) -> Vector3:
 ## Scoops the ball at station-local `aim`, or at the crosshair's hit within shovel_reach when none is given;
 ## its counter lands in _scooped. A line printed when there is no aim or the box refuses.
 func scoop(aim := Vector3.INF) -> void:
-	var p := _aim(aim)
+	var hit := {} if aim.is_finite() else shovel_hit()
+	var p: Vector3 = aim if aim.is_finite() else hit.get("position", Vector3.INF)
 	if p.is_finite() and terrain.box.scoop(p, terrain.tool_params.scoop_ball, terrain.materials.swell_factor, _scooped):
+		if hit.get("level", false):
+			_floor = hit.floor
 		_scoop_pending = true
 		scoops += 1
 		terrain.touch(_cell_of(p), ceili(terrain.tool_params.scoop_ball) + 1)
