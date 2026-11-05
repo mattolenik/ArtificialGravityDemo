@@ -21,6 +21,7 @@ const FRACTION_ONE := 65535
 const DIRT := 0
 const CLAY := 1
 const ROCK := 2
+const PILLAR := 4
 ## The bottom run's floor: nothing is dug under the hull.
 const BELOW := -1.0e9
 

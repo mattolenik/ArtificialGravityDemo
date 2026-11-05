@@ -42,9 +42,9 @@ func _initialize() -> void:
 	# heights dry and saturated (the roof spans), per material.
 	b.materials = load("res://terrain/materials.tres")
 	var m := b.material_table()
-	check(m.size() == 80 and absf(m.decode_float(0) - tan(deg_to_rad(45.0))) < 1e-6 and absf(m.decode_float(4) - tan(deg_to_rad(70.0))) < 1e-5 \
-			and absf(m.decode_float(16) - tan(deg_to_rad(35.0))) < 1e-6 and m.decode_float(32) == 1.25 and absf(m.decode_float(44) - 1.6) < 1e-6 \
-			and m.decode_float(48) == 4.0 and m.decode_float(52) == 6.0 and m.decode_float(64) == 1.5 and m.decode_float(68) == 2.0, "box material table")
+	check(m.size() == 100 and absf(m.decode_float(0) - tan(deg_to_rad(45.0))) < 1e-6 and absf(m.decode_float(4) - tan(deg_to_rad(70.0))) < 1e-5 \
+			and absf(m.decode_float(20) - tan(deg_to_rad(35.0))) < 1e-6 and m.decode_float(40) == 1.25 and absf(m.decode_float(52) - 1.6) < 1e-6 \
+			and m.decode_float(60) == 5.0 and m.decode_float(64) == 6.0 and m.decode_float(80) == 1.5 and m.decode_float(84) == 2.0, "box material table")
 	# The activity bookkeeping without a device: a flagged slot's brick (in the origin's frame) is active with
 	# quiet 0, settles after settle_time, at most MAX_ACTIVE_BRICKS at once.
 	b.tool_params = ToolParams.new()

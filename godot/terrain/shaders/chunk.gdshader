@@ -10,7 +10,7 @@ varying vec2 theta_z;
 #include "res://terrain/shaders/light_bar.gdshaderinc"
 
 // Albedo by material id, from materials.tres.
-uniform vec4 material_color[4] : source_color;
+uniform vec4 material_color[5] : source_color;
 uniform float dtheta;
 // Station-local z of row 0.
 uniform float z0;
@@ -47,7 +47,7 @@ void fragment() {
 	if (h_v >= box_top || h_v < box_bottom) {
 		discard;
 	}
-	int id = clamp(int(round(COLOR.r * 255.0)), 0, 3);
+	int id = clamp(int(round(COLOR.r * 255.0)), 0, 4);
 	bool pile = COLOR.g > 0.5;
 	id = pile ? 0 : id;
 	float th = theta_z.x < 0.0 ? theta_z.x + TAU : theta_z.x;

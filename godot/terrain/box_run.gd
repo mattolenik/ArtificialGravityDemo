@@ -25,7 +25,7 @@
 ## edge: a 5 m³ deposit two cells inside the box's far edge along z settles with its volume kept within 0.1 %
 ##    over the box of 8 (the sand parks dirt at the edge, none crosses).
 ## cave (C, flat ground): scoops at one spot until the pit is over 3 m deep: once settled no loose lies over
-##    the box of 6 (the walls stand under the 4 m free height); scoops on until it is over 5 m deep: once
+##    the box of 6 (the walls stand under the 5 m free height); scoops on until it is over 6 m deep: once
 ##    settled loose lies there (the walls caved), no wall step stands more than 2 cm over max(stand · 1.02 · w,
 ##    free), and the annulus between the first and last surfaces over the box of 8 is the hand's solid plus
 ##    the loose's within 0.1 % (each by the swell).
@@ -549,7 +549,7 @@ func _cave(c: Vector2i) -> bool:
 	var loose1 := _vol(_read("loose"), _read("surface"), inner)
 	print("cave: %d scoops at %s, the pit %.2f m deep; settled in %.2f s; loose over the box of 6 %.6f m³ (the walls stand under %.1f m)" % [scoops, c, depth1, waited1, loose1, free])
 	_report("a pit under the free height keeps its walls", depth1 > 3.0 and waited1 >= 0.0 and loose1 <= 1e-3)
-	while top - _f(_read("surface"), c) < 5.0 and scoops < 24:
+	while top - _f(_read("surface"), c) < free + 1.0 and scoops < 24:
 		await _scoop(c)
 		await _frames(15)
 		scoops += 1
@@ -564,7 +564,7 @@ func _cave(c: Vector2i) -> bool:
 			scoops, depth2, waited2, loose2, lost, _tools.held - h0, loose2, got, _residual("box cave", got, lost), wall])
 	# A third of a metre of wall over the free height stands after the cave-in at a 1.5 m ball's pit (0.26 m
 	# seen; 0.02 held at a 1 m ball's): the slice 3 follow-ups doc carries it.
-	_report("a pit over the free height caves to the stand slope, conserved", depth2 > 5.0 and waited2 >= 0.0 and loose2 > 0.1 and absf(got - lost) <= 1e-3 * lost and wall <= 0.3)
+	_report("a pit over the free height caves to the stand slope, conserved", depth2 > free and waited2 >= 0.0 and loose2 > 0.1 and absf(got - lost) <= 1e-3 * lost and wall <= 0.3)
 	return true
 
 

@@ -43,11 +43,11 @@ layout(set = 0, binding = 9, std430) restrict readonly buffer Active { int activ
 // Per material: tan of the stand slope dry and saturated, the swell, the free height dry and saturated
 // (VoxelBox.material_table).
 layout(set = 0, binding = 10, std430) restrict readonly buffer Materials {
-	float stand_dry[4];
-	float stand_sat[4];
-	float swell[4];
-	float free_dry[4];
-	float free_sat[4];
+	float stand_dry[5];
+	float stand_sat[5];
+	float swell[5];
+	float free_dry[5];
+	float free_sat[5];
 } mt;
 layout(set = 0, binding = 11, r32f) uniform restrict readonly image2D w_surface;
 layout(set = 0, binding = 12, r32f) uniform restrict readonly image2D w_bedrock;

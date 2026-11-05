@@ -75,7 +75,8 @@ const STEP := 1.0 / 60.0
 const MAX_STEPS := 2
 const MAX_ACTIVE_BRICKS := 64
 const SAND_PC_BYTES := 96
-const MATERIALS_BYTES := 80
+const PILLAR := 4
+const MATERIALS_BYTES := 100
 
 var params: WorldParams
 var window: TerrainWindow
@@ -280,12 +281,12 @@ func _notification(what: int) -> void:
 func material_table() -> PackedByteArray:
 	var b := PackedByteArray()
 	b.resize(MATERIALS_BYTES)
-	for m in 4:
+	for m in 5:
 		b.encode_float(4 * m, tan(deg_to_rad(materials.stable_slope_dry[m])))
-		b.encode_float(16 + 4 * m, tan(deg_to_rad(materials.stable_slope_saturated[m])))
-		b.encode_float(32 + 4 * m, materials.swell_factor[m])
-		b.encode_float(48 + 4 * m, materials.roof_span_dry[m])
-		b.encode_float(64 + 4 * m, materials.roof_span_saturated[m])
+		b.encode_float(20 + 4 * m, tan(deg_to_rad(materials.stable_slope_saturated[m])))
+		b.encode_float(40 + 4 * m, materials.swell_factor[m])
+		b.encode_float(60 + 4 * m, materials.roof_span_dry[m])
+		b.encode_float(80 + 4 * m, materials.roof_span_saturated[m])
 	return b
 
 

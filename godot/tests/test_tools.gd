@@ -20,6 +20,8 @@ func _initialize() -> void:
 	var m: MaterialSet = load("res://terrain/materials.tres")
 	check(m.swell_factor[0] == 1.25 and m.repose_dry[0] == 35.0 and m.repose_damp[0] == 40.0 and m.repose_saturated[0] == 20.0 \
 			and is_equal_approx(m.porosity[0], 0.4) and m.wetting_distance[0] == 3.0 and m.wetting_distance[2] == 0.0, "dirt and rock from materials.tres")
+	check(m.names.size() == 5 and m.names[4] == "pillar" and m.swell_factor[4] == 1.0 and m.roof_span_dry[0] == 5.0 and m.roof_span_dry[4] == 20.0 and m.stable_slope_dry[4] == 90.0, "the fifth material and dirt's 5 m free height")
+	check(VoxelBox.PILLAR == 4 and VoxelColumn.PILLAR == 4 and VoxelBox.MATERIALS_BYTES == 100, "the pillar's id and the table's size")
 	# push_dir: the axis-quantised (theta, z) direction of a station-space velocity at angle theta.
 	check(Tools.push_dir(Vector3(1, 0, 0), 0.0) == Vector2i(1, 0), "spinward at theta 0 is +x")
 	check(Tools.push_dir(Vector3(0, 1, 0), 0.5 * PI) == Vector2i(1, 0), "spinward at theta pi/2 is +y")

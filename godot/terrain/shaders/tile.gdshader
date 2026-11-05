@@ -7,7 +7,7 @@ shader_type spatial;
 // Material id / 255 (0 dirt, 1 clay, 2 rock, 3 rock face, coloured as rock).
 uniform sampler2D material_tex : filter_nearest;
 // Albedo by material id, from materials.tres.
-uniform vec4 material_color[4] : source_color;
+uniform vec4 material_color[5] : source_color;
 // Cells around the circumference, to wrap the speckle's cell index at theta = 0.
 uniform int n_theta;
 // Pore water held, 0 dry to 1 full.
@@ -60,7 +60,7 @@ void fragment() {
 		discard;
 	}
 	ivec2 k = ivec2(round(local_cell));
-	int id = clamp(int(round(texelFetch(material_tex, window_texel(k), 0).r * 255.0)), 0, 3);
+	int id = clamp(int(round(texelFetch(material_tex, window_texel(k), 0).r * 255.0)), 0, 4);
 	// A pile of loose dirt: dirt's colour, darker, rougher and more speckled than the ground under it.
 	bool pile = loose_v > 0.02;
 	id = pile ? 0 : id;
