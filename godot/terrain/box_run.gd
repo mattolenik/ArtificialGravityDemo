@@ -81,8 +81,8 @@
 ##    settled the packed column's first gap is a pillar's (gap_material0 == 4), and rays along the tunnel a
 ##    quarter metre over the gap's bottom and under its top meet the drawn post at its cell (box_mesh.glsl
 ##    bridges it into the floor's and the roof's partial voxels; a shot, user://debug/box_pillar.png); the same
-##    again takes it away (no pillar voxel left, the gap's material 0 once settled, the gap kept); place_pillar
-##    on the open ground
+##    again takes it away (no pillar voxel left, the gap's material 0 once settled, the gap kept); a hit 2 m
+##    under the tunnel's floor (solid over it, as a wall's) stands nothing; place_pillar on the open ground
 ##    3 cells antispinward of the pit stands nothing (no roof within the reach). Tools.pillars counts each.
 ## The GPU time of the unpack lists (the first fill, the moves, the reload) and the pack lists is printed
 ## against 0.5 ms per brick allocated.
@@ -1148,7 +1148,8 @@ func _pillar(c: Vector2i) -> bool:
 	_tunnel_floor = floor_h
 	var stood := await _stand_in_tunnel(c)
 	_tunnel_floor = kept
-	print("pillar: the pit %.2f m deep, settled in %.2f s; the tunnel's chunk meshed in %.2f s; the player stood in it: %s" % [depth, waited, landed, stood])
+	print("pillar: the pit %.2f m deep (bedrock %.2f m under its floor), settled in %.2f s; the tunnel's chunk meshed in %.2f s; the player stood in it: %s" % [
+			depth, floor_h - _f(_read("bedrock_top"), c), waited, landed, stood])
 	_report("a tunnel under a pit five scoops deep, the player in it", depth >= 4.2 and waited >= 0.0 and landed >= 0.0 and stood)
 	var cell := c + Vector2i(0, 4)
 	var bottom := _terrain.box.bottom()
@@ -1205,6 +1206,13 @@ func _pillar(c: Vector2i) -> bool:
 	var gap := _f(_read("gap_top0"), cell) - _f(_read("gap_bottom0"), cell)
 	print("pillar: taken away: no pillar voxel and its voxels air %s; settled in %.2f s, the first gap %.2f m of material %d; pillars %d" % [gone, waited, gap, gm, _tools.pillars])
 	_report("a second P takes the pillar away", gone and waited >= 0.0 and gm == 0 and gap > 2.0 and _tools.pillars == n0)
+	# A hit with solid over it (2 m under the tunnel's floor, as a wall's hit nudged into it) stands nothing: the
+	# floor the op passes is at most two voxels, not the 2 m up to the tunnel's air.
+	_tools.pillar(Cyl.position((cell.x + 0.5) * p.dtheta(), -p.length / 2.0 + cell.y + 0.5, gb - 2.0, p.radius))
+	await _frames(10)
+	var buried: bool = (pillar_of.call(_column_vox(_stack(cell), cell)) as Array[int]).is_empty()
+	print("pillar: 2 m under the tunnel's floor at %s: no pillar voxel %s; pillars %d" % [cell, buried, _tools.pillars])
+	_report("P on a hit with solid over it stands nothing", buried and _tools.pillars == n0)
 	var open := c + Vector2i(-3, 0)
 	_tools.place_pillar(open)
 	await _frames(10)

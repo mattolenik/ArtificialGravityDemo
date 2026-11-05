@@ -41,10 +41,12 @@
 // 6 pillar, one column (the disc of radius 0) over the voxels from the reach under the hit's height to the
 //   reach over it: a run of pillar voxels holding the hit's voxel or one next to it (the hit on a drawn post:
 //   box_mesh.glsl bridges it into the floor's and the roof's partial voxels) becomes air, counted negative in
-//   counter[0] (in millionths, as the other counts); with none, the floor's voxels from the hit's up (holding solid or loose, not a roof's hanging
-//   underside) are passed and the air over them up to the first voxel holding solid (the roof) becomes solid
-//   ONE of material PILLAR, counted in counter[0]. No roof within the range (the air runs out of it, into an
-//   unallocated brick or onto loose with nothing solid in it): nothing changes, counted 0. No mass moves.
+//   counter[0] (in millionths, as the other counts); with none, the floor's voxels from the hit's up (holding
+//   solid or loose, not a roof's hanging underside; at most the hit's voxel and the one over it, so a wall's
+//   hit stands nothing) are passed and the air over them up to the first voxel holding solid (the roof)
+//   becomes solid ONE of material PILLAR, counted in counter[0]. No roof within the range (the air runs out of
+//   it, into an unallocated brick or onto loose with nothing solid in it) or rock under the air (nothing
+//   stands on rock): nothing changes, counted 0. No mass moves.
 // A changed voxel flags its column dirty and wakes its brick.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
@@ -451,15 +453,19 @@ void pillar_column(ivec2 cxz) {
 			n--;
 		}
 	} else {
+		// The floor is at most the hit's voxel and the one over it (the hit nudged into a floor, then the floor's
+		// partial): a wall's hit meets solid past that and stands nothing.
 		int i = h;
-		while (i < pc.extent.z && c.ok[i] && c.fs[i] + c.fl[i] > 0u && ((c.w1[i] >> 24) & 1u) == 0u) {
+		while (i <= h + 1 && i < pc.extent.z && c.ok[i] && c.fs[i] + c.fl[i] > 0u && ((c.w1[i] >> 24) & 1u) == 0u) {
 			i++;
 		}
 		int lo = i;
 		while (i < pc.extent.z && c.ok[i] && c.fs[i] + c.fl[i] == 0u) {
 			i++;
 		}
-		if (i == lo || i == pc.extent.z || !c.ok[i] || c.fs[i] == 0u) {
+		// Nothing stands on rock (the voxel under the post holding rock or rock face).
+		bool on_rock = lo > 0 && (c.w1[lo - 1] & 255u) >= 2u && c.fs[lo - 1] > 0u;
+		if (i == lo || i == pc.extent.z || !c.ok[i] || c.fs[i] == 0u || on_rock) {
 			return;
 		}
 		for (int k = lo; k < i; k++) {
