@@ -42,6 +42,10 @@ extends Resource
 @export var tamp_land_speed := 2.0
 ## The share of the excess over repose a slump step moves.
 @export var slump_rate := 0.125
+## Seconds a roof voxel the span rule finds unsupported sags before it fails (its strain, box_sand.glsl).
+@export var sag_time := 2.0
+## How far the roof's underside is drawn down at full strain, in m (box_mesh.glsl).
+@export var sag_depth := 0.6
 ## The share of a water surface difference a flow step moves.
 @export var flow_rate := 0.125
 ## The share of a cell's loose that flowing water carries per step, at full transport_depth outflow.

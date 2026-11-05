@@ -33,7 +33,10 @@
 //   stability's voxel does, slump_rate of its solid a step (all of it once that is under move_eps): `out`'s high
 //   half, arriving as loose times the swell in its own room (half at most; a quarter when the voxel over it
 //   may fail into it too) and the room of the air voxel under it (a quarter at most). The apply pass's face rule
-//   wakes the brick over a failing top voxel, so a chimney climbs across bricks.
+//   wakes the brick over a failing top voxel, so a chimney climbs across bricks. Before it fails, a roof voxel
+//   sags: its strain (the top seven bits of its second word, not saved) rises sag_rate a step, slower near
+//   the cantilever limit (so a room's middle goes first and the sag is a bowl), falls back while it holds,
+//   keeps its brick active, and box_mesh.glsl draws its underside lower by it; the cut begins at full strain.
 // 1 apply: each voxel takes its arrivals, loses what it sent, stores the result when it changed, flags its
 //   column dirty (the pack writes the window) and, over move_eps, its brick active (bit 0 of its slot) and the
 //   brick across any face it lies on (bit 1).
@@ -106,6 +109,8 @@ layout(push_constant, std430) uniform Params {
 	float slump_rate;
 	vec3 repose_tan;       // dirt's repose, dry, damp and saturated
 	float move_eps;        // m; the smallest change that flags activity
+	float sag_rate;        // the share of a roof voxel's strain a step adds (a step over ToolParams.sag_time)
+	float pad0, pad1, pad2;
 } pc;
 
 #include "box_column.glslh"
@@ -517,7 +522,23 @@ void span_column(ivec2 cxz, int kz0, int my_ai) {
 				holds = length(o) <= reach && dot(o, dir) < 0.0 && support(ivec3(cxz + ivec2(dx, dz), k - 1));
 			}
 		}
+		// The strain before the failure (the header): the top seven bits of the second word.
+		uint w1 = pool[me.addr + 1];
+		int strain = int(w1 >> 25);
+		int rate = max(1, int(round(pc.sag_rate * 127.0)));
 		if (holds) {
+			if (strain > 0) {
+				pool[me.addr + 1] = (w1 & 0x01FFFFFFu) | (uint(max(strain - rate, 0)) << 25);
+				dirty[me.col] = 1u;
+				atomicOr(box_stats[me.e], 1u);
+			}
+			continue;
+		}
+		if (strain < 127) {
+			float ease = best > reach ? 1.0 : clamp((best - 0.5 * reach) / (0.5 * reach), 0.25, 1.0);
+			pool[me.addr + 1] = (w1 & 0x01FFFFFFu) | (uint(min(strain + max(1, int(round(float(rate) * ease))), 127)) << 25);
+			dirty[me.col] = 1u;
+			atomicOr(box_stats[me.e], 1u);
 			continue;
 		}
 		// The failure, as the slope stability's: slump_rate of the solid a step (the whole of it once that is
@@ -545,6 +566,9 @@ void span_column(ivec2 cxz, int kz0, int my_ai) {
 		cut = min(cut, uint(floor((float(room) + float(share) * 0.25 * float(room_dn)) / (float(share) * swell - 1.0))));
 		if (cut == 0u) {
 			continue;
+		}
+		if (cut == fs[y]) {
+			pool[me.addr + 1] = w1 & 0x01FFFFFFu;  // the last of it goes: no strain on the air left
 		}
 		uint gain = uint(roundh(float(cut) * swell));
 		uint dn = min(gain - min(gain, uint((room + int(cut)) / share)), uint(room_dn / QUARTER));

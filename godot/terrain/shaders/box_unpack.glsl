@@ -14,7 +14,7 @@
 // whole column again, its dirty flag dropped since the window is the truth).
 // A voxel is two uints at ((y * 16 + z) * 16 + x) * 2 of its brick: solid | loose << 16 (fractions of
 // 65535), material | compaction << 8 | saturation << 16 | flags << 24 (bit 0: the solid hangs from the
-// ceiling, box_column.glslh).
+// ceiling, box_column.glslh; bits 25 to 31 the strain of a sagging roof voxel, box_sand.glsl's, never saved).
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 

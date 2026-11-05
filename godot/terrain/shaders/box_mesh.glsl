@@ -38,7 +38,8 @@ layout(push_constant, std430) uniform Params {
 	float z0;          // station-local z of row 0
 	int max_verts;
 	int max_inds;
-	float pad0, pad1, pad2;
+	float sag_depth;   // m the underside of a roof voxel at full strain is drawn lower (ToolParams.sag_depth)
+	float pad1, pad2;
 } pc;  // 64 bytes
 
 const float ONE = 65535.0;
@@ -98,6 +99,13 @@ float fill_at(ivec3 ck) {
 	return min((float(w0 & 0xFFFFu) + float(w0 >> 16)) / ONE, 1.0);
 }
 
+// The strain of the voxel at ck, 0 to 1 (box_sand.glsl's span rule: an unsupported roof voxel sags before
+// it fails): its run's underside is drawn lower by it times pc.sag_depth.
+float strain_at(ivec3 ck) {
+	int a = word_at(ck);
+	return a >= 0 ? float(pool[a + 1] >> 25) / 127.0 : 0.0;
+}
+
 // The solid runs of ck's column over the seven voxels around it, as heights from ck's floor: a full voxel
 // is solid throughout, a partial one holds its fill as a slab at its floor (where the voxel under it holds
 // at least as much as the one over it) or at its roof, and slabs that touch merge into one run. A pillar
@@ -105,7 +113,8 @@ float fill_at(ivec3 ck) {
 // voxels reaches down to the top of the floor's slab in a partial voxel directly under it and up to the
 // underside of the roof's slab in a partial voxel directly over it, so the drawn post meets the floor and the
 // roof (the stored pillar holds whole voxels only); `post` tells whether that reach covers ck's centre (its
-// sample is drawn as pillar). Air next to the post leaves its end at the voxel boundary.
+// sample is drawn as pillar). Air next to the post leaves its end at the voxel boundary. A run's underside
+// is drawn lower by its bottom voxel's strain times sag_depth: the sag before a roof fails.
 const int RUNS = 7;
 int column_runs(ivec3 ck, out float starts[RUNS], out float ends[RUNS], out bool post) {
 	float g[RUNS + 2];
@@ -142,6 +151,7 @@ int column_runs(ivec3 ck, out float starts[RUNS], out float ends[RUNS], out bool
 			b = lo + 2.0 - g[i + 1];
 			post = post || (i == 3 && g[4] < 0.5);
 		}
+		a -= strain_at(ck + ivec3(0, 0, i - 4)) * pc.sag_depth;
 		if (n > 0 && ends[n - 1] >= a - 1e-4) {
 			ends[n - 1] = b;
 		} else {

@@ -83,7 +83,9 @@
 ##    tops within a quarter voxel (the underside's partial voxel may drop; the loose there printed); then dug
 ##    to a room 4 m wider than the free height and as long (balls on the tunnel's line and every 1.5 cells
 ##    either side, every half metre from 2 m along): within 20 s the ground (surface and loose) over the room's middle 2 x 2
-##    cells sinks by a metre or more (the roof fell and the chimney reached the surface), and once settled the
+##    cells sinks by a metre or more (the roof fell and the chimney reached the surface; before the ground
+##    sinks, the roof's underside over the middle, met by a ray up from the floor after every ball and every half
+##    second after, drops 0.3 m or more from where it was first met: the span rule's strain, drawn as a sag), and once settled the
 ##    loose gained over the box of 10 round the room, the shovel's included, is the solid lost there times the
 ##    swell within 0.1 %.
 ## pillar (the middle of a chunk 216 cells past the spawn): the tunnel phase's pit, six scoops deep (_pit to
@@ -1248,14 +1250,56 @@ func _roof(c: Vector2i) -> bool:
 	var lost0 := _swelled_loss(cells, sw, cb0, ct0)
 	var loose0 := _vol(lw, sw, cells) + _gap_loose(cells)
 	var held0 := _tools.held
+	# The roof's underside over the room's middle: the lowest vertex of the chunk's mesh over the cell that faces
+	# down, between the window's roof there (the first gap's top) and a metre under it, while that roof stays
+	# where it was once the room reached the cell: the sag the mesh draws before the roof fails (a failing
+	# column reads as fill anywhere; the loose the half-cut walls slump onto the floor faces up). A ray would
+	# not do: the trimesh ignores its back faces, so none cast from inside the roof meets the underside.
+	# State in an array: a lambda copies a float.
+	var roof_h := func(gt: float) -> float:
+		var st_: Dictionary = _terrain.box.touched.get(VoxelBox.chunk_of_cell(mid), {})
+		if st_.is_empty() or st_.node == null or st_.node._mesh.mesh == null:
+			return INF
+		var arrays: Array = st_.node._mesh.mesh.surface_get_arrays(0)
+		var vs: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var ns: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+		var cth := (mid.x + 0.5) * p.dtheta()
+		var cz := -p.length / 2.0 + mid.y + 0.5
+		var low := INF
+		for i in vs.size():
+			var v := vs[i]
+			var h := Cyl.height_of(v, p.radius)
+			if h > gt - 1.0 and h < gt + 0.6 and absf(v.z - cz) <= 0.6 and absf(wrapf(Cyl.theta_of(v) - cth, -PI, PI)) * (p.radius - gt) <= 0.6 \
+					and ns[i].dot(-Vector3(v.x, v.y, 0.0).normalized()) < -0.3:
+				low = minf(low, h)
+		return low
+	# The roof first met, the lowest met, the window's roof once it read the same twice (the rows after the
+	# first cut the middle column's edge), and the last reading.
+	var st: Array[float] = [INF, INF, INF, -INF]
+	var sample := func() -> void:
+		var gt: float = _f(_read("gap_top0"), mid)
+		if not is_finite(st[2]):
+			if gt > floor_h + 2.0 and absf(gt - st[3]) <= 0.01:
+				st[2] = gt
+			st[3] = gt
+			return
+		if absf(gt - st[2]) > 0.05:
+			return
+		var r: float = roof_h.call(st[2])
+		if r > st[2] - 1.0 and r < st[2] + 0.6:
+			st[0] = r if not is_finite(st[0]) else st[0]
+			st[1] = minf(st[1], r)
 	for x: float in rows:
 		for k in nk:
 			await _scoop_at(aim.call(x, 2.0 + 0.5 * k, 1.5))
+			if k % 5 == 0:
+				sample.call()
 	var start := Time.get_ticks_msec()
 	var sank := 0.0
 	var fell := -1.0
 	while Time.get_ticks_msec() - start < 20000:
 		await _frames(30)
+		sample.call()
 		var sf := _read("surface")
 		var lf := _read("loose")
 		sank = INF
@@ -1264,6 +1308,7 @@ func _roof(c: Vector2i) -> bool:
 		if sank >= 1.0:
 			fell = (Time.get_ticks_msec() - start) / 1000.0
 			break
+	var sag := st[0] - st[1]
 	var waited3 := await _settled(c + Vector2i(1, 3), 20.0)
 	var s2 := _read("surface")
 	var l2 := _read("loose")
@@ -1281,6 +1326,9 @@ func _roof(c: Vector2i) -> bool:
 	print("roof: over the box of %d the solid lost (swelled) %.6f m³ for %.6f held + %.6f loose = %.6f (%+.4f %%)" % [
 			wide + 2, lost, _tools.held - held0, got - (_tools.held - held0), got, _residual("roof", got, lost)])
 	_report("a room too wide climbs to a sinkhole, conserved", fell >= 0.0 and waited3 >= 0.0 and absf(got - lost) <= 1e-3 * lost)
+	print("roof: the underside over the room's middle was first met %.2f m over the floor (the window's roof there %.2f) and sagged %.3f m at most while that roof stood" % [
+			st[0] - floor_h, st[2] - floor_h, sag])
+	_report("a room too wide sags before its roof falls", fell >= 0.0 and sag >= 0.3)
 	return true
 
 

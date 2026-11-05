@@ -75,7 +75,7 @@ const SUB := 8
 const STEP := 1.0 / 60.0
 const MAX_STEPS := 2
 const MAX_ACTIVE_BRICKS := 64
-const SAND_PC_BYTES := 96
+const SAND_PC_BYTES := 112
 ## The pillar's material id: a post the player places, never dug, never failing, saved as a gap of its own.
 const PILLAR := 4
 const MATERIALS_BYTES := 100
@@ -495,6 +495,7 @@ func _sand_pc(brick: Vector3i, active: int, mode: int) -> PackedByteArray:
 	b.encode_float(84, tan(deg_to_rad(materials.repose_damp[0])))
 	b.encode_float(88, tan(deg_to_rad(materials.repose_saturated[0])))
 	b.encode_float(92, tool_params.move_eps)
+	b.encode_float(96, STEP / tool_params.sag_time)
 	return b
 
 
@@ -940,7 +941,7 @@ static func voxel(brick: PackedByteArray, x: int, y: int, z: int) -> Dictionary:
 	var w0 := brick.decode_u32(o)
 	var w1 := brick.decode_u32(o + 4)
 	return {"solid": w0 & 0xFFFF, "loose": w0 >> 16, "material": w1 & 255, "compaction": (w1 >> 8) & 255,
-			"saturation": (w1 >> 16) & 255, "hanging": (w1 >> 24) & 1}
+			"saturation": (w1 >> 16) & 255, "hanging": (w1 >> 24) & 1, "strain": w1 >> 25}
 
 
 ## The 32 m chunk of a cell.
@@ -1156,4 +1157,5 @@ func _mesh_pc(ch: Vector2i, mode: int) -> PackedByteArray:
 	b.encode_float(40, -params.length / 2.0)
 	b.encode_s32(44, MESH_VERTS)
 	b.encode_s32(48, MESH_INDS)
+	b.encode_float(52, tool_params.sag_depth)
 	return b
