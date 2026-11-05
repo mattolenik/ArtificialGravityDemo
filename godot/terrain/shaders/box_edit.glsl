@@ -38,9 +38,10 @@
 //   its ground, or a sheet over 1 cm) refuses the tick with counter[1] set: the window's bore pumps instead.
 // 5 spoil: `amount` m³ of fresh loose spread evenly over the disc's columns, each share onto the column's
 //   stack top as the push places it (the voxel over a full top), counted in counter[0].
-// 6 pillar, one column (the disc of radius 0) over the voxels from the hit's height to its reach over it: the
-//   voxels there holding a pillar become air, counted negative in counter[0] (in millionths, as the other
-//   counts); with none, the floor's voxels from the hit's up (holding solid or loose, not a roof's hanging
+// 6 pillar, one column (the disc of radius 0) over the voxels from the reach under the hit's height to the
+//   reach over it: a run of pillar voxels holding the hit's voxel or one next to it (the hit on a drawn post:
+//   box_mesh.glsl bridges it into the floor's and the roof's partial voxels) becomes air, counted negative in
+//   counter[0] (in millionths, as the other counts); with none, the floor's voxels from the hit's up (holding solid or loose, not a roof's hanging
 //   underside) are passed and the air over them up to the first voxel holding solid (the roof) becomes solid
 //   ONE of material PILLAR, counted in counter[0]. No roof within the range (the air runs out of it, into an
 //   unallocated brick or onto loose with nothing solid in it): nothing changes, counted 0. No mass moves.
@@ -431,18 +432,26 @@ void spoil_column(ivec2 cxz) {
 	store_column(cxz, c);
 }
 
+bool is_pillar(Column c, int i) {
+	return i >= 0 && i < pc.extent.z && c.fs[i] > 0u && int(c.w1[i] & 255u) == PILLAR;
+}
+
 void pillar_column(ivec2 cxz) {
 	Column c = load_column(cxz);
+	int h = int(floor(pc.centre.z)) - pc.first.z;
+	int s = is_pillar(c, h) ? h : (is_pillar(c, h + 1) ? h + 1 : (is_pillar(c, h - 1) ? h - 1 : -1));
 	int n = 0;
-	for (int i = 0; i < pc.extent.z; i++) {
-		if (c.fs[i] > 0u && int(c.w1[i] & 255u) == PILLAR) {
+	if (s >= 0) {
+		while (is_pillar(c, s - 1)) {
+			s--;
+		}
+		for (int i = s; is_pillar(c, i); i++) {
 			c.fs[i] = 0u;
 			c.w1[i] &= 0x00FF0000u;
 			n--;
 		}
-	}
-	if (n == 0) {
-		int i = 0;
+	} else {
+		int i = h;
 		while (i < pc.extent.z && c.ok[i] && c.fs[i] + c.fl[i] > 0u && ((c.w1[i] >> 24) & 1u) == 0u) {
 			i++;
 		}

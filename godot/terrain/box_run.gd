@@ -78,8 +78,11 @@
 ## pillar (the middle of a chunk 216 cells past the spawn): the tunnel phase's pit, five scoops deep (_pit to
 ##    4.2 m), and its tunnel, the player stood two cells in; Tools.place_pillar at the tunnel's cell 4 along
 ##    +z: the voxels between the floor's and the roof's hold solid FRACTION_ONE of material 4, one run, and once
-##    settled the packed column's first gap is a pillar's (gap_material0 == 4); the same again takes it away
-##    (no pillar voxel left, the gap's material 0 once settled, the gap kept); place_pillar on the open ground
+##    settled the packed column's first gap is a pillar's (gap_material0 == 4), and rays along the tunnel a
+##    quarter metre over the gap's bottom and under its top meet the drawn post at its cell (box_mesh.glsl
+##    bridges it into the floor's and the roof's partial voxels; a shot, user://debug/box_pillar.png); the same
+##    again takes it away (no pillar voxel left, the gap's material 0 once settled, the gap kept); place_pillar
+##    on the open ground
 ##    3 cells antispinward of the pit stands nothing (no roof within the reach). Tools.pillars counts each.
 ## The GPU time of the unpack lists (the first fill, the moves, the reload) and the pack lists is printed
 ## against 0.5 ms per brick allocated.
@@ -1171,6 +1174,28 @@ func _pillar(c: Vector2i) -> bool:
 			vox.solid[ks[-1] + 1] if ks else -1, waited, _f(_read("gap_bottom0"), cell), _f(_read("gap_top0"), cell), gm, _tools.pillars])
 	_report("a pillar stands from a tunnel's floor to its roof, whole voxels of material 4", stands)
 	_report("the pack stores the pillar as its gap's material", waited >= 0.0 and gm == VoxelBox.PILLAR and _tools.pillars == n0 + 1)
+	# The drawn post meets the floor and the roof (box_mesh.glsl's column_runs bridges the partial voxels): rays
+	# along +z from the player's cell, a quarter metre over the gap's bottom and under its top, meet it at its
+	# cell's near face, not the tunnel's end past it.
+	await _frames(20)
+	var along := func(h: float) -> float:
+		var from := Cyl.position((cell.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 2.5, h, p.radius)
+		var ray := PhysicsRayQueryParameters3D.create(_station.global_transform * from, _station.global_transform * (from + Vector3(0, 0, 4)))
+		ray.exclude = [_player.get_rid()]
+		var hit := _station.get_world_3d().direct_space_state.intersect_ray(ray)
+		return _station.to_local(hit.position).z - (-p.length / 2.0 + c.y) if not hit.is_empty() else INF
+	var gb := _f(_read("gap_bottom0"), cell)
+	var gt := _f(_read("gap_top0"), cell)
+	var foot: float = along.call(gb + 0.25)
+	var head: float = along.call(gt - 0.25)
+	print("pillar: rays along +z meet the post %.2f and %.2f cells past the pit's cell, at %.2f over the floor %.2f and %.2f under the roof %.2f" % [foot, head, gb + 0.25, gb, gt - 0.25, gt])
+	_report("the drawn post meets the floor and the roof", absf(foot - 4.0) <= 0.5 and absf(head - 4.0) <= 0.5)
+	# The post from behind the player (user://debug/box_pillar.png): _shot pitches the camera 300 down, so it is
+	# raised 250 first to look along the tunnel a little down.
+	_face(Vector3(0, 0, 1))
+	_player.look(Vector2(0.0, -250.0))
+	await _shot("box_pillar")
+	_player.look(Vector2(0.0, 250.0))
 	_tools.place_pillar(cell)
 	await _frames(1)
 	var after := _column_vox(_stack(cell), cell)

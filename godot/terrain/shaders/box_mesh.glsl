@@ -50,6 +50,7 @@ const int EDGE0 = -2;
 const int EDGES = 20;
 const int BRICKS_UP = 6;  // VoxelBox.BRICKS_UP
 const int K = 16 * BRICKS_UP;
+const uint PILLAR = 4u;  // VoxelBox.PILLAR
 
 struct S {
 	float d;      // the density: the signed distance along the column to the run's nearer end, solid where positive
@@ -75,6 +76,18 @@ int word_at(ivec3 ck) {
 	return bi * 4096 * 2 + ((v.z * 16 + v.y) * 16 + v.x) * 2;
 }
 
+// What fills the voxel at ck (fill_at), and whether it holds a pillar (full solid of material PILLAR).
+float fill_pillar(ivec3 ck, out bool pillar) {
+	int a = word_at(ck);
+	pillar = false;
+	if (a < 0) {
+		return 0.0;
+	}
+	uint w0 = pool[a];
+	pillar = (w0 & 0xFFFFu) == 0xFFFFu && (pool[a + 1] & 255u) == PILLAR;
+	return min((float(w0 & 0xFFFFu) + float(w0 >> 16)) / ONE, 1.0);
+}
+
 // What fills the voxel at ck, solid plus loose, 0 to 1.
 float fill_at(ivec3 ck) {
 	int a = word_at(ck);
@@ -87,13 +100,22 @@ float fill_at(ivec3 ck) {
 
 // The solid runs of ck's column over the seven voxels around it, as heights from ck's floor: a full voxel
 // is solid throughout, a partial one holds its fill as a slab at its floor (where the voxel under it holds
-// at least as much as the one over it) or at its roof, and slabs that touch merge into one run.
+// at least as much as the one over it) or at its roof, and slabs that touch merge into one run. A pillar
+// counts as air in that choice (a roof's partial over a post keeps its slab at its roof), and a run of pillar
+// voxels reaches down to the top of the floor's slab in a partial voxel directly under it and up to the
+// underside of the roof's slab in a partial voxel directly over it, so the drawn post meets the floor and the
+// roof (the stored pillar holds whole voxels only); `post` tells whether that reach covers ck's centre (its
+// sample is drawn as pillar). Air next to the post leaves its end at the voxel boundary.
 const int RUNS = 7;
-int column_runs(ivec3 ck, out float starts[RUNS], out float ends[RUNS]) {
+int column_runs(ivec3 ck, out float starts[RUNS], out float ends[RUNS], out bool post) {
 	float g[RUNS + 2];
+	float gs[RUNS + 2];
+	bool p[RUNS + 2];
 	for (int i = 0; i < RUNS + 2; i++) {
-		g[i] = fill_at(ck + ivec3(0, 0, i - 4));
+		g[i] = fill_pillar(ck + ivec3(0, 0, i - 4), p[i]);
+		gs[i] = p[i] ? 0.0 : g[i];
 	}
+	post = false;
 	int n = 0;
 	for (int i = 1; i <= RUNS; i++) {
 		float f = g[i];
@@ -104,11 +126,21 @@ int column_runs(ivec3 ck, out float starts[RUNS], out float ends[RUNS]) {
 		float a = lo;
 		float b = lo + 1.0;
 		if (f < 1.0) {
-			if (g[i - 1] >= g[i + 1]) {
+			if (gs[i - 1] >= gs[i + 1]) {
 				b = lo + f;
 			} else {
 				a = lo + 1.0 - f;
 			}
+		}
+		// The partial under a post holds its slab at its floor (the post counts as air over it); the one over it
+		// at its roof while something fills the voxel over that (else its slab sits on the post already).
+		if (p[i] && !p[i - 1] && g[i - 1] > 0.0 && g[i - 1] < 1.0) {
+			a = lo - 1.0 + g[i - 1];
+			post = post || (i == 5 && g[4] < 0.5);
+		}
+		if (p[i] && i + 2 < RUNS + 2 && !p[i + 1] && g[i + 1] > 0.0 && g[i + 1] < 1.0 && gs[i + 2] > 0.0) {
+			b = lo + 2.0 - g[i + 1];
+			post = post || (i == 3 && g[4] < 0.5);
 		}
 		if (n > 0 && ends[n - 1] >= a - 1e-4) {
 			ends[n - 1] = b;
@@ -140,7 +172,8 @@ S sample_at(ivec3 ck) {
 	r.df = f - 0.5;
 	float starts[RUNS];
 	float ends[RUNS];
-	int n = column_runs(ck, starts, ends);
+	bool post;
+	int n = column_runs(ck, starts, ends, post);
 	const float c = 0.5;
 	bool solid = false;
 	r.up = -2.5;
@@ -184,6 +217,10 @@ S sample_at(ivec3 ck) {
 		float fl = float(w0 >> 16);
 		r.mat = fl > fs ? 0u : (pool[a + 1] & 255u);
 		r.loose = fl / max(fs + fl, 1.0);
+	}
+	if (post) {
+		r.mat = PILLAR;
+		r.loose = 0.0;
 	}
 	return r;
 }

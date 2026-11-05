@@ -18,8 +18,8 @@
 ## player is kept out of the dirt: a dump moves a player nearer its point than the
 ## pile's repose radius plus PILE_MARGIN out to that distance, and every physics tick a player whose feet the
 ## collider has risen over (the dump on their cell, a pile slumping under them) is stood on it. The pillar: P
-## at the shovel's aim (not a wall's level ball) stands a pillar from the floor there up to the roof over it
-## within the free height and a metre (VoxelBox.pillar), or takes away the pillar standing there; refused
+## at the crosshair's hit within shovel_reach stands a pillar from the floor there up to the roof over it
+## within the free height and a metre (VoxelBox.pillar), or takes away the post it hits; refused
 ## within a cell of the player's own cell (it would stand through the player).
 class_name Tools
 extends Node
@@ -103,10 +103,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if key.keycode == KEY_P:
 		var hit := shovel_hit()
-		if hit.is_empty() or hit.level:
+		if hit.is_empty():
 			print("Nowhere to stand a pillar")
 		elif not terrain.sim.stalled():
-			pillar(hit.position)
+			# A quarter metre into what the crosshair hit: a drawn post's face lies on its cell's edge.
+			pillar(hit.surface - hit.normal * 0.25)
 		return
 	if key.keycode == KEY_Y:
 		if held <= 0.0:
@@ -168,7 +169,7 @@ func pickup() -> void:
 
 ## The shovel's aim: the crosshair's hit on the colliders (the player's body excluded) within shovel_reach of
 ## the player, as station-local `position` and `normal`, a wall hit lifted onto the level floor (the header,
-## `level` true); empty when there is none.
+## `level` true), and the hit itself as `surface`; empty when there is none.
 func shovel_hit() -> Dictionary:
 	var hit := DebugEdit.look_hit(get_viewport(), [player.get_rid()])
 	if hit.is_empty():
@@ -177,6 +178,7 @@ func shovel_hit() -> Dictionary:
 	var at := terrain.station.to_local(player.global_position)
 	var up := terrain.station.global_basis.inverse() * player.up_direction
 	var q := terrain.station.to_local(hit.position)
+	var surface := q
 	var n: Vector3 = terrain.station.global_basis.inverse() * hit.normal
 	var feet_h := Cyl.height_of(foot_point(at, up), R)
 	var h := Cyl.height_of(q, R)
@@ -186,7 +188,7 @@ func shovel_hit() -> Dictionary:
 		q = Cyl.position(Cyl.theta_of(q), q.z, _floor + terrain.tool_params.scoop_ball, R)
 	if q.distance_to(at) > terrain.tool_params.shovel_reach:
 		return {}
-	return {"position": q, "normal": n, "level": level}
+	return {"position": q, "normal": n, "level": level, "surface": surface}
 
 
 ## The floor of a wall scoop's ball, in m of height: `prev` (the last one's) while the feet at feet_h stand within
@@ -252,13 +254,13 @@ func pillar(at: Vector3) -> void:
 
 
 ## The drivers' P aimed at a cell: the floor under its centre a ray down from over the player's head meets (a
-## tunnel's floor under its roof), else the cell's collider point.
+## tunnel's floor under its roof), else that ray's start (inside a post, or inside the ground).
 func place_pillar(c: Vector2i) -> void:
 	var p := terrain.params
 	var me := terrain.station.to_local(player.global_position)
 	var probe := Cyl.position((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5, Cyl.height_of(me, p.radius) + 0.9, p.radius)
 	var ground := terrain.ground_below(probe, 3.0)
-	pillar(ground if ground.is_finite() else surface_point(c))
+	pillar(ground if ground.is_finite() else probe)
 
 
 ## A pillar's voxel span from the hit at hit_h m of height: the voxel holding the hit to the voxel `reach` m
