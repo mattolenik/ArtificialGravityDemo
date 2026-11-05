@@ -124,8 +124,8 @@ int material_at(float h, Col c) {
 }
 
 // The solid runs of a column, top-down: top, bottom (the last BELOW), the loose on the top in m and its
-// compaction (VoxelColumn.runs_of); a gap resting on the one under it (an air gap over a pillar's) keeps its
-// loose as a run of no height.
+// compaction (VoxelColumn.runs_of); a gap resting on the one under it (an air gap over a pillar's) makes a run
+// of no height, which keeps its loose and the pillar's top as a run's bottom.
 struct Runs {
 	float t[5], b[5], l[5];
 	int c[5];
@@ -156,7 +156,7 @@ Runs runs_of(Col c) {
 	float lm = c.loose;
 	int cm = c.comp;
 	for (int g = 0; g < ng; g++) {
-		if (gt[g] < top || (gt[g] == top && lm > 0.0)) {
+		if (gt[g] <= top) {
 			r.t[r.n] = top;
 			r.b[r.n] = gt[g];
 			r.l[r.n] = lm;

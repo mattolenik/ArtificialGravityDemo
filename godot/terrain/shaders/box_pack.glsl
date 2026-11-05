@@ -292,10 +292,28 @@ void main() {
 			j++;
 		}
 		if (j == ng - 1) {
-			// ponytail: no two air gaps in a row (two pillars standing alone): the four lowest stay, those over
-			// them fill solid (VoxelColumn.pack).
-			ng = 4;
-			break;
+			// ponytail: no two air gaps in a row (pillars standing alone): the lowest pillar's gap becomes air,
+			// joined with the air gaps resting on it and under it, their loose summed: nothing is gained or lost
+			// (VoxelColumn.pack).
+			int q = 0;
+			while (hm[q] != PILLAR) {
+				q++;
+			}
+			int lo = q > 0 && hm[q - 1] == 0 && ht[q - 1] == hb[q] ? q - 1 : q;
+			int hi = q + 1 < ng && hm[q + 1] == 0 && hb[q + 1] == ht[q] ? q + 1 : q;
+			for (int i = lo + 1; i <= hi; i++) {
+				hl[lo] += hl[i];
+			}
+			ht[lo] = ht[hi];
+			hm[lo] = 0;
+			for (int i = lo + 1; i + hi - lo < ng; i++) {
+				hb[i] = hb[i + hi - lo];
+				ht[i] = ht[i + hi - lo];
+				hl[i] = hl[i + hi - lo];
+				hm[i] = hm[i + hi - lo];
+			}
+			ng -= hi - lo;
+			continue;
 		}
 		float mid = 0.5 * (ht[j] + hb[j + 1]);
 		hl[j] += hl[j + 1] + (hb[j + 1] - ht[j]) * (pc.R - mid) * pc.swell[material_at(mid, col)];

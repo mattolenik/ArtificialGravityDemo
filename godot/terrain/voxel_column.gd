@@ -47,7 +47,8 @@ static func material_at(h: float, col: Dictionary) -> int:
 
 ## The solid runs of col as [top, bottom, loose_m, compaction] top-down, the last reaching BELOW; a run's loose
 ## is the m lying on its top (the window's loose for the top run, gap_loose[g] under gap g). A gap resting on
-## the one under it (an air gap over a pillar's) keeps its loose as a run of no height.
+## the one under it (an air gap over a pillar's) makes a run of no height, which keeps its loose and the pillar's
+## top as a run's bottom.
 static func runs_of(col: Dictionary) -> Array:
 	var gaps := []
 	for g in 4:
@@ -59,7 +60,7 @@ static func runs_of(col: Dictionary) -> Array:
 	var loose_m: float = col.loose
 	var comp: int = col.compaction
 	for g in gaps:
-		if g[0] < top or (g[0] == top and loose_m > 0.0):
+		if g[0] <= top:
 			out.append([top, g[0], loose_m, comp])
 		if g[1] < top:
 			top = g[1]
@@ -228,10 +229,21 @@ static func pack(vox: Dictionary, k0: int, col: Dictionary, swell := PackedFloat
 		while i >= 0 and (gaps[i][3] == PILLAR or gaps[i + 1][3] == PILLAR):
 			i -= 1
 		if i < 0:
-			# ponytail: no two air gaps in a row (two pillars standing alone in the column): the four lowest gaps
-			# stay and those over them fill solid; a fifth gap field would keep them.
-			gaps = gaps.slice(gaps.size() - 4)
-			break
+			# ponytail: no two air gaps in a row (pillars standing alone in the column): the lowest pillar's gap
+			# becomes air, joined with the air gaps resting on it and under it, their loose summed on the joined
+			# floor (a pillar has no mass: nothing is gained or lost); a fifth gap field would keep the pillar.
+			var pg := gaps.size() - 1
+			while gaps[pg][3] != PILLAR:
+				pg -= 1
+			var lo_g := pg + 1 if pg + 1 < gaps.size() and gaps[pg + 1][3] == 0 and gaps[pg + 1][1] == gaps[pg][0] else pg
+			var hi_g := pg - 1 if pg > 0 and gaps[pg - 1][3] == 0 and gaps[pg - 1][0] == gaps[pg][1] else pg
+			var v := 0.0
+			for g in range(hi_g, lo_g + 1):
+				v += gaps[g][2] * (R - gaps[g][0])
+			gaps[hi_g] = [gaps[lo_g][0], gaps[hi_g][1], v / (R - gaps[lo_g][0]), 0]
+			for g in range(lo_g, hi_g, -1):
+				gaps.remove_at(g)
+			continue
 		var a: Array = gaps[i]
 		var b: Array = gaps[i + 1]
 		var mid: float = 0.5 * (b[1] + a[0])

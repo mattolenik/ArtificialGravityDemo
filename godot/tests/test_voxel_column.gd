@@ -132,6 +132,13 @@ func _initialize() -> void:
 	for k0 in [390, 395, 403, 406]:
 		pb = VoxelColumn.pack(VoxelColumn.unpack(tall_post, k0, 8), k0, tall_post)
 		check(same_heights(pb, tall_post) and pb.gap_material[0] == VoxelColumn.PILLAR, "a pillar at the range's edge from %d %s" % [k0, pb])
+	# A pillar on its floor with air over it to the roof (the air gap resting on the pillar's, no loose) keeps both
+	# gaps exactly from a range wholly under, across either edge of, over or around the pillar.
+	var stood := col(420.0, 0.0, [[405.0, 407.0, 0.0], [403.0, 405.0, 0.0]]); stood.gap_material[1] = VoxelColumn.PILLAR
+	for k0 in [380, 390, 396, 404, 410]:
+		var n := 40 if k0 == 380 else 8
+		pb = VoxelColumn.pack(VoxelColumn.unpack(stood, k0, n), k0, stood)
+		check(same_heights(pb, stood) and pb.gap_material == stood.gap_material, "a pillar under air from %d %s" % [k0, pb])
 	# Between a floor's partial and a roof's: one gap, the partials dirt, the whole voxels between them pillar.
 	var propped := col(410.0); propped.gap_bottom[0] = f32(402.3); propped.gap_top[0] = f32(406.6); propped.gap_material[0] = VoxelColumn.PILLAR
 	pv = VoxelColumn.unpack(propped, 380, 40)
@@ -163,6 +170,26 @@ func _initialize() -> void:
 	check(p.overflow and p.gap_bottom[0] == 411.0 and p.gap_top[0] == 412.0 and p.gap_bottom[1] == 406.0 and p.gap_top[1] == 409.0 \
 			and p.gap_loose[1] == f32(swell5[0] * (R - 407.5) / (R - 406.0)) and p.gap_material[1] == 0 \
 			and p.gap_bottom[2] == 403.0 and p.gap_top[2] == 405.0 and p.gap_material[2] == VoxelColumn.PILLAR and p.gap_bottom[3] == 401.0 and p.gap_top[3] == 402.0, "pillar overflow %s" % p)
+	# test_pillar_alone: air 401..402 with loose, a pillar on the floor at 404..406, air 406..407, a pillar 407..408,
+	# air 408..409 with loose: no two air gaps in a row, so the lowest pillar's gap becomes air with the air resting
+	# on it (404..407): four gaps, the dirt and the loose unchanged.
+	vox = VoxelColumn.unpack(col(418.0), 400, 20)
+	for k in [1, 4, 5, 6, 7, 8]: vox.solid[k] = 0
+	for k in [4, 5, 7]: vox.solid[k] = ONE; vox.material[k] = VoxelColumn.PILLAR
+	vox.loose[1] = roundi(0.3 * ONE); vox.loose[8] = roundi(0.2 * ONE)
+	p = VoxelColumn.pack(vox, 400, col(418.0))
+	var after := VoxelColumn.unpack(p, 400, 20)
+	var dirt := [0, 0]
+	var loose_v := [0.0, 0.0]
+	for k in 20:
+		for j in 2:
+			var w: Dictionary = [vox, after][j]
+			dirt[j] += w.solid[k] if w.material[k] != VoxelColumn.PILLAR else 0
+			loose_v[j] += w.loose[k] * (R - 400 - k - 0.5)
+	check(p.overflow and p.gap_bottom[0] == 408.0 and p.gap_top[0] == 409.0 and p.gap_material[0] == 0 and p.gap_bottom[1] == 407.0 and p.gap_top[1] == 408.0 \
+			and p.gap_material[1] == VoxelColumn.PILLAR and p.gap_bottom[2] == 404.0 and p.gap_top[2] == 407.0 and p.gap_material[2] == 0 \
+			and p.gap_bottom[3] == 401.0 and p.gap_top[3] == 402.0 and p.surface == 418.0, "pillars alone %s" % p)
+	check(dirt[0] == dirt[1] and absf(loose_v[0] - loose_v[1]) < 4.0 * R, "pillars alone keep the dirt %s and the loose %s" % [dirt, loose_v])
 	# test_material_at: rock to bedrock_top inclusive, clay through the lens, dirt elsewhere.
 	check(VoxelColumn.material_at(299.0, plain) == 2 and VoxelColumn.material_at(300.0, plain) == 2 and VoxelColumn.material_at(300.5, plain) == 0, "rock")
 	check(VoxelColumn.material_at(350.0, plain) == 1 and VoxelColumn.material_at(352.0, plain) == 1 and VoxelColumn.material_at(352.01, plain) == 0 and VoxelColumn.material_at(349.9, plain) == 0, "clay and dirt")
