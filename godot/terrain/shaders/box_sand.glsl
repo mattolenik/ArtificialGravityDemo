@@ -500,4 +500,4 @@ void main() {
 		apply_column(cxz, kz0, my_e, pc.active_i);
 	}
 }
-// (A change to box_column.glslh does not reimport this file: edit it to pick the include up.)
+// (A change to box_column.glslh does not reimport this file: touch it to pick the include up.)

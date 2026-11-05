@@ -2,12 +2,15 @@
 #version 450
 
 // The voxel box's exit side (VoxelBox.pack_dirty): one invocation per box column; a column flagged dirty is
-// packed back into its window fields by VoxelColumn.pack's rule (box_column.glslh): the runs of its 64 voxels
+// packed back into its window fields by VoxelColumn.pack's rule (box_column.glslh): the runs of its K voxels
 // (a full voxel over its whole height; a partial flagged hanging, or under solid with air under it, from
-// its ceiling, any other on its floor), merged with the stored runs outside the box's range, the
-// loose on each run converted back to m over the run's top; the top run's top to surface, its loose and
-// compaction, the gaps under it (at most four: beyond that the lowest two merge, the sliver between turned to loose on the merged gap's floor by its swell,
-// counted in box_stats[SLOTS]), the material by the strata at the surface, the clay clamped to it, edit_mask
+// its ceiling, any other on its floor; pillar voxels runs of their own), merged with the stored runs and
+// pillars outside the box's range, the loose on each run converted back to m over the run's top; the top
+// run's top to surface, its loose and compaction, the gaps under it (a pillar run a gap of the pillar's
+// material over the air around it its unpack refills, any other air beside it an air gap; at most four:
+// beyond that the lowest two air gaps in a row merge, the sliver between turned to loose on the merged gap's
+// floor by its swell, counted in box_stats[SLOTS]), the material by the strata at the surface, the clay
+// clamped to it, edit_mask
 // set, the tile's activity flagged in the edit layer's stats (so the settle pack saves it); the dirty flag
 // cleared. A column the box never changed is never packed, so its heights stay bit for bit.
 
@@ -68,50 +71,103 @@ layout(push_constant, std430) uniform Params {
 
 #include "box_column.glslh"
 
-// The runs found so far, bottom-up: bottom, top, loose volume per unit dtheta (m²), compaction. At most
-// RUNS; a ninth drops run 1 (the lowest gap merges with the one over it).
+// The runs found so far, bottom-up: bottom, top, loose volume per unit dtheta (m²), compaction, pillar. At
+// most RUNS; a ninth drops the lowest dirt run over run 0 (the gaps either side of it merge).
 const int RUNS = 8;
 float pb[RUNS];
 float pt[RUNS];
 float pl[RUNS];
 int pcm[RUNS];
+bool pp[RUNS];
 int np = 0;
 bool over = false;
 
+// The gaps, bottom-up: bottom, top, loose volume per unit dtheta (m²) on the floor, material. A pillar run
+// gives at most an air gap under it and its own.
+const int GAPS = 2 * RUNS;
+float hb[GAPS];
+float ht[GAPS];
+float hl[GAPS];
+int hm[GAPS];
+int ng = 0;
+
 Col col;  // the column being packed (read in main)
 
-void drop_run_1() {
-	// The solid between the two lowest gaps (run 1) becomes loose on the merged gap's floor by its material's
-	// swell: nothing is lost (VoxelColumn.pack).
-	float mid = 0.5 * (pb[1] + pt[1]);
-	pl[0] += pl[1] + (pt[1] - pb[1]) * (pc.R - mid) * pc.swell[material_at(mid, col)];
-	for (int i = 1; i < np - 1; i++) {
+void drop_run() {
+	// The solid of the lowest dirt run over run 0 becomes loose on the run under it by its material's swell:
+	// nothing is lost (VoxelColumn.pack merges the same two gaps at the end). ponytail: beside a pillar run this
+	// merges an air gap with a pillar's, where the CPU merges the next air gaps in a row; only a column of nine
+	// runs gets here, and one of nothing but pillars over run 0 turns one to loose.
+	int j = 1;
+	while (j < np - 2 && pp[j]) {
+		j++;
+	}
+	float mid = 0.5 * (pb[j] + pt[j]);
+	pl[j - 1] += pl[j] + (pt[j] - pb[j]) * (pc.R - mid) * pc.swell[material_at(mid, col)];
+	for (int i = j; i < np - 1; i++) {
 		pb[i] = pb[i + 1];
 		pt[i] = pt[i + 1];
 		pl[i] = pl[i + 1];
 		pcm[i] = pcm[i + 1];
+		pp[i] = pp[i + 1];
 	}
 	np--;
 	over = true;
 }
 
-// A solid piece [b, t]: merged onto the last run when it touches it (taking the piece's loose and
-// compaction: a stored run's, when its top is past the range), else a new run.
-void push(float b, float t, float l, int c) {
-	if (np > 0 && pt[np - 1] == b) {
+// A solid piece [b, t]: merged onto the last run when it touches it and is of its kind (taking the piece's
+// loose and compaction: a stored run's, when its top is past the range), else a new run.
+void push(float b, float t, float l, int c, bool p) {
+	if (np > 0 && pt[np - 1] == b && pp[np - 1] == p) {
 		pt[np - 1] = t;
 		pl[np - 1] = l;
 		pcm[np - 1] = c;
 		return;
 	}
 	if (np == RUNS) {
-		drop_run_1();
+		drop_run();
 	}
 	pb[np] = b;
 	pt[np] = t;
 	pl[np] = l;
 	pcm[np] = c;
+	pp[np] = p;
 	np++;
+}
+
+// The part of the stored pillar gap topping at `top` (a stored run's bottom) within [lo, hi], as a pillar
+// piece (VoxelColumn._pillar_piece).
+void push_pillar(float top, float lo, float hi) {
+	for (int g = 0; g < 4; g++) {
+		float b = max(col.gb[g], lo);
+		if (col.gm[g] == PILLAR && col.gt[g] == top && b < min(top, hi)) {
+			push(b, min(top, hi), 0.0, 0, true);
+		}
+	}
+}
+
+// Whether the air from a run's top a up to a pillar's bottom b is what the unpack refills under the pillar: no
+// whole voxel of it, or every voxel from a's up holding loose, full but the last (VoxelColumn._refills).
+bool refills(float a, float b, int k0) {
+	if (ceil(a) >= b) {
+		return true;
+	}
+	for (int k = int(floor(a)); k < int(b); k++) {
+		int i = k - k0;
+		if (i < 0 || i >= K || loo[i] == 0u || (k + 1 < int(b) && sol[i] + loo[i] < uint(ONE))) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// A gap [b, t] onto the list, v its loose volume, m its material.
+void gap(float b, float t, float v, int m) {
+	hb[ng] = b;
+	ht[ng] = t;
+	hl[ng] = v;
+	hm[ng] = m;
+	ng++;
 }
 
 bool solid_at(Runs r, float h) {
@@ -158,6 +214,7 @@ void main() {
 			uint w1 = pool[v + 1];
 			sol[i] = w0 & 0xFFFFu;
 			loo[i] = w0 >> 16;
+			mat[i] = w1 & 255u;
 			cmp[i] = (w1 >> 8) & 255u;
 			flg[i] = (w1 >> 24) & 1u;
 		}
@@ -167,8 +224,9 @@ void main() {
 	float fk0 = float(k0);
 	float topk = float(k0 + K);
 	for (int j = st.n - 1; j >= 0; j--) {
+		push_pillar(st.b[j], BELOW, fk0);
 		if (st.b[j] < fk0) {
-			push(st.b[j], min(st.t[j], fk0), st.t[j] < fk0 ? st.l[j] * (pc.R - st.t[j]) : 0.0, st.c[j]);
+			push(st.b[j], min(st.t[j], fk0), st.t[j] < fk0 ? st.l[j] * (pc.R - st.t[j]) : 0.0, st.c[j], false);
 		}
 	}
 	bool solid_under = np > 0 && pt[np - 1] == fk0;
@@ -180,19 +238,24 @@ void main() {
 		float h = float(k0 + i);
 		float ff = float(f) / ONE;
 		if (f == uint(ONE)) {
-			push(h, h + 1.0, 0.0, 0);
+			push(h, h + 1.0, 0.0, 0, mat[i] == uint(PILLAR));
 		} else if (flg[i] == 0u && ((i > 0 && sol[i - 1] > 0u) || (i == 0 && solid_under))) {
-			push(h, h + ff, 0.0, 0);
+			push(h, h + ff, 0.0, 0, false);
 		} else if (flg[i] != 0u || (i + 1 < K && sol[i + 1] > 0u) || (i + 1 == K && solid_at(st, topk))) {
-			push(h + 1.0 - ff, h + 1.0, 0.0, 0);
+			push(h + 1.0 - ff, h + 1.0, 0.0, 0, false);
 		} else {
-			push(h, h + ff, 0.0, 0);
+			push(h, h + ff, 0.0, 0, false);
 		}
 	}
 	for (int j = st.n - 1; j >= 0; j--) {
+		push_pillar(st.b[j], topk, -BELOW);
 		if (st.t[j] > topk) {
-			push(max(st.b[j], topk), st.t[j], st.l[j] * (pc.R - st.t[j]), st.c[j]);
+			push(max(st.b[j], topk), st.t[j], st.l[j] * (pc.R - st.t[j]), st.c[j], false);
 		}
+	}
+	// ponytail: a pillar with no ground over it has no place in the column form: it goes (VoxelColumn.pack).
+	while (pp[np - 1]) {
+		np--;
 	}
 	for (int i = 0; i < K; i++) {
 		if (loo[i] == 0u) {
@@ -208,20 +271,55 @@ void main() {
 			pcm[r] = int(cmp[i]);
 		}
 	}
-	while (np - 1 > 4) {
-		drop_run_1();
+	for (int i = 1; i < np; i++) {
+		if (pp[i] && refills(pt[i - 1], pb[i], k0)) {
+			gap(pt[i - 1], pt[i], pl[i - 1], PILLAR);
+		} else if (pp[i]) {
+			gap(pt[i - 1], pb[i], pl[i - 1], 0);
+			gap(pb[i], pt[i], 0.0, PILLAR);
+		} else if (pp[i - 1] && pl[i - 1] == 0.0 && floor(pb[i]) <= pt[i - 1]) {
+			ht[ng - 1] = pb[i];
+		} else {
+			gap(pt[i - 1], pb[i], pl[i - 1], 0);
+		}
+	}
+	while (ng > 4) {
+		over = true;
+		// The lowest two air gaps in a row merge (a pillar's never does), the solid between them loose on the
+		// merged gap's floor by its material's swell: nothing is lost (VoxelColumn.pack).
+		int j = 0;
+		while (j < ng - 1 && (hm[j] == PILLAR || hm[j + 1] == PILLAR)) {
+			j++;
+		}
+		if (j == ng - 1) {
+			// ponytail: no two air gaps in a row (two pillars standing alone): the four lowest stay, those over
+			// them fill solid (VoxelColumn.pack).
+			ng = 4;
+			break;
+		}
+		float mid = 0.5 * (ht[j] + hb[j + 1]);
+		hl[j] += hl[j + 1] + (hb[j + 1] - ht[j]) * (pc.R - mid) * pc.swell[material_at(mid, col)];
+		ht[j] = ht[j + 1];
+		for (int i = j + 1; i < ng - 1; i++) {
+			hb[i] = hb[i + 1];
+			ht[i] = ht[i + 1];
+			hl[i] = hl[i + 1];
+			hm[i] = hm[i + 1];
+		}
+		ng--;
 	}
 	float surf = pt[np - 1];
 	imageStore(w_surface, t, vec4(surf));
 	imageStore(w_loose, t, vec4(pl[np - 1] / (pc.R - surf)));
 	imageStore(w_compaction, t, vec4(float(pcm[np - 1]) / 255.0));
-	vec4 gb = vec4(0.0), gt = vec4(0.0), gl = vec4(0.0);
+	vec4 gb = vec4(0.0), gt = vec4(0.0), gl = vec4(0.0), gm = vec4(0.0);
 	for (int g = 0; g < 4; g++) {
-		int idx = np - 2 - g;
+		int idx = ng - 1 - g;
 		if (idx >= 0) {
-			gb[g] = pt[idx];
-			gt[g] = pb[idx + 1];
-			gl[g] = pl[idx] / (pc.R - pt[idx]);
+			gb[g] = hb[idx];
+			gt[g] = ht[idx];
+			gl[g] = hl[idx] / (pc.R - hb[idx]);
+			gm[g] = float(hm[idx]) / 255.0;
 		}
 	}
 	imageStore(w_gap_bottom0, t, vec4(gb.x));
@@ -236,10 +334,10 @@ void main() {
 	imageStore(w_gap_loose1, t, vec4(gl.y));
 	imageStore(w_gap_loose2, t, vec4(gl.z));
 	imageStore(w_gap_loose3, t, vec4(gl.w));
-	imageStore(w_gap_material0, t, vec4(0.0));
-	imageStore(w_gap_material1, t, vec4(0.0));
-	imageStore(w_gap_material2, t, vec4(0.0));
-	imageStore(w_gap_material3, t, vec4(0.0));
+	imageStore(w_gap_material0, t, vec4(gm.x));
+	imageStore(w_gap_material1, t, vec4(gm.y));
+	imageStore(w_gap_material2, t, vec4(gm.z));
+	imageStore(w_gap_material3, t, vec4(gm.w));
 	float cb = min(col.cb, surf);
 	float ct = min(col.ct, surf);
 	imageStore(w_clay_bottom, t, vec4(cb));
@@ -249,8 +347,8 @@ void main() {
 	imageStore(w_mask, t, vec4(1.0));
 	// The chunk's word: packed, and touched when a gap lies within the box's range.
 	uint cw = 1u;
-	for (int i = 0; i < np - 1; i++) {
-		if (pt[i] < topk && pb[i + 1] > fk0) {
+	for (int i = 0; i < ng; i++) {
+		if (hb[i] < topk && ht[i] > fk0) {
 			cw |= 2u;
 		}
 	}
@@ -260,4 +358,4 @@ void main() {
 		atomicAdd(box_stats[SLOTS], 1u);
 	}
 }
-// (A change to box_column.glslh does not reimport this file: edit it to pick the include up.)
+// (A change to box_column.glslh does not reimport this file: touch it to pick the include up.)

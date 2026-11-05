@@ -1,7 +1,8 @@
 // The column rule of the tunnels design, shared by box_unpack.glsl and box_pack.glsl (VoxelColumn is the CPU
 // reference and the tests): a window column (the 27 fields at one texel) is solid runs separated by up to four
 // gaps; a box column is K voxels of 1 m from height index k0 up, each a solid and a loose fraction in
-// 0..ONE. Included after the shader's image declarations (w_* at the same names) and its push constants.
+// 0..ONE. A gap whose material byte is PILLAR holds a pillar: its whole voxels the floor's loose leaves empty
+// are solid pillar voxels. Included after the shader's image declarations (w_* at the same names) and its push constants.
 // Per-invocation globals hold one column's voxels: the includer fills or reads them. flg bit 0 (the voxel
 // word's top byte) marks a partial whose solid hangs from the voxel's ceiling (a run's underside): the pack and
 // the scoop place such a partial at the top, any other on its floor when solid lies under it.
@@ -14,6 +15,7 @@ const int K = 16 * BRICKS_UP;
 const int COLUMNS = 256;
 const int SLOTS = 256 * BRICKS_UP;
 const int VOXELS_PER_BRICK = 4096;
+const int PILLAR = 4;  // VoxelColumn.PILLAR
 
 uint sol[K];
 uint loo[K];
@@ -81,6 +83,7 @@ struct Col {
 	float s, bt, cb, ct, loose;
 	int mat, comp, sat;
 	float gb[4], gt[4], gl[4];
+	int gm[4];
 };
 
 Col read_col(ivec2 t) {
@@ -105,6 +108,10 @@ Col read_col(ivec2 t) {
 	c.gl[1] = imageLoad(w_gap_loose1, t).r;
 	c.gl[2] = imageLoad(w_gap_loose2, t).r;
 	c.gl[3] = imageLoad(w_gap_loose3, t).r;
+	c.gm[0] = int(byte(imageLoad(w_gap_material0, t).r));
+	c.gm[1] = int(byte(imageLoad(w_gap_material1, t).r));
+	c.gm[2] = int(byte(imageLoad(w_gap_material2, t).r));
+	c.gm[3] = int(byte(imageLoad(w_gap_material3, t).r));
 	return c;
 }
 
@@ -117,7 +124,8 @@ int material_at(float h, Col c) {
 }
 
 // The solid runs of a column, top-down: top, bottom (the last BELOW), the loose on the top in m and its
-// compaction (VoxelColumn.runs_of).
+// compaction (VoxelColumn.runs_of); a gap resting on the one under it (an air gap over a pillar's) keeps its
+// loose as a run of no height.
 struct Runs {
 	float t[5], b[5], l[5];
 	int c[5];
@@ -148,7 +156,7 @@ Runs runs_of(Col c) {
 	float lm = c.loose;
 	int cm = c.comp;
 	for (int g = 0; g < ng; g++) {
-		if (gt[g] < top) {
+		if (gt[g] < top || (gt[g] == top && lm > 0.0)) {
 			r.t[r.n] = top;
 			r.b[r.n] = gt[g];
 			r.l[r.n] = lm;
@@ -181,7 +189,8 @@ void clear_column() {
 
 // VoxelColumn.unpack: the column's voxels from k0 into the globals. A voxel's solid is its overlap with the
 // runs; each run's loose (m over (R - floor)) fills the voxels from the floor up by their annuli (R - k - 0.5);
-// a run topping under the range keeps its loose stored, loose past the range's top is dropped.
+// a run topping under the range keeps its loose stored, loose past the range's top is dropped; a pillar gap's
+// whole voxels the loose left empty are solid pillar.
 void column_voxels(Col c, int k0) {
 	clear_column();
 	Runs r = runs_of(c);
@@ -223,6 +232,18 @@ void column_voxels(Col c, int k0) {
 				v -= float(q) / ONE * (pc.R - float(k) - 0.5);
 			}
 			k++;
+		}
+	}
+	for (int g = 0; g < 4; g++) {
+		if (c.gm[g] != PILLAR) {
+			continue;
+		}
+		for (int k = max(int(ceil(c.gb[g])), k0); k < min(int(floor(c.gt[g])), k0 + K); k++) {
+			int i = k - k0;
+			if (sol[i] == 0u && loo[i] == 0u) {
+				sol[i] = uint(ONE);
+				mat[i] = uint(PILLAR);
+			}
 		}
 	}
 }

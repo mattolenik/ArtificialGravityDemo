@@ -121,6 +121,48 @@ func _initialize() -> void:
 	p = VoxelColumn.pack(vox, 400, col(411.0), PackedFloat32Array([1.2, 1.35, 1.6, 1.6]))
 	check(p.overflow and p.surface == 411.0 and p.gap_bottom[0] == 409.0 and p.gap_top[0] == 410.0 and p.gap_bottom[3] == 401.0 and p.gap_top[3] == 404.0 \
 			and p.gap_loose[3] == f32(1.2 * (R - 402.5) / (R - 401.0)), "cap %s" % p)
+	# test_pillar_round_trip: a gap 402..405 with the pillar material unpacks to pillar voxels and packs back exactly.
+	var post := col(410.0); post.gap_bottom[0] = 402.0; post.gap_top[0] = 405.0; post.gap_material[0] = VoxelColumn.PILLAR
+	var pv := VoxelColumn.unpack(post, 380, 40)
+	check(pv.material[22] == VoxelColumn.PILLAR and pv.solid[22] == VoxelColumn.FRACTION_ONE and pv.material[24] == VoxelColumn.PILLAR and pv.solid[21] == VoxelColumn.FRACTION_ONE and pv.material[21] == 0 and pv.solid[25] == VoxelColumn.FRACTION_ONE and pv.material[25] == 0, "a pillar gap is three pillar voxels between dirt")
+	var pb := VoxelColumn.pack(pv, 380, post)
+	check(pb.gap_bottom[0] == 402.0 and pb.gap_top[0] == 405.0 and pb.gap_material[0] == VoxelColumn.PILLAR and pb.surface == 410.0, "the pillar packs back as its gap")
+	# A pillar stored outside the box's range, or across either edge of it, keeps its gap.
+	var tall_post := col(420.0); tall_post.gap_bottom[0] = 402.0; tall_post.gap_top[0] = 405.0; tall_post.gap_material[0] = VoxelColumn.PILLAR
+	for k0 in [390, 395, 403, 406]:
+		pb = VoxelColumn.pack(VoxelColumn.unpack(tall_post, k0, 8), k0, tall_post)
+		check(same_heights(pb, tall_post) and pb.gap_material[0] == VoxelColumn.PILLAR, "a pillar at the range's edge from %d %s" % [k0, pb])
+	# Between a floor's partial and a roof's: one gap, the partials dirt, the whole voxels between them pillar.
+	var propped := col(410.0); propped.gap_bottom[0] = f32(402.3); propped.gap_top[0] = f32(406.6); propped.gap_material[0] = VoxelColumn.PILLAR
+	pv = VoxelColumn.unpack(propped, 380, 40)
+	check(pv.material[22] == 0 and pv.solid[22] < ONE and pv.material[23] == VoxelColumn.PILLAR and pv.material[25] == VoxelColumn.PILLAR and pv.material[26] == 0 and pv.hanging[26] == 1, "a propped roof's voxels %s" % [pv.material.slice(21, 28)])
+	pb = VoxelColumn.pack(pv, 380, propped)
+	check(same_heights(pb, propped) and pb.gap_material[0] == VoxelColumn.PILLAR and pb.gap_top[1] == 0.0, "a propped roof is one gap %s" % pb)
+	# test_pillar_split: air between the pillar and its floor's loose, and air with loose over it: three gaps, the
+	# pillar's sharing its bounds with the air gaps either side; they unpack to the same voxels.
+	pv = VoxelColumn.unpack(col(410.0), 380, 40)
+	for k in range(22, 27): pv.solid[k] = 0
+	pv.loose[22] = roundi(0.3 * ONE); pv.loose[26] = roundi(0.2 * ONE)
+	for k in [24, 25]: pv.solid[k] = ONE; pv.material[k] = VoxelColumn.PILLAR
+	pb = VoxelColumn.pack(pv, 380, col(410.0))
+	check(pb.gap_bottom[0] == 406.0 and pb.gap_top[0] == 407.0 and pb.gap_material[0] == 0 and absf(pb.gap_loose[0] - 0.2 * (R - 406.5) / (R - 406.0)) < 2.0 / ONE \
+			and pb.gap_bottom[1] == 404.0 and pb.gap_top[1] == 406.0 and pb.gap_material[1] == VoxelColumn.PILLAR and pb.gap_loose[1] == 0.0 \
+			and pb.gap_bottom[2] == 402.0 and pb.gap_top[2] == 404.0 and pb.gap_material[2] == 0 and absf(pb.gap_loose[2] - 0.3 * (R - 402.5) / (R - 402.0)) < 2.0 / ONE, "a split hollow %s" % pb)
+	var back_v := VoxelColumn.unpack(pb, 380, 40)
+	check(back_v.material[24] == VoxelColumn.PILLAR and back_v.material[25] == VoxelColumn.PILLAR and back_v.solid[23] == 0 and back_v.loose[23] == 0 and back_v.solid[26] == 0 \
+			and absi(back_v.loose[22] - pv.loose[22]) <= 2 and absi(back_v.loose[26] - pv.loose[26]) <= 2, "a split hollow unpacks %s %s" % [back_v.solid.slice(21, 28), back_v.loose.slice(21, 28)])
+	# test_pillar_overflow_merge: five gaps, the second a pillar: the merge drops a dirt sliver, never the pillar.
+	# Air 401..402, the pillar 403..405, air 406..407 and 408..409 stored, air 411..412 cut in the box: the lowest
+	# two air gaps in a row merge (406..409), the sliver 407..408 loose on its floor by dirt's swell.
+	var five := col(418.0, 0.0, [[401.0, 402.0, 0.0], [403.0, 405.0, 0.0], [406.0, 407.0, 0.0], [408.0, 409.0, 0.0]])
+	five.gap_material[1] = VoxelColumn.PILLAR
+	vox = VoxelColumn.unpack(five, 400, 20)
+	vox.solid[11] = 0
+	var swell5 := PackedFloat32Array([1.2, 1.35, 1.6, 1.6, 1.0])
+	p = VoxelColumn.pack(vox, 400, five, swell5)
+	check(p.overflow and p.gap_bottom[0] == 411.0 and p.gap_top[0] == 412.0 and p.gap_bottom[1] == 406.0 and p.gap_top[1] == 409.0 \
+			and p.gap_loose[1] == f32(swell5[0] * (R - 407.5) / (R - 406.0)) and p.gap_material[1] == 0 \
+			and p.gap_bottom[2] == 403.0 and p.gap_top[2] == 405.0 and p.gap_material[2] == VoxelColumn.PILLAR and p.gap_bottom[3] == 401.0 and p.gap_top[3] == 402.0, "pillar overflow %s" % p)
 	# test_material_at: rock to bedrock_top inclusive, clay through the lens, dirt elsewhere.
 	check(VoxelColumn.material_at(299.0, plain) == 2 and VoxelColumn.material_at(300.0, plain) == 2 and VoxelColumn.material_at(300.5, plain) == 0, "rock")
 	check(VoxelColumn.material_at(350.0, plain) == 1 and VoxelColumn.material_at(352.0, plain) == 1 and VoxelColumn.material_at(352.01, plain) == 0 and VoxelColumn.material_at(349.9, plain) == 0, "clay and dirt")
