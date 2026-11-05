@@ -114,6 +114,7 @@ const int FALL_SHARE = 4;
 const int SIDE_SHARE = 32;
 const int FAIL_SHARE = 2;
 const int UP_SHARE = 4;
+const int QUARTER = 4; // the own-room and down-send share, the same quarter as UP_SHARE
 const ivec2 DIR8[8] = ivec2[8](ivec2(1, 0), ivec2(0, 1), ivec2(-1, 0), ivec2(0, -1), ivec2(1, 1), ivec2(-1, 1), ivec2(-1, -1), ivec2(1, -1));
 
 // A voxel's whereabouts: ok with its pool address when it lies in an allocated brick of the box; e (its slot)
@@ -538,14 +539,14 @@ void span_column(ivec2 cxz, int kz0, int my_ai) {
 			room_dn = int(ONE) - int(w0 & 0xFFFFu) - int(w0 >> 16);
 		}
 		room_dn = int(float(room_dn) * vol(k - 1) / vol(k));
-		int share = fs[y] < quarter && s_up > 0u && m_up < 2u ? UP_SHARE : FAIL_SHARE;
+		int share = fs[y] < quarter && s_up > 0u && m_up < 2u ? QUARTER : FAIL_SHARE;
 		float swell = mt.swell[m];
 		cut = min(cut, uint(floor((float(room) + float(share) * 0.25 * float(room_dn)) / (float(share) * swell - 1.0))));
 		if (cut == 0u) {
 			continue;
 		}
 		uint gain = uint(roundh(float(cut) * swell));
-		uint dn = min(gain - min(gain, uint((room + int(cut)) / share)), uint(room_dn / UP_SHARE));
+		uint dn = min(gain - min(gain, uint((room + int(cut)) / share)), uint(room_dn / QUARTER));
 		uint here = gain - dn;
 		if (dn > 0u) {
 			send(vd, ai, k, k - 1, dn);

@@ -1470,7 +1470,7 @@ func _restart_mid_bore(s7: Vector2i) -> bool:
 	var shaft := _disc(s7, t.bore_radius)
 	var walls: Array[Vector2i] = []
 	walls.assign(box.filter(func(c: Vector2i) -> bool: return not shaft.has(c)))
-	# Under the free height (4 m of dry dirt) the uncased 2.7 m shaft stands: its walls give no loose.
+	# Under the free height (5 m of dry dirt) the uncased 2.7 m shaft stands: its walls give no loose.
 	var caved := _removed(surface, surface1, walls) * _terrain.materials.swell_factor[0]
 	var l1 := _vol(_read("loose"), surface1, box)
 	var w1 := _water()

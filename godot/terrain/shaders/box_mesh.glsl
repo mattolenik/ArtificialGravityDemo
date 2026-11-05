@@ -10,7 +10,7 @@
 //   any of the cube's twelve edges, a vertex at the mean of the crossings (a vertical edge's by the
 //   distances toward each other, a lateral edge's by the fill less a half: a wall's foot would bulge by the
 //   floor's nearness otherwise), bent into station space (Cyl.position), its normal from the density gradient (a cell spans
-//   (R - h) dtheta across), its material the densest corner's (loose counts as dirt) with that corner's loose
+//   (R - h) dtheta across), its material the densest corner's (loose counts as dirt; a post's sample is pillar, see column_runs) with that corner's loose
 //   share; the vertex's index into vmap (-1 for none).
 // 1 quads: one invocation per voxel centre and axis: an edge to the next centre that crosses the half gets
 //   two triangles over the four cells around it, wound clockwise seen from the air (Godot's front face).

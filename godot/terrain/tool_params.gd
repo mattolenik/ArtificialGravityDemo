@@ -30,7 +30,7 @@ extends Resource
 @export var shovel_reach := 4.0
 ## The radius in m of the ball the shovel scoops and dumps in the voxel box (1.5 m by the user's choice on
 ## 2026-11-04, over the design's 1: a scoop takes a half ball, about 9 m³; at 2 m no roofed tunnel can start
-## sideways from a pit under dirt's 4 m free height).
+## sideways from a pit under dirt's free height (4 m then, 5 m now)).
 @export var scoop_ball := 1.5
 ## Seconds between scoops while T is held.
 @export var scoop_interval := 0.25

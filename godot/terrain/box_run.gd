@@ -36,8 +36,8 @@
 ##    deep (the tunnel's roof a voxel thick, which the span rule lets stand; a ball on a cell's centre clears
 ##    that column and slivers of its neighbours: a walkable shaft or tunnel takes two scoops abreast), the
 ##    player teleported into it, 28 scoops along +z into its wall, two
-##    abreast, two rows high and every half metre (a tunnel 2 m wide, 2.5 m tall, 4 m long under a roof half a metre
-##    thick): the wall's chunk is touched and its mesh lands within 1 s (a ChunkMesh with faces) under an
+##    abreast, two rows high and every half metre (a tunnel 3 m wide and 3 m tall under a roof of the pit's
+##    depth less 3 m): the wall's chunk is touched and its mesh lands within 1 s (a ChunkMesh with faces) under an
 ##    unchanged surface (the roof top, rows 3 to 5: the rim's slivers fall by the span rule); the player walks
 ##    into the tunnel by W for 2 s with one more scoop at its end half way (a remesh under the feet): never held, the feet over ground every frame
 ##    (Terrain.covered, and a ray down from the feet within 0..0.5 m), at least 3 m walked; a shot from inside

@@ -4,7 +4,7 @@ shader_type spatial;
 #include "res://terrain/shaders/cylinder_tile.gdshaderinc"
 #include "res://terrain/shaders/light_bar.gdshaderinc"
 
-// Material id / 255 (0 dirt, 1 clay, 2 rock, 3 rock face, coloured as rock).
+// Material id / 255 (0 dirt, 1 clay, 2 rock, 3 rock face, coloured as rock, 4 pillar).
 uniform sampler2D material_tex : filter_nearest;
 // Albedo by material id, from materials.tres.
 uniform vec4 material_color[5] : source_color;

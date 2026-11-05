@@ -6,12 +6,11 @@
 // (a full voxel over its whole height; a partial flagged hanging, or under solid with air under it, from
 // its ceiling, any other on its floor; pillar voxels runs of their own), merged with the stored runs and
 // pillars outside the box's range, the loose on each run converted back to m over the run's top; the top
-// run's top to surface, its loose and compaction, the gaps under it (a pillar run a gap of the pillar's
-// material over the air around it its unpack refills, any other air beside it an air gap; at most four:
+// run's top to surface, its loose and compaction, the gaps under it (a pillar run becomes a gap of the pillar's
+// material, which the unpack refills, and any other air beside it an air gap; at most four:
 // beyond that the lowest two air gaps in a row merge, the sliver between turned to loose on the merged gap's
 // floor by its swell, counted in box_stats[SLOTS]), the material by the strata at the surface, the clay
-// clamped to it, edit_mask
-// set, the tile's activity flagged in the edit layer's stats (so the settle pack saves it); the dirty flag
+// clamped to it, edit_mask set, the tile's activity flagged in the edit layer's stats (so the settle pack saves it); the dirty flag
 // cleared. A column the box never changed is never packed, so its heights stay bit for bit.
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;

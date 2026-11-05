@@ -76,6 +76,7 @@ const STEP := 1.0 / 60.0
 const MAX_STEPS := 2
 const MAX_ACTIVE_BRICKS := 64
 const SAND_PC_BYTES := 96
+## The pillar's material id: a post the player places, never dug, never failing, saved as a gap of its own.
 const PILLAR := 4
 const MATERIALS_BYTES := 100
 

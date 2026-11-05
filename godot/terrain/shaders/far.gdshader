@@ -11,7 +11,7 @@ uniform sampler2D surface_tex : filter_nearest;
 uniform sampler2D water_tex : filter_nearest;
 uniform sampler2D bedrock_tex : filter_nearest;
 // Albedo by material id, from materials.tres: dirt where there is cover, rock where bedrock is bare.
-uniform vec4 material_color[4] : source_color;
+uniform vec4 material_color[5] : source_color;
 uniform float R;
 uniform float macro_dtheta;  // angle of one macro cell
 uniform float macro_cell;  // m along the axis
