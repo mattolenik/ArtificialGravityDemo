@@ -82,22 +82,38 @@ float fill_at(ivec3 ck) {
 	return min((float(w0 & 0xFFFFu) + float(w0 >> 16)) / ONE, 1.0);
 }
 
+// How far past the face of the voxel at ck toward dir (+1 up, -1 down) its run (solid where `solid` is 1,
+// air where 0) goes on before its end, within two voxels: a neighbour of the same stuff adds a voxel, a
+// partial one its share of that stuff (a partial voxel holds its fill as a slab against the full voxel it
+// continues, so a full voxel's end lies past the partial over or under it and an empty voxel's lies short of
+// the partial under or over it), an unlike one nothing.
+float run_past(ivec3 ck, int dir, float solid) {
+	float e = 0.0;
+	for (int i = 1; i <= 2; i++) {
+		float g = fill_at(ck + ivec3(0, 0, dir * i));
+		float share = solid > 0.5 ? g : 1.0 - g;
+		if (share < 1.0) {
+			return e + share;
+		}
+		e += 1.0;
+	}
+	return e;
+}
+
 // The voxel at ck: its density is the signed distance along the column from its centre to the nearest end of
-// a run, solid positive, within 1.5 voxels, from its own fill and its vertical neighbours' (a partial voxel
-// holds its fill as a slab against the full voxel it continues, so a full voxel's end lies past the partial
-// over or under it and an empty voxel's lies short of the partial under or over it). The ends then
+// its run, solid positive, within 2.5 voxels (run_past, two neighbours each way: a cell's eight corners on a
+// slope up to 45 degrees all read their exact distance, so its gradient normal is the slope's; with one
+// neighbour the far corners clipped at 1.5 and the normals checkered cell by cell). The ends then
 // interpolate to their exact heights and a planar slope meshes flat with one normal: the fill less a half
 // (the density before 2026-11-04) put every end in the middle third of its voxel, which meshed a slope as a
 // stair of bricks and lit it as one.
 S sample_at(ivec3 ck) {
 	float f = fill_at(ck);
-	float fu = fill_at(ck + ivec3(0, 0, 1));
-	float fd = fill_at(ck - ivec3(0, 0, 1));
 	S r;
 	if (f >= 1.0) {
-		r.d = 0.5 + min(fu, fd);
+		r.d = 0.5 + min(run_past(ck, 1, 1.0), run_past(ck, -1, 1.0));
 	} else if (f <= 0.0) {
-		r.d = -0.5 - min(1.0 - fu, 1.0 - fd);
+		r.d = -0.5 - min(run_past(ck, 1, 0.0), run_past(ck, -1, 0.0));
 	} else {
 		r.d = f - 0.5;
 	}
