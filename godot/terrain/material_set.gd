@@ -25,8 +25,8 @@ const ROCK_FACE := 3
 ## Longest unsupported roof of the solid, dry and saturated: the cohesion that lets a roof span, and (the
 ## tunnels design) the free height of the slope stability rule: a wall fails only when it is both steeper than
 ## the stable slope and taller than this, so a pit under it keeps its cut shape and a tunnel mouth keeps its lintel.
-@export var roof_span_dry := PackedFloat32Array([5.0, 6.0, 20.0, 20.0, 20.0])
-@export var roof_span_saturated := PackedFloat32Array([1.5, 2.0, 20.0, 20.0, 20.0])
+@export var roof_span_dry := PackedFloat32Array([10.0, 12.0, 20.0, 20.0, 20.0])
+@export var roof_span_saturated := PackedFloat32Array([3.0, 4.0, 20.0, 20.0, 20.0])
 ## Steepest face the solid holds, dry and saturated: the simulation fails a steeper face toward disturbed
 ## ground into loose (sim.glsl's slope stability; rock never). Dirt's dry slope is 45°, under the research
 ## doc's 60°, so a hole dug at 1 m cells caves around its third scoop in one spot (60° stands a wall 1.7 m

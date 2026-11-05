@@ -20,7 +20,9 @@
 //   (counter[1] set).
 // 1 dump, one invocation per voxel: `amount` m³ of loose fill the air of the ball's voxels nearest the
 //   centre first (each invocation sums the room of the voxels before it in that order, so no two write one
-//   voxel); what fits is counted in counter[0], the rest stays in the hand; the voxel's compaction is reset.
+//   voxel; distances within a hair of each other, as a ball on a cell's edge makes them, order by index, since
+//   the two sides of a float tie can round apart and both take the remainder); what fits is counted in
+//   counter[0], the rest stays in the hand; the voxel's compaction is reset.
 // The disc ops, one invocation per column of the box's footprint (z = 0 threads), the disc of `radius` cells
 // around the centre's cell, over the voxels of the box's height range (the feet's or the surface's height,
 // a few voxels either way), `limit` and `dir_code` as EditLayer's push constants carry them:
@@ -116,7 +118,7 @@ const int SUB = 8;
 // A roof thinner than this, in m, with nothing solid over it, drops onto the floor of the cut. A ball cut
 // under the surface from inside a pit leaves the surface's skin, half a voxel or so, over its hollow: seen
 // from a second cut beside it, a floating sheet (2026-11-04). It is the same slab as a hand-dug tunnel's
-// roof, half a metre to a metre thick from a pit under dirt's free height (4 m then, 5 m now), so no thickness here tells
+// roof, half a metre to a metre thick from a pit under dirt's free height (4 m then, 5, now 10), so no thickness here tells
 // them apart (a voxel was tried: every such tunnel became a trench); the collapse project's roof-span rule
 // is where such a slab should fall.
 const float THIN_ROOF = 0.3;
@@ -643,6 +645,9 @@ float dist_of(ivec3 ck) {
 	return dx * dx + (c.y - pc.centre.y) * (c.y - pc.centre.y) + (c.z - pc.centre.z) * (c.z - pc.centre.z);
 }
 
+// Squared distances this close are one distance (well under a cell's, well over a float's rounding).
+const float TIE = 1e-5;
+
 // Every invocation of the workgroup calls it (the barrier): the rooms are all read before any is filled.
 void dump(ivec3 l, ivec3 ck, bool in_box) {
 	int addr = -1, col = -1;
@@ -661,7 +666,7 @@ void dump(ivec3 l, ivec3 ck, bool in_box) {
 					}
 					ivec3 o = pc.first + ivec3(x, y, z);
 					float od = dist_of(o);
-					if (od < d || (od == d && i < me)) {
+					if (od < d - TIE || (abs(od - d) <= TIE && i < me)) {
 						int oa, oc;
 						before += room_of(o, oa, oc);
 					}

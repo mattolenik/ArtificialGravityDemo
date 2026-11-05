@@ -817,7 +817,7 @@ func spoil(p: Vector3, radius: int, volume: float, placed: Callable) -> bool:
 
 
 ## Stands a pillar in the column at station-local p, from the voxel of p's height to the voxel `reach` m over
-## it (Tools.pillar_range), or takes away the pillar holding p's voxel or one next to it, looked for as far
+## it (Tools.pillar_range; at most 7 m, the op's column a brick tall), or takes away the pillar holding p's voxel or one next to it, looked for as far
 ## under p (box_edit.glsl's pillar); counted(count,
 ## false) lands with the voxels filled, minus those taken, 0 where there is no roof within the reach. False,
 ## nothing dispatched, when the column is not wholly in the box.
@@ -825,8 +825,8 @@ func pillar(p: Vector3, reach: float, counted: Callable) -> bool:
 	var g := grid_of(p)
 	# Tools.pillar_range's span, written out: the box does not load Tools (its preloaded auger scene would leak
 	# from every headless test that loads the box).
-	var span := Vector2i(floori(g.z), floori(g.z + reach))
-	var bb := disc_box(g, 0, span.y - span.x, span.y - span.x)
+	var r := mini(floori(reach), BRICK / 2 - 1)
+	var bb := disc_box(g, 0, r, r)
 	if bb[1] == Vector3i.ZERO:
 		return false
 	dirty_pending = true

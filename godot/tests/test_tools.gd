@@ -20,7 +20,7 @@ func _initialize() -> void:
 	var m: MaterialSet = load("res://terrain/materials.tres")
 	check(m.swell_factor[0] == 1.25 and m.repose_dry[0] == 35.0 and m.repose_damp[0] == 40.0 and m.repose_saturated[0] == 20.0 \
 			and is_equal_approx(m.porosity[0], 0.4) and m.wetting_distance[0] == 3.0 and m.wetting_distance[2] == 0.0, "dirt and rock from materials.tres")
-	check(m.names.size() == 5 and m.names[4] == "pillar" and m.swell_factor[4] == 1.0 and m.roof_span_dry[0] == 5.0 and m.roof_span_dry[4] == 20.0 and m.stable_slope_dry[4] == 90.0, "the fifth material and dirt's 5 m free height")
+	check(m.names.size() == 5 and m.names[4] == "pillar" and m.swell_factor[4] == 1.0 and m.roof_span_dry[0] == 10.0 and m.roof_span_dry[4] == 20.0 and m.stable_slope_dry[4] == 90.0, "the fifth material and dirt's 10 m free height")
 	check(VoxelBox.PILLAR == 4 and VoxelColumn.PILLAR == 4 and VoxelBox.MATERIALS_BYTES == 100, "the pillar's id and the table's size")
 	# push_dir: the axis-quantised (theta, z) direction of a station-space velocity at angle theta.
 	check(Tools.push_dir(Vector3(1, 0, 0), 0.0) == Vector2i(1, 0), "spinward at theta 0 is +x")
@@ -68,6 +68,6 @@ func _initialize() -> void:
 	check(Tools.level_floor(409.8, 409.85) == 409.8 and Tools.level_floor(409.8, 409.35) == 409.8 and Tools.level_floor(409.8, 410.75) == 409.8, "on the tunnel's floor, or near it: the same floor")
 	check(is_equal_approx(Tools.level_floor(409.8, 409.2), 408.7) and is_equal_approx(Tools.level_floor(409.8, 410.8), 410.3), "off it: anchored anew")
 	# A pillar stands from the voxel of the hit's height up to the voxel of its reach over it.
-	check(Tools.pillar_range(402.3, 6.0) == Vector2i(402, 408), "a pillar's voxel range")
+	check(Tools.pillar_range(402.3, 6.0) == Vector2i(402, 408) and Tools.pillar_range(402.3, 11.0) == Vector2i(402, 409), "a pillar's voxel range, a brick's column at most")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

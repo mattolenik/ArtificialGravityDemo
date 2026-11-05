@@ -269,9 +269,9 @@ func place_pillar(c: Vector2i) -> void:
 
 
 ## A pillar's voxel span from the hit at hit_h m of height: the voxel holding the hit to the voxel `reach` m
-## over it.
+## over it, at most 7 (the op's column is a brick tall, the take-away looking as far under the hit).
 static func pillar_range(hit_h: float, reach: float) -> Vector2i:
-	return Vector2i(floori(hit_h), floori(hit_h + reach))
+	return Vector2i(floori(hit_h), floori(hit_h) + mini(floori(reach), VoxelBox.BRICK / 2 - 1))
 
 
 ## The drivers' scoop and dump aimed at a cell: its centre on the collider.
