@@ -22,6 +22,17 @@
 //   solid, never under bedrock_top, never rock: the solid leaves as `out`'s high half and arrives as loose
 //   times the swell in the voxel's own room (half of it at most) and the room over it (a quarter at most, so
 //   the falls' and slumps' shares still fit beside it); less failure when less fits.
+//   The span rule (span_column, after the slope stability): a roof voxel (dirt or clay holding any solid, the
+//   voxel under it holding under a quarter) reaches half the material's free height (its roof span), dry to
+//   saturated by the column's saturation, times the roof's thickness (the solid from it up to the first voxel
+//   under a quarter, in metres, capped at one). In the layer under it, within the reach (theta scaled by the
+//   cell's width), a support is a voxel holding half a voxel of solid and loose together, a pillar, or one
+//   outside the box (VoxelBox.span_fails): with none it fails, and with the nearest beyond half the reach and
+//   none across from it (more than a right angle away) it fails as a cantilever. It fails as the slope
+//   stability's voxel does, slump_rate of its solid a step (all of it once that is under move_eps): `out`'s high
+//   half, arriving as loose times the swell in its own room (half at most; a quarter when the voxel over it
+//   may fail into it too) and the room of the air voxel under it (a quarter at most). The apply pass's face rule
+//   wakes the brick over a failing top voxel, so a chimney climbs across bricks.
 // 1 apply: each voxel takes its arrivals, loses what it sent, stores the result when it changed, flags its
 //   column dirty (the pack writes the window) and, over move_eps, its brick active (bit 0 of its slot) and the
 //   brick across any face it lies on (bit 1).
@@ -183,12 +194,15 @@ void send(V v, int ai, int k, int kt, uint q) {
 	atomicAdd(flux[(ai * VOXELS_PER_BRICK + v.vi) * 2 + 1], qt);
 }
 
+// The column flux_column reads (its solid, loose and material per voxel) and its saturation, for span_column.
+uint fs[16], fl[16], mt_[16];
+float sat;
+
 void flux_column(ivec2 cxz, int kz0, int my_e, int my_ai) {
 	// A column off the station, or not of the box, has no voxels to read.
 	if (!find(ivec3(cxz, kz0)).ok) {
 		return;
 	}
-	uint fs[16], fl[16], mt_[16];
 	for (int y = 0; y < 16; y++) {
 		V v = find(ivec3(cxz, kz0 + y));
 		uint w0 = pool[v.addr];
@@ -198,7 +212,7 @@ void flux_column(ivec2 cxz, int kz0, int my_e, int my_ai) {
 	}
 	ivec2 t;
 	bool resident = texel(ivec2(wrap(cxz.x, pc.n_theta), cxz.y), t);
-	float sat = resident ? imageLoad(w_saturation, t).r : 0.0;
+	sat = resident ? imageLoad(w_saturation, t).r : 0.0;
 	float tr = sat < 0.5 ? mix(pc.repose_tan.x, pc.repose_tan.y, 2.0 * sat) : mix(pc.repose_tan.y, pc.repose_tan.z, 2.0 * sat - 1.0);
 	// The loose over the brick's top voxel, for the stack-top test at y = 15.
 	V va = find(ivec3(cxz, kz0 + 16));
@@ -411,6 +425,132 @@ void flux_column(ivec2 cxz, int kz0, int my_e, int my_ai) {
 	}
 }
 
+// Whether voxel p of the support layer holds a roof: half a voxel of solid and loose together, or a pillar; a
+// voxel outside the box (beyond the index laterally, or under its bottom) counts as support, air (an unallocated
+// brick) does not.
+bool support(ivec3 p) {
+	V v = find(p);
+	if (v.e < 0) {
+		return true;
+	}
+	if (!v.ok) {
+		return false;
+	}
+	uint w0 = pool[v.addr];
+	return (w0 & 0xFFFFu) + (w0 >> 16) >= uint(ONE) / 2u || (pool[v.addr + 1] & 255u) == uint(PILLAR);
+}
+
+// The span rule at the column's roof voxels, after flux_column has read the column (fs, fl, mt_, sat).
+void span_column(ivec2 cxz, int kz0, int my_ai) {
+	uint quarter = uint(ONE) / 4u;
+	// The voxel under the brick's bottom voxel; outside the box it is solid (no roof voxel over it).
+	V vb = find(ivec3(cxz, kz0 - 1));
+	uint below_s = vb.e < 0 ? uint(ONE) : (vb.ok ? pool[vb.addr] & 0xFFFFu : 0u);
+	for (int y = 0; y < 16; y++) {
+		uint s_below = y > 0 ? fs[y - 1] : below_s;
+		if (fs[y] == 0u || mt_[y] >= 2u || s_below >= quarter) {
+			continue;
+		}
+		int k = kz0 + y;
+		V me = find(ivec3(cxz, k));
+		int fi = (my_ai * VOXELS_PER_BRICK + me.vi) * 2;
+		if ((flux[fi] >> 16) != 0u) {
+			continue;  // the slope stability already cut it this step
+		}
+		// The thickness: the solid from this voxel up to the first under a quarter, in metres, capped at one.
+		float th = 0.0;
+		uint s_up = 0u;
+		uint m_up = 255u;
+		for (int ky = y; ky <= y + 4 && th < 1.0; ky++) {
+			uint s_k = 0u;
+			uint m_k = 255u;
+			if (ky < 16) {
+				s_k = fs[ky];
+				m_k = mt_[ky];
+			} else {
+				V vu = find(ivec3(cxz, kz0 + ky));
+				if (vu.ok) {
+					s_k = pool[vu.addr] & 0xFFFFu;
+					m_k = pool[vu.addr + 1] & 255u;
+				}
+			}
+			if (ky == y + 1) {
+				s_up = s_k;
+				m_up = m_k;
+			}
+			if (ky > y && s_k < quarter) {
+				break;
+			}
+			th += float(s_k) / ONE;
+		}
+		uint m = mt_[y];
+		float reach = 0.5 * mix(mt.free_dry[m], mt.free_sat[m], sat) * min(th, 1.0);
+		// The support disc in the layer under: the nearest support, then one across from it (more than a right
+		// angle away). Distances are between voxel centres, theta scaled by the cell's width at the roof's
+		// underside.
+		float w = pc.dtheta * (pc.R - float(k));
+		int n = int(ceil(reach));
+		float best = 1.0e9;
+		vec2 dir = vec2(0.0);
+		for (int dz = -n; dz <= n; dz++) {
+			for (int dx = -n; dx <= n; dx++) {
+				vec2 o = vec2(float(dx) * w, float(dz));
+				float dd = length(o);
+				if (dd <= reach && dd < best && support(ivec3(cxz + ivec2(dx, dz), k - 1))) {
+					best = dd;
+					dir = o;
+				}
+			}
+		}
+		bool holds = best <= 0.5 * reach;  // VoxelBox.span_fails
+		for (int dz = -n; dz <= n && !holds && best <= reach; dz++) {
+			for (int dx = -n; dx <= n && !holds; dx++) {
+				vec2 o = vec2(float(dx) * w, float(dz));
+				holds = length(o) <= reach && dot(o, dir) < 0.0 && support(ivec3(cxz + ivec2(dx, dz), k - 1));
+			}
+		}
+		if (holds) {
+			continue;
+		}
+		// The failure, as the slope stability's: slump_rate of the solid a step (the whole of it once that is
+		// under move_eps, so a failing roof keeps its brick active to the end), leaving as `out`'s high half and
+		// arriving as loose times the swell in this voxel's room (half of it at most; a quarter when a roof voxel
+		// over this one may fail into it too) and the room of the air voxel under it (a quarter at most), so
+		// cut · swell ≤ (room + cut) / share + room_dn / 4; less fails when less fits.
+		uint cut = uint(roundh(pc.slump_rate * float(fs[y])));
+		if (float(cut) <= pc.move_eps * ONE) {
+			cut = fs[y];
+		}
+		V vd = find(ivec3(cxz, k - 1));
+		int ai = my_ai;
+		int room = int(ONE) - int(fs[y]) - int(fl[y]);
+		int room_dn = 0;
+		if (y > 0) {
+			room_dn = int(ONE) - int(fs[y - 1]) - int(fl[y - 1]);
+		} else if (open(vd, ai)) {
+			uint w0 = pool[vd.addr];
+			room_dn = int(ONE) - int(w0 & 0xFFFFu) - int(w0 >> 16);
+		}
+		room_dn = int(float(room_dn) * vol(k - 1) / vol(k));
+		int share = fs[y] < quarter && s_up > 0u && m_up < 2u ? UP_SHARE : FAIL_SHARE;
+		float swell = mt.swell[m];
+		cut = min(cut, uint(floor((float(room) + float(share) * 0.25 * float(room_dn)) / (float(share) * swell - 1.0))));
+		if (cut == 0u) {
+			continue;
+		}
+		uint gain = uint(roundh(float(cut) * swell));
+		uint dn = min(gain - min(gain, uint((room + int(cut)) / share)), uint(room_dn / UP_SHARE));
+		uint here = gain - dn;
+		if (dn > 0u) {
+			send(vd, ai, k, k - 1, dn);
+		}
+		flux[fi] |= cut << 16;
+		if (here > 0u) {
+			atomicAdd(flux[fi + 1], here);
+		}
+	}
+}
+
 void apply_column(ivec2 cxz, int kz0, int my_e, int my_ai) {
 	if (!find(ivec3(cxz, kz0)).ok) {
 		return;
@@ -496,6 +636,9 @@ void main() {
 	}
 	if (pc.mode == 0) {
 		flux_column(cxz, kz0, my_e, pc.active_i);
+		if (find(ivec3(cxz, kz0)).ok) {
+			span_column(cxz, kz0, pc.active_i);
+		}
 	} else {
 		apply_column(cxz, kz0, my_e, pc.active_i);
 	}

@@ -297,6 +297,19 @@ static func wall_fails(step: float, w: float, stand_tan: float, free: float) -> 
 	return step > maxf(stand_tan * w, free)
 
 
+## The span rule's reach (box_sand.glsl): half the roof span, mixed dry to saturated by the column's saturation,
+## times the roof's thickness in metres capped at one.
+static func roof_reach(span_dry: float, span_sat: float, sat: float, thickness: float) -> float:
+	return 0.5 * lerpf(span_dry, span_sat, sat) * minf(thickness, 1.0)
+
+
+## The span rule: a roof voxel whose nearest support lies `nearest` m away and whose second support in the
+## half-disc opposite lies `opposite` m away (INF for none) fails with no support within the reach, or held from
+## one side only (a cantilever) beyond half the reach.
+static func span_fails(nearest: float, opposite: float, reach: float) -> bool:
+	return nearest > reach or (opposite > reach and nearest > 0.5 * reach)
+
+
 ## The world brick in slot i under the origin.
 func brick_at_slot(i: int) -> Vector3i:
 	@warning_ignore("integer_division")

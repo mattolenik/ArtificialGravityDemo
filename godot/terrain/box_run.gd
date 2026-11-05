@@ -32,9 +32,10 @@
 ## rock (the noise report's rock site): a scoop on the first cell within 6 of the player's cell + (0, 4)
 ##    whose ball footprint is bare rock (every cell's surface at its bedrock_top) holds nothing and changes
 ##    no surface; the footprint's cells and their top voxels are printed.
-## tunnel (T, flat ground, the pit and the tunnel inside one chunk): scoops over a 2 x 2 pit until it is 3 m
-##    deep (a ball on a cell's centre clears that column and slivers of its neighbours: a walkable shaft or
-##    tunnel takes two scoops abreast), the player teleported into it, 28 scoops along +z into its wall, two
+## tunnel (T, flat ground, the pit and the tunnel inside one chunk): scoops over a 2 x 2 pit until it is 4.2 m
+##    deep (the tunnel's roof a voxel thick, which the span rule lets stand; a ball on a cell's centre clears
+##    that column and slivers of its neighbours: a walkable shaft or tunnel takes two scoops abreast), the
+##    player teleported into it, 28 scoops along +z into its wall, two
 ##    abreast, two rows high and every half metre (a tunnel 2 m wide, 2.5 m tall, 4 m long under a roof half a metre
 ##    thick): the wall's chunk is touched and its mesh lands within 1 s (a ChunkMesh with faces) under an
 ##    unchanged surface (the roof top); the player walks into the tunnel by W for 2 s with one more scoop at
@@ -606,10 +607,11 @@ func _tunnel(c: Vector2i) -> bool:
 		return false
 	var p := _terrain.params
 	var box := _terrain.box
-	# A 2 x 2 pit, a scoop at a time round its cells until the first is 3.5 m deep: under dirt's 4 m free height
-	# so its walls stand, and deep enough for a 3 m tunnel under half a metre of roof.
+	# A 2 x 2 pit, a scoop at a time round its cells until the first is 4.2 m deep: under dirt's 5 m free height
+	# so its walls stand, and deep enough for a 3 m tunnel under a roof a voxel thick, which the span rule lets
+	# stand.
 	var scoops0 := _tools.scoops
-	var depth := await _pit(c, 3.5)
+	var depth := await _pit(c, 4.2)
 	var scoops := _tools.scoops - scoops0
 	var waited := await _settled(c)
 	# Into the pit, over its first cell: the tunnel's floor is cut from that cell's floor.
