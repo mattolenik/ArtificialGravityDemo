@@ -104,7 +104,12 @@ layout(push_constant, std430) uniform Params {
 #include "box_column.glslh"
 
 const int SUB = 8;
-// A roof thinner than this, in m, with nothing solid over it, drops onto the floor of the cut.
+// A roof thinner than this, in m, with nothing solid over it, drops onto the floor of the cut. A ball cut
+// under the surface from inside a pit leaves the surface's skin, half a voxel or so, over its hollow: seen
+// from a second cut beside it, a floating sheet (2026-11-04). It is the same slab as a hand-dug tunnel's
+// roof, half a metre to a metre thick from a pit under dirt's 4 m free height, so no thickness here tells
+// them apart (a voxel was tried: every such tunnel became a trench); the collapse project's roof-span rule
+// is where such a slab should fall.
 const float THIN_ROOF = 0.3;
 shared uint refuse;
 

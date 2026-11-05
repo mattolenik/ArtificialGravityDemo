@@ -69,6 +69,12 @@
 ##    chunk touched and meshed), then walks on by W for 2 s: at least eight scoops, the hand not empty, never
 ##    held, the feet over ground every frame, walked along +z from the pit's floor a metre past the tunnel's
 ##    mouth.
+## shell (the middle of a chunk 120 cells before the spawn): a ball cut at the surface, then four around it 2 m
+##    out and a metre lower (a dig around a dig, its second cuts coming up behind the first's walls): once the
+##    chunk's mesh lands, the vertices deeper than half a metre inside the five balls' hollow that sit on a
+##    voxel holding dirt with air under and over it are counted and printed (the shells of 2026-11-04: the
+##    surface's skin the scoop keeps over a ball cut under it, box_edit.glsl's THIN_ROOF, the same slab as a
+##    tunnel's roof; reported, not asserted, until the collapse project).
 ## The GPU time of the unpack lists (the first fill, the moves, the reload) and the pack lists is printed
 ## against 0.5 ms per brick allocated.
 extends "res://terrain/tool_run.gd"
@@ -91,7 +97,8 @@ func _route() -> void:
 		"cave": _cave.bind(spawn + Vector2i(0, -80)), "pickup": _pickup_box.bind(spawn + Vector2i(40, 0)),
 		"tunnel": _tunnel.bind(Vector2i(t_site.x / 16 * 16 + 8, t_site.y / 16 * 16 + 5)), "inside": _inside,
 		"tscroll": _tunnel_scroll, "trestart": _tunnel_restart,
-		"play": _play.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 48) / 16 * 16 + 5))}
+		"play": _play.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 48) / 16 * 16 + 5)),
+		"shell": _shell.bind(Vector2i(spawn.x / 16 * 16 + 8, (spawn.y - 120) / 16 * 16 + 8))}
 	for phase: String in phases:
 		if not only.is_empty() and phase != only and not (only in ["inside", "tscroll", "trestart"] and phase == "tunnel") \
 				and not (only in ["tscroll", "trestart"] and phase == "inside"):
@@ -576,7 +583,7 @@ func _box_summary() -> void:
 		print("  %-11s per list %s" % [pass_name, Smoke._stat(ms, BOX_BUDGET * bricks)])
 		if not ms.is_empty():
 			print("  %-11s the longest list per brick allocated %.4f ms (budget %.2f)" % [pass_name, ms.max() / bricks, BOX_BUDGET])
-	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup", "tunnel", "inside", "tscroll", "trestart", "play"]:
+	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup", "tunnel", "inside", "tscroll", "trestart", "play", "shell"]:
 		var st := _stat_of(phase)
 		if st.cpu.is_empty():
 			continue
@@ -1043,6 +1050,62 @@ func _stand_in_tunnel(c: Vector2i) -> bool:
 	print("stand: held %s, the feet covered %s, %.3f m over the collider under them, at height %.3f for a floor at %.3f" % [
 			_player.process_mode == Node.PROCESS_MODE_DISABLED, _terrain.covered(feet), clear, Cyl.height_of(feet, p.radius), _tunnel_floor])
 	return _player.process_mode != Node.PROCESS_MODE_DISABLED and _terrain.covered(feet) and clear >= -0.05 and clear <= 0.3
+
+
+## Phase shell at S (see the header). False after quitting on a timeout.
+func _shell(s: Vector2i) -> bool:
+	if not await _teleport(s + Vector2i(5, 0)):
+		return false
+	var p := _terrain.params
+	var r := _terrain.tool_params.scoop_ball
+	var centre := _tools.surface_point(s)
+	var balls: Array[Vector3] = [centre]
+	for off: Vector2 in [Vector2(2, 0), Vector2(-2, 0), Vector2(0, 2), Vector2(0, -2)]:
+		var h := Cyl.height_of(centre, p.radius)
+		balls.append(Cyl.position(Cyl.theta_of(centre) + off.x / (p.radius - h), centre.z + off.y, h - 1.0, p.radius))
+	for b in balls:
+		await _scoop_at(b)
+	var waited := await _settled(s)
+	var ch := VoxelBox.chunk_of_cell(s)
+	var landed := await _chunk_landed(ch, 3.0)
+	await _frames(5)
+	var st: Dictionary = _terrain.box.touched.get(ch, {})
+	var total := 0
+	var inside := 0
+	var deepest := 0.0
+	if not st.is_empty() and st.node != null and st.node._mesh.mesh != null:
+		var vs: PackedVector3Array = st.node._mesh.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+		for v in vs:
+			total += 1
+			var depth := 0.0
+			for b in balls:
+				depth = maxf(depth, r - v.distance_to(b))
+			deepest = maxf(deepest, depth)
+			# A vertex deep in the hollow on a voxel holding dirt with air under and over it: a crumb floating
+			# there (the ball's own wall voxels put vertices up to half a metre inside too, by their lumps).
+			if depth > 0.5:
+				var cell := _cell_of(v)
+				var vox := _column_vox(_stack(cell), cell)
+				var k := floori(Cyl.height_of(v, p.radius)) - _terrain.box.bottom()
+				var fill := func(i: int) -> float:
+					return (vox.solid[i] + vox.loose[i]) / float(VoxelColumn.FRACTION_ONE) if i >= 0 and i < vox.solid.size() else 0.0
+				if fill.call(k) > 0.0 and fill.call(k - 1) == 0.0 and fill.call(k + 1) == 0.0:
+					inside += 1
+					if inside <= 8:
+						var h0 := Cyl.height_of(centre, p.radius)
+						print("shell: a crumb %.2f m inside the hollow: across %+.2f, along %+.2f, height %+.2f, its voxel %.2f full with air under and over" % [
+								depth, wrapf(Cyl.theta_of(v) - Cyl.theta_of(centre), -PI, PI) * (p.radius - h0), v.z - centre.z, Cyl.height_of(v, p.radius) - h0, fill.call(k)])
+	print("shell: five balls at %s (one at the surface, four 2 m around it a metre lower), settled in %.2f s, the chunk's mesh landed in %.2f s: %d vertices, %d of them crumbs floating in the hollow, the deepest vertex %.2f m in" % [
+			s, waited, landed, total, inside, deepest])
+	# Reported, not asserted: the crumbs are the surface's skin the scoop keeps over a ball cut under it
+	# (box_edit.glsl's THIN_ROOF), the same slab as a hand-dug tunnel's roof, until the collapse project's
+	# roof-span rule drops such slabs.
+	_report("a dig around a dig leaves a mesh", waited >= 0.0 and landed >= 0.0 and total > 0)
+	return true
+
+
+func _cell_of(v: Vector3) -> Vector2i:
+	return _terrain.params.cell_of(Cyl.theta_of(v), v.z)
 
 
 ## Phase tscroll (see the header). False after quitting on a timeout.
