@@ -85,8 +85,8 @@
 ##    cells sinks by a metre or more (the roof fell and the chimney reached the surface), and once settled the
 ##    loose gained over the box of 10 round the room, the shovel's included, is the solid lost there times the
 ##    swell within 0.1 %.
-## pillar (the middle of a chunk 216 cells past the spawn): the tunnel phase's pit, five scoops deep (_pit to
-##    4.2 m), and its tunnel, the player stood two cells in; Tools.place_pillar at the tunnel's cell 4 along
+## pillar (the middle of a chunk 216 cells past the spawn): the tunnel phase's pit, six scoops deep (_pit to
+##    4.4 m: a post over a roof partial under half a voxel holds only within 1.25 m), and its tunnel, the player stood two cells in; Tools.place_pillar at the tunnel's cell 4 along
 ##    +z: the voxels between the floor's and the roof's hold solid FRACTION_ONE of material 4, one run, and once
 ##    settled the packed column's first gap is a pillar's (gap_material0 == 4), and rays along the tunnel half
 ##    a metre over the gap's bottom and a quarter under its top meet the drawn post at its cell (box_mesh.glsl
@@ -1268,7 +1268,11 @@ func _pillar(c: Vector2i) -> bool:
 		return false
 	var p := _terrain.params
 	var s0 := _read("surface")
-	var depth := await _pit(c, 4.2)
+	# The pit to 4.4 m (six scoops, about 4.55 m), not the tunnel phase's 4.2: on a roof partial under half a
+	# voxel (a 4.2 m pit's) a post holds only within 1.25 m, and the cells diagonal to it lose their surface
+	# voxel when the room is widened; the phase proves the post on the thicker partial, the thin case a listed
+	# limit (the followups).
+	var depth := await _pit(c, 4.4)
 	var waited := await _settled(c)
 	_terrain.teleport((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5)
 	if not await _settled_patch():
@@ -1287,7 +1291,7 @@ func _pillar(c: Vector2i) -> bool:
 	_tunnel_floor = kept
 	print("pillar: the pit %.2f m deep (bedrock %.2f m under its floor), settled in %.2f s; the tunnel's chunk meshed in %.2f s; the player stood in it: %s" % [
 			depth, floor_h - _f(_read("bedrock_top"), c), waited, landed, stood])
-	_report("a tunnel under a pit five scoops deep, the player in it", depth >= 4.2 and waited >= 0.0 and landed >= 0.0 and stood)
+	_report("a tunnel under a pit six scoops deep, the player in it", depth >= 4.4 and waited >= 0.0 and landed >= 0.0 and stood)
 	var cell := c + Vector2i(0, 4)
 	var bottom := _terrain.box.bottom()
 	# The pillar's voxels: those holding solid of material 4.

@@ -96,7 +96,8 @@ What `2026-11-04-terrain-collapse.md` did, and what it left (its rulings are in 
 - **Left: the free height's feel at 5 m in play.** The user's open choice, with a fifth scoop no longer caving the pit.
 - **Deferred, a pillar whose cap is dug from above vanishes at the pack** (the box shows it until the brick reloads); the user's choice is whether the sand step dissolves a bared pillar or the column form learns a gap ending at the surface.
 - **Deferred, the GPU pack's streaming drop at nine runs** can merge differently from the CPU next to a pillar (the CPU pack wants the same eight-run cap).
-- **Deferred, a ball clearing the voxel under a brick face in its top sub-sample** never wakes the brick above, so a roof voxel at that brick's y = 0 is never judged.
+- **Closed 2026-11-05, a ball clearing the voxel under a brick face** now wakes the brick of the voxel over its range too, so a roof voxel at that brick's y = 0 is judged.
+- **Left: a post under a roof partial thinner than half a voxel** holds only within 1.25 m (a cantilever's reach), so the cells diagonal to it (1.46 m away) can lose their surface voxel when the room is widened, as the pillar phase's room does over a 4.2 m pit; the candidate fix is a beam test by the two supports' distance apart (at most the span) instead of each within R, which also lets a 5 m room stand whole. The pillar phase digs its pit to 4.4 m meanwhile.
 - **Deferred, the chunk landing** runs 2.33 to 2.75 ms against its 2 ms print.
 - **Deferred, the sand step's fixed overhead** is about 0.15 ms at one or two active bricks.
 - **Deferred, the pack's refills** split a hollow when sand leaves a voxel at a count of 65534.
