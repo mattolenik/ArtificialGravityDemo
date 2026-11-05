@@ -5,10 +5,12 @@
 // and colliding), two dispatches over the chunk's 16 x 16 columns with a skirt of cells each way (the mesh
 // overlaps the tile mesh, which steps back from the chunk and sinks under it) and the box's 64 m:
 // 0 vertices: one invocation per dual cell (the cube between eight voxel centres): where the density (the
-//   solid plus loose fraction) crosses the half along any of the cube's twelve edges, a vertex at the mean
-//   of the crossings, bent into station space (Cyl.position), its normal from the density gradient (a cell
-//   spans (R - h) dtheta across), its material the densest corner's (loose counts as dirt) with that
-//   corner's loose share; the vertex's index into vmap (-1 for none).
+//   signed distance along the column from the voxel's centre to its run's end, sample_at) crosses zero along
+//   any of the cube's twelve edges, a vertex at the mean of the crossings (a vertical edge's by that
+//   distance, a lateral edge's by the fill less a half: a wall's foot would bulge by the floor's nearness
+//   otherwise), bent into station space (Cyl.position), its normal from the density gradient (a cell spans
+//   (R - h) dtheta across), its material the densest corner's (loose counts as dirt) with that corner's loose
+//   share; the vertex's index into vmap (-1 for none).
 // 1 quads: one invocation per voxel centre and axis: an edge to the next centre that crosses the half gets
 //   two triangles over the four cells around it, wound clockwise seen from the air (Godot's front face).
 // Samples outside the box clamp to its edge, so nothing caps it. Counts: vertices, indices, an overflow
@@ -49,34 +51,67 @@ const int BRICKS_UP = 6;  // VoxelBox.BRICKS_UP
 const int K = 16 * BRICKS_UP;
 
 struct S {
-	float d;      // the density less the half: solid where positive
+	float d;      // the density: the signed distance along the column to the run's end, solid where positive
+	float df;     // the fill less a half, for the lateral edges
 	uint mat;
 	float loose;  // the loose share of what fills the voxel
 };
 
-// The voxel at ck (theta index unwrapped in the origin's frame, z index, height index), clamped into the
-// box: its edge continues outward.
-S sample_at(ivec3 ck) {
+// The pool address of the voxel at ck (theta index unwrapped in the origin's frame, z index, height index),
+// clamped into the box (its edge continues outward); -1 where its brick is not allocated (empty).
+int word_at(ivec3 ck) {
 	ivec3 lo = pc.origin * 16;
 	ck = clamp(ck, lo, lo + ivec3(255, 255, K - 1));
 	ivec3 b = ck >> 4;
 	int e = (((b.z % BRICKS_UP + BRICKS_UP) % BRICKS_UP) * 16 + (b.y & 15)) * 16 + (b.x & 15);
-	S r;
-	r.d = -0.5;
-	r.mat = 0u;
-	r.loose = 0.0;
 	int bi = index[e];
 	if (bi < 0) {
-		return r;
+		return -1;
 	}
 	ivec3 v = ck & 15;
-	int a = bi * 4096 * 2 + ((v.z * 16 + v.y) * 16 + v.x) * 2;
+	return bi * 4096 * 2 + ((v.z * 16 + v.y) * 16 + v.x) * 2;
+}
+
+// What fills the voxel at ck, solid plus loose, 0 to 1.
+float fill_at(ivec3 ck) {
+	int a = word_at(ck);
+	if (a < 0) {
+		return 0.0;
+	}
 	uint w0 = pool[a];
-	float fs = float(w0 & 0xFFFFu);
-	float fl = float(w0 >> 16);
-	r.d = (fs + fl) / ONE - 0.5;
-	r.mat = fl > fs ? 0u : (pool[a + 1] & 255u);
-	r.loose = fl / max(fs + fl, 1.0);
+	return min((float(w0 & 0xFFFFu) + float(w0 >> 16)) / ONE, 1.0);
+}
+
+// The voxel at ck: its density is the signed distance along the column from its centre to the nearest end of
+// a run, solid positive, within 1.5 voxels, from its own fill and its vertical neighbours' (a partial voxel
+// holds its fill as a slab against the full voxel it continues, so a full voxel's end lies past the partial
+// over or under it and an empty voxel's lies short of the partial under or over it). The ends then
+// interpolate to their exact heights and a planar slope meshes flat with one normal: the fill less a half
+// (the density before 2026-11-04) put every end in the middle third of its voxel, which meshed a slope as a
+// stair of bricks and lit it as one.
+S sample_at(ivec3 ck) {
+	float f = fill_at(ck);
+	float fu = fill_at(ck + ivec3(0, 0, 1));
+	float fd = fill_at(ck - ivec3(0, 0, 1));
+	S r;
+	if (f >= 1.0) {
+		r.d = 0.5 + min(fu, fd);
+	} else if (f <= 0.0) {
+		r.d = -0.5 - min(1.0 - fu, 1.0 - fd);
+	} else {
+		r.d = f - 0.5;
+	}
+	r.df = f - 0.5;
+	r.mat = 0u;
+	r.loose = 0.0;
+	int a = word_at(ck);
+	if (a >= 0) {
+		uint w0 = pool[a];
+		float fs = float(w0 & 0xFFFFu);
+		float fl = float(w0 >> 16);
+		r.mat = fl > fs ? 0u : (pool[a + 1] & 255u);
+		r.loose = fl / max(fs + fl, 1.0);
+	}
 	return r;
 }
 
@@ -115,7 +150,9 @@ void vertex_pass(ivec3 l) {
 			if ((s[c].d < 0.0) == (s[d].d < 0.0)) {
 				continue;
 			}
-			float t = s[c].d / (s[c].d - s[d].d);
+			float dc = a == 2 ? s[c].d : s[c].df;
+			float dd = a == 2 ? s[d].d : s[d].df;
+			float t = dc / (dc - dd);
 			sum += mix(corner(c), corner(d), t);
 			n++;
 		}

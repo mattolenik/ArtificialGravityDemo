@@ -39,7 +39,7 @@
 ##    thick): the wall's chunk is touched and its mesh lands within 1 s (a ChunkMesh with faces) under an
 ##    unchanged surface (the roof top); the player walks into the tunnel by W for 2 s with one more scoop at
 ##    its end half way (a remesh under the feet): never held, the feet over ground every frame
-##    (Terrain.covered, and a ray down from the feet within 0..0.3 m), at least 3 m walked; a shot from inside
+##    (Terrain.covered, and a ray down from the feet within 0..0.5 m), at least 3 m walked; a shot from inside
 ##    looking back out (user://debug/box_tunnel.png); the remesh lists' GPU time against 0.5 ms a chunk and the
 ##    chunk landings' CPU ms (the arrays, the surface and the trimesh) against 2 ms, printed.
 ## inside (the tunnel of the tunnel phase, the player two cells in, facing its end): a dump of 8 m³ at the floor
@@ -633,8 +633,12 @@ func _tunnel(c: Vector2i) -> bool:
 	print("tunnel: %d scoops over the 2 x 2 pit at %s, %.2f m deep, settled in %.2f s; %d balls into its +z wall at %.2f m took %.6f m³; chunk %s touched: %s, its mesh landed in %.2f s with %d faces; the surface over the tunnel's cells unchanged: %s" % [
 			scoops, c, depth, waited, balls, floor_h + 1.5, _tools.held - held0, ch, box.touched.has(ch), landed, _chunk_faces(ch), roof])
 	_report("a tunnel's chunk is touched and meshed within 1 s under an unchanged surface", depth >= 3.0 and waited >= 0.0 and _tools.held > held0 and landed >= 0.0 and landed <= 1.0 and roof)
-	# The collider's hole over the chunk: an edit bake after the mask changed.
+	# The collider's hole over the chunk: an edit bake after the mask changed. The walk starts between the pit's
+	# two columns, on the tunnel's middle line, as a player steers: the bore is round, so its clear height half
+	# a metre off the middle is under the capsule's 2 m at the end wall, and the true floor (a flat-bottomed
+	# bowl since 2026-11-04) funnels nothing toward the middle.
 	await _frames(20)
+	_player.global_position = _station.global_transform * aim.call(0.5, 0.0, 1.0 + Tools.STAND)
 	_face(Vector3(0, 0, 1))
 	await _frames(2)
 	var z0 := _station.to_local(_player.global_position).z
@@ -643,11 +647,19 @@ func _tunnel(c: Vector2i) -> bool:
 	var uncovered := 0
 	var low := INF
 	var high := -INF
+	var profile := func() -> String:
+		var out: Array[String] = []
+		for k in 14:
+			var g := _terrain.ground_below(aim.call(0.5, 0.5 * k, 1.0), 3.0)
+			out.append("%.2f" % (Cyl.height_of(g, p.radius) - floor_h) if g.is_finite() else "none")
+		return " ".join(out)
+	print("tunnel: the floor along the middle, every half metre from the pit's cell, over the pit's floor: %s" % profile.call())
+	var trace: Array[String] = []
 	_press(KEY_W, true)
 	for i in 120:
 		await get_tree().process_frame
 		if i == 60:
-			_tools.scoop(aim.call(0, 5.5, 1.0))
+			_tools.scoop(aim.call(0.5, 5.0, 1.5))
 		held += int(_player.process_mode == Node.PROCESS_MODE_DISABLED)
 		uncovered += int(not _terrain.covered(_station.to_local(_player.global_position - _player.up_direction)))
 		var hit := _ray_down()
@@ -657,7 +669,13 @@ func _tunnel(c: Vector2i) -> bool:
 		var clear: float = hit.position.distance_to(_player.global_position) - 1.0
 		low = minf(low, clear)
 		high = maxf(high, clear)
+		if i % 12 == 0 or clear > 0.5:
+			var me := _station.to_local(_player.global_position)
+			var across := wrapf(Cyl.theta_of(me) - (c.x + 1.0) * p.dtheta(), -PI, PI) * (p.radius - Cyl.height_of(me, p.radius))
+			trace.append("%d:z%.2f x%+.2f f%+.2f c%.2f v%.1f%s" % [i, me.z - z0, across, Cyl.height_of(me, p.radius) - 1.0 - floor_h, clear, _player.velocity.length(), "" if _player.is_on_floor() else " air"])
 	_press(KEY_W, false)
+	print("tunnel: the walk (frame: z along, x off the middle, the feet over the pit's floor, the clearance under them, the speed; air off the floor): %s" % " ".join(trace))
+	print("tunnel: the floor along the middle after the walk: %s" % profile.call())
 	var walked := _station.to_local(_player.global_position).z - z0
 	print("tunnel: walked %.2f m along +z in 2 s; held %d frames, the feet uncovered %d frames, the ray down from the feet %.3f..%.3f m; %d remeshes landed on the way" % [
 			walked, held, uncovered, low, high, box.remeshes - remeshes0])
@@ -821,6 +839,11 @@ func _play(c: Vector2i) -> bool:
 			pit = x
 	var pit_scoops := _tools.scoops - scoops0
 	print("play: T held 4 s looking down: %d scoops, the hand %.3f m³, the pit's deepest cell %s %.2f m down" % [pit_scoops, _tools.held - held0, pit, deepest])
+	# The pit from where it was dug (user://debug/box_pit.png): its slopes, meshed by the box.
+	_player.look(Vector2(0.0, 120.0))
+	await _frames(3)
+	await _shot("box_pit")
+	_player.look(Vector2(0.0, -120.0))
 	# Into the pit, facing its +z wall: W held for 6 s with T whenever the crosshair's hit is on a face ahead
 	# (the shovel's level rule: a wall, a ramp or a step's riser, the ball's floor half a metre under the feet,
 	# so the tunnel steps down with its roof the pit's depth less 2.5 m and keeps its level), the look swept

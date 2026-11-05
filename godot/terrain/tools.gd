@@ -6,7 +6,8 @@
 ## pickup_distance of it picks it up; one at a time, and E does nothing while the fly camera is the viewer
 ## (it climbs on E). The shovel: the crosshair's hit on the terrain colliders within shovel_reach (any
 ## surface: floor, wall or roof) is the aim, shown as a ring decal (ShovelPatch) while there is one; at a wall
-## (a face steeper than about 40°, no lower than a metre under the feet) the ball is lifted onto a level floor,
+## (a face steeper than about 40° no lower than a metre under the feet, or ground rising ahead: a hit from a
+## quarter metre over the feet to head height) the ball is lifted onto a level floor,
 ## the last wall scoop's while the feet are near it, else half a metre under the feet (level_floor), so a tunnel
 ## dug walking in runs level instead of ramping with its half-cut floor; T scoops the ball of scoop_ball m there
 ## in the voxel box (loose first, then solid dirt and clay with the swell,
@@ -179,7 +180,8 @@ func shovel_hit() -> Dictionary:
 	var q := terrain.station.to_local(hit.position)
 	var n: Vector3 = terrain.station.global_basis.inverse() * hit.normal
 	var feet_h := Cyl.height_of(foot_point(at, up), R)
-	var level := absf(n.dot(up)) < 0.75 and Cyl.height_of(q, R) >= feet_h - 1.0
+	var h := Cyl.height_of(q, R)
+	var level := (absf(n.dot(up)) < 0.75 and h >= feet_h - 1.0) or (h >= feet_h + 0.25 and h < feet_h + 2.25)
 	if level:
 		_floor = level_floor(_floor, feet_h)
 		q = Cyl.position(Cyl.theta_of(q), q.z, _floor + terrain.tool_params.scoop_ball, R)
