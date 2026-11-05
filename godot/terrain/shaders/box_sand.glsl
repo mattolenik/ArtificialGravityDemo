@@ -26,9 +26,10 @@
 //   voxel under it holding under a quarter) reaches half the material's free height (its roof span), dry to
 //   saturated by the column's saturation, times the roof's thickness (the solid from it up to the first voxel
 //   under a quarter, in metres, capped at one). In the layer under it, within the reach (theta scaled by the
-//   cell's width), a support is a voxel holding half a voxel of solid and loose together, a pillar, or one
-//   outside the box (VoxelBox.span_fails): with none it fails, and with the nearest beyond half the reach and
-//   none across from it (more than a right angle away) it fails as a cantilever. It fails as the slope
+//   cell's width), a support is a voxel holding half a voxel of solid and loose together, a pillar, a post's
+//   cap (the voxel standing on a pillar voxel, which a neighbour's roof voxel a layer over the post's top
+//   reads), or one outside the box (VoxelBox.span_fails): with none it fails, and with the nearest beyond half
+//   the reach and none across from it (more than a right angle away) it fails as a cantilever. It fails as the slope
 //   stability's voxel does, slump_rate of its solid a step (all of it once that is under move_eps): `out`'s high
 //   half, arriving as loose times the swell in its own room (half at most; a quarter when the voxel over it
 //   may fail into it too) and the room of the air voxel under it (a quarter at most). The apply pass's face rule
@@ -437,7 +438,12 @@ bool support(ivec3 p) {
 		return false;
 	}
 	uint w0 = pool[v.addr];
-	return (w0 & 0xFFFFu) + (w0 >> 16) >= uint(ONE) / 2u || (pool[v.addr + 1] & 255u) == uint(PILLAR);
+	if ((w0 & 0xFFFFu) + (w0 >> 16) >= uint(ONE) / 2u || (pool[v.addr + 1] & 255u) == uint(PILLAR)) {
+		return true;
+	}
+	// A post's cap: the voxel standing on a pillar voxel, the roof's partial the post holds up.
+	V u = find(p - ivec3(0, 0, 1));
+	return u.ok && (pool[u.addr + 1] & 255u) == uint(PILLAR);
 }
 
 // The span rule at the column's roof voxels, after flux_column has read the column (fs, fl, mt_, sat).
