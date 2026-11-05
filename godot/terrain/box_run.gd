@@ -38,8 +38,8 @@
 ##    player teleported into it, 28 scoops along +z into its wall, two
 ##    abreast, two rows high and every half metre (a tunnel 2 m wide, 2.5 m tall, 4 m long under a roof half a metre
 ##    thick): the wall's chunk is touched and its mesh lands within 1 s (a ChunkMesh with faces) under an
-##    unchanged surface (the roof top); the player walks into the tunnel by W for 2 s with one more scoop at
-##    its end half way (a remesh under the feet): never held, the feet over ground every frame
+##    unchanged surface (the roof top, rows 3 to 5: the rim's slivers fall by the span rule); the player walks
+##    into the tunnel by W for 2 s with one more scoop at its end half way (a remesh under the feet): never held, the feet over ground every frame
 ##    (Terrain.covered, and a ray down from the feet within 0..0.5 m), at least 3 m walked; a shot from inside
 ##    looking back out (user://debug/box_tunnel.png); the remesh lists' GPU time against 0.5 ms a chunk and the
 ##    chunk landings' CPU ms (the arrays, the surface and the trimesh) against 2 ms, printed.
@@ -620,8 +620,10 @@ func _tunnel(c: Vector2i) -> bool:
 		return false
 	var floor_h := _f(_read("surface"), c) + _f(_read("loose"), c)
 	var s0 := _read("surface")
+	# The tunnel's roof, rows 3 to 5 of its two columns: the rim (row 2) is left out, its columns holding only
+	# the slivers the pit ball's side cut leaves there, which fall by the span rule.
 	var tunnel: Array[Vector2i] = []
-	for row in range(2, 6):
+	for row in range(3, 6):
 		tunnel.append(c + Vector2i(0, row))
 		tunnel.append(c + Vector2i(1, row))
 	# A ball at x cells across the pit's first column, d cells along +z from its centre, h over the floor.
