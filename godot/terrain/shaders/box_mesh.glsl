@@ -126,10 +126,12 @@ int column_runs(ivec3 ck, out float starts[RUNS], out float ends[RUNS]) {
 // in each direction, within 2.5 voxels, so a vertical edge's crossing interpolates to a run's exact end
 // whichever voxel the end lies in (column_runs). A run thinner than a voxel that passes no voxel's centre
 // (a tunnel's roof under a shallow pit, split over two partial voxels) would vanish: when it stands alone,
-// half a voxel or more of air on both sides, the voxel holding its larger part stands solid for it (the
-// upper on a tie), the run's far end exact, its near end snapped to that centre. A sliver a ball's curved
-// cut leaves just over a pit's floor is a centreless run too, but not alone: it stays air, as the surface
-// nets would have it. The fill less a half (the density before 2026-11-04) put every end in the middle third of
+// half a voxel or more of air on both sides, and the fill goes on past the voxel on all four sides at its
+// layer (a sheet, as a roof is), the voxel holding its larger part stands solid for it (the upper on a
+// tie), the run's far end exact, its near end snapped to that centre. A sliver a ball's curved cut leaves
+// just over a pit's floor is a centreless run too, but not alone, and the slivers left in a thin wall
+// between two cuts are alone but no sheet (air across the wall): both stay air, as the surface nets would
+// have them, where the second once stood as a stack of floating shelves. The fill less a half (the density before 2026-11-04) put every end in the middle third of
 // its voxel, which meshed a slope as a stair of bricks and lit it as one, drew a thin roof's top 0.6 m low
 // as a dark riser and lost it where no centre was solid.
 S sample_at(ivec3 ck) {
@@ -154,8 +156,10 @@ S sample_at(ivec3 ck) {
 			r.down = max(r.down, -(c - ends[i]));
 		}
 	}
-	if (!solid) {
-		for (int i = 0; i < n; i++) {
+	if (!solid && f > 0.0) {
+		bool sheet = min(fill_at(ck + ivec3(1, 0, 0)), fill_at(ck - ivec3(1, 0, 0))) >= 0.2
+				&& min(fill_at(ck + ivec3(0, 1, 0)), fill_at(ck - ivec3(0, 1, 0))) >= 0.2;
+		for (int i = 0; i < n && sheet; i++) {
 			bool overlaps = ends[i] > 0.0 && starts[i] < 1.0;
 			bool centreless = floor(ends[i] - 0.5) < ceil(starts[i] - 0.5);
 			bool alone = (i == 0 || starts[i] - ends[i - 1] >= 0.5) && (i + 1 == n || starts[i + 1] - ends[i] >= 0.5);
