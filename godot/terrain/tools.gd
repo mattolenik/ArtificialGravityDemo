@@ -340,7 +340,7 @@ func _process(_delta: float) -> void:
 	if not is_nan(_pillar_result):
 		var n := roundi(_pillar_result)
 		if n > 0:
-			print("A pillar of %d m" % n)
+			print("A pillar stands")
 		elif n < 0:
 			print("The pillar taken away")
 		else:

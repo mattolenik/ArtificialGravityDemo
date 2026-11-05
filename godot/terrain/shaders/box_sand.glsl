@@ -442,9 +442,10 @@ bool support(ivec3 p) {
 	if ((w0 & 0xFFFFu) + (w0 >> 16) >= uint(ONE) / 2u || (pool[v.addr + 1] & 255u) == uint(PILLAR)) {
 		return true;
 	}
-	// A post's cap: the voxel standing on a pillar voxel, the roof's partial the post holds up.
+	// A post's cap: the voxel standing on a pillar voxel, the roof's partial the post holds up. It must hold
+	// something: over a post whose cap was dug away the empty voxel holds no roof across its air.
 	V u = find(p - ivec3(0, 0, 1));
-	return u.ok && (pool[u.addr + 1] & 255u) == uint(PILLAR);
+	return w0 != 0u && u.ok && (pool[u.addr + 1] & 255u) == uint(PILLAR);
 }
 
 // The span rule at the column's roof voxels, after flux_column has read the column (fs, fl, mt_, sat).

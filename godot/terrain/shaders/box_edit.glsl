@@ -338,9 +338,10 @@ void tamp_column(ivec2 cxz) {
 		return;
 	}
 	// The folded solid settles onto the solid under it: each voxel's solid moves down while the voxel under
-	// has room, so the column packs as one run.
+	// has room, so the column packs as one run. A pillar voxel stays whole: its solid is the post's, not dirt to
+	// settle into the floor under it.
 	for (int i = 1; i < pc.extent.z; i++) {
-		if (c.fs[i] == 0u || !c.ok[i - 1]) {
+		if (c.fs[i] == 0u || !c.ok[i - 1] || int(c.w1[i] & 255u) == PILLAR) {
 			continue;
 		}
 		int room = int(ONE) - int(c.fs[i - 1]) - int(c.fl[i - 1]);
@@ -612,6 +613,9 @@ void scoop_column(ivec2 cxz) {
 	}
 	wake(ivec3(cxz, kz0));
 	wake(ivec3(cxz, kz0 + nk - 1));
+	// The voxel over the range's top: a ball that clears a brick's top voxel leaves the roof voxel over it in
+	// the next brick up, which the span rule must judge.
+	wake(ivec3(cxz, kz0 + nk));
 	dirty[col] = 1u;
 }
 

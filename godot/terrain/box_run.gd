@@ -92,13 +92,17 @@
 ##    a metre over the gap's bottom and a quarter under its top meet the drawn post at its cell (box_mesh.glsl
 ##    bridges it into the floor's and the roof's partial voxels; a shot, user://debug/box_pillar.png); the same
 ##    again takes it away (no pillar voxel left, the gap's material 0 once settled, the gap kept); a hit 2 m
-##    under the tunnel's floor (solid over it, as a wall's) stands nothing; place_pillar on the open ground
-##    3 cells antispinward of the pit stands nothing (no roof within the reach). Tools.pillars counts each.
+##    under the tunnel's floor (solid over it, as a wall's) stands nothing; P aimed a quarter metre under the
+##    open ground's surface 3 cells antispinward of the pit stands nothing (sky over it, no roof within the
+##    reach). Tools.pillars counts each.
 ##    Then the post stood again and the tunnel dug round it to a room 6 m wide and 8 m long (balls on its line
 ##    and 1.5 cells either side, every half metre from 1.5 to 7.5 m along): 10 s on, over the post's column
 ##    and the one past it (the room's middle), on its row and the row before it, the surface is unchanged
 ##    since before the pit within 0.05 m and the solid loses under 0.25 m³ (at most the underside's sliver);
-##    the post taken away, within 10 s the post's column and the one past it lose 0.9 m³ of solid or more
+##    0.05 m³ of loose dumped on the post's floor voxel and a landing's tamp (VoxelBox.tamp, the feet on the
+##    floor a cell before the post, the five-cell plus over the post) leave the post's voxels as they were; the
+##    post's column reloaded from the window (the GPU unpack of its pillar gap) gives them back the same, and
+##    the surface over the room's middle stays unchanged within 0.05 m; the post taken away, within 10 s the post's column and the one past it lose 0.9 m³ of solid or more
 ##    each (the roof fell and the surface opened). The solid is summed from the voxels, the post's left out.
 ## The GPU time of the unpack lists (the first fill, the moves, the reload) and the pack lists is printed
 ## against 0.5 ms per brick allocated.
@@ -1349,11 +1353,14 @@ func _pillar(c: Vector2i) -> bool:
 	var buried: bool = (pillar_of.call(_column_vox(_stack(cell), cell)) as Array[int]).is_empty()
 	print("pillar: 2 m under the tunnel's floor at %s: no pillar voxel %s; pillars %d" % [cell, buried, _tools.pillars])
 	_report("P on a hit with solid over it stands nothing", buried and _tools.pillars == n0)
+	# P on the open ground: aimed a quarter metre under its surface (in its top voxel, the floor the op passes),
+	# so the op runs from that floor up to the sky and finds no roof within the reach.
 	var open := c + Vector2i(-3, 0)
-	_tools.place_pillar(open)
+	var open_h := Cyl.height_of(_tools.surface_point(open), p.radius) - 0.25
+	_tools.pillar(Cyl.position((open.x + 0.5) * p.dtheta(), -p.length / 2.0 + open.y + 0.5, open_h, p.radius))
 	await _frames(10)
 	var bare: bool = (pillar_of.call(_column_vox(_stack(open), open)) as Array[int]).is_empty()
-	print("pillar: on the open ground at %s: no pillar voxel %s; pillars %d" % [open, bare, _tools.pillars])
+	print("pillar: on the open ground at %s, aimed at %.2f (the surface %.2f): no pillar voxel %s; pillars %d" % [open, open_h, open_h + 0.25, bare, _tools.pillars])
 	_report("P on open ground stands nothing", bare and _tools.pillars == n0)
 	# The post stood again and the tunnel dug round it to a room 6 m wide (balls 1.5 cells either side of its
 	# line) and 8 m long (a room as short as the tunnel stands without the post, held across its short side):
@@ -1388,6 +1395,44 @@ func _pillar(c: Vector2i) -> bool:
 	# at (1, -1) over a 4.20 m pit), as the roof phase's tunnel does: it reads its supports a voxel down, where
 	# the bore is widest. The roof over it holds; a fall loses a metre of it.
 	_report("a pillar holds a 6 m room", _tools.pillars == n0 + 1 and moved <= 0.05 and drift <= 0.25)
+	# A landing's tamp beside the post with loose in its column: 0.05 m³ dumped into the post's floor voxel
+	# (the ball fills the nearest voxel first), then the tamp with the feet on the floor a cell before the
+	# post, its plus over the post's column and its voxels two under to two over the feet's (the floor's and
+	# the post's bottom). The tamp's settle moves no pillar's solid into the floor under it.
+	var posts: Array[int] = pillar_of.call(_column_vox(_stack(cell), cell))
+	var at := func(x: Vector2i, h: float) -> Vector3:
+		return Cyl.position((x.x + 0.5) * p.dtheta(), -p.length / 2.0 + x.y + 0.5, h, p.radius)
+	var dumped := _terrain.box.dump(at.call(cell, bottom + posts[0] - 0.5), _terrain.tool_params.scoop_ball, 0.05, Callable()) if not posts.is_empty() else false
+	await _frames(3)
+	# The loose under the post within the tamp's voxels (it may have fallen a voxel onto the floor's partial).
+	var under := _column_vox(_stack(cell), cell)
+	var held_loose := 0
+	for i in range(maxi(posts[0] - 4, 0), posts[0]) if not posts.is_empty() else []:
+		held_loose += under.loose[i]
+	var tamped := _terrain.box.tamp(at.call(cell + Vector2i(0, -1), floor_h), _terrain.tool_params.foot_radius, _terrain.tool_params.tamp_step,
+			_terrain.materials.swell_factor[0])
+	await _frames(3)
+	var whole := func(vox: Dictionary) -> bool:
+		return pillar_of.call(vox) == posts and posts.all(func(i: int) -> bool: return vox.solid[i] == VoxelColumn.FRACTION_ONE)
+	var kept_post: bool = whole.call(_column_vox(_stack(cell), cell))
+	print("pillar: the post's voxels %s; 0.05 m³ dumped on its floor voxel (%s, the loose under the post %d), a tamp beside it (%s): the post's voxels whole %s" % [
+			posts, dumped, held_loose, tamped, kept_post])
+	_report("a landing's tamp beside a post leaves its voxels whole", not posts.is_empty() and dumped and held_loose > 0 and tamped and kept_post)
+	# The post's column packed (settled) and reloaded from the window: the GPU unpack of its pillar gap gives
+	# back the same voxels, and the room still holds.
+	waited = await _settled(cell)
+	await _frames(10)
+	_terrain.box.reload([cell])
+	await _frames(3)
+	var reloaded: bool = whole.call(_column_vox(_stack(cell), cell))
+	await get_tree().create_timer(5.0).timeout
+	var s2 := _read("surface")
+	var held := 0.0
+	for x in sides:
+		held = maxf(held, absf(_f(s2, x) - _f(s0, x)))
+	print("pillar: settled in %.2f s, the post's column reloaded: its voxels %s, whole %s; 5 s on the surface over the room's middle moved %.3f m at most since before the pit" % [
+			waited, pillar_of.call(_column_vox(_stack(cell), cell)), reloaded, held])
+	_report("the unpack gives a pillar back, and the room holds", waited >= 0.0 and reloaded and held <= 0.05)
 	_tools.place_pillar(cell)
 	var start := Time.get_ticks_msec()
 	var fell := -1.0
