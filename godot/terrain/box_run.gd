@@ -904,10 +904,18 @@ func _play(c: Vector2i) -> bool:
 		off = maxf(off, absf(d))
 		across.append("%+d: %s" % [dx, ("%+.2f" % d) if g.is_finite() else "none"])
 	print("play: 6 m inside the chunk's +z edge, the collider over the packed surface across the tunnel's line: %s" % ", ".join(across))
+	for dx in range(-1, 2):
+		var cell := Vector2i(pit.x + dx, edge_row - 6)
+		var vox := _column_vox(_stack(cell), cell)
+		var ks := floori(_f(sf, cell)) - box.bottom()
+		var fills: Array[String] = []
+		for i in range(ks - 5, ks + 2):
+			fills.append("%d: %.2f" % [i + box.bottom(), (vox.solid[i] + vox.loose[i]) / float(VoxelColumn.FRACTION_ONE)])
+		print("play: the column at %+d (surface %.2f): %s" % [dx, _f(sf, cell), ", ".join(fills)])
 	# A tunnel's roof thinner than a voxel is a slab split over two partial voxels: the mesher once lost it
 	# (the collider 3.5 m under the surface there, a player over the tunnel falling in) or drew its top 0.6 m
-	# low.
-	_report("the ground over the tunnel stays in the collider", off <= 0.3)
+	# low; a slab with no solid centre still snaps its near end to a voxel centre, up to half a metre off.
+	_report("the ground over the tunnel stays in the collider", off <= 0.5)
 	_face(Vector3(0, 0, 1))
 	_player.look(Vector2(0.0, 60.0))
 	await _frames(5)
@@ -1018,7 +1026,15 @@ func _chunk_landed(ch: Vector2i, limit: float) -> float:
 ## stands there: not held, the feet over ground (Terrain.covered) within 0..0.3 m of the collider under them.
 func _stand_in_tunnel(c: Vector2i) -> bool:
 	var p := _terrain.params
-	_player.global_position = _station.global_transform * Cyl.position((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 2.5, _tunnel_floor + 1.0 + Tools.STAND, p.radius)
+	# Onto the ground a ray from 2.5 m over the tunnel's floor meets (a pile dumped there, else the floor): a
+	# player placed at the floor's height stands inside a pile's mesh, and Jolt's back-face contact may push
+	# it down through the floor before the unbury rule lifts it.
+	var at := Cyl.position((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 2.5, _tunnel_floor + 2.5, p.radius)
+	var ground := _terrain.ground_below(at, 3.0)
+	if not ground.is_finite():
+		ground = Cyl.position((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 2.5, _tunnel_floor, p.radius)
+	var up := Vector3(-sin(Cyl.theta_of(ground)), cos(Cyl.theta_of(ground)), 0.0)
+	_player.global_position = _station.global_transform * (ground + up * (1.0 + Tools.STAND))
 	_face(Vector3(0, 0, 1))
 	await _frames(10)
 	var hit := _ray_down()

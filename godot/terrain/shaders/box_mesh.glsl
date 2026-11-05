@@ -85,75 +85,90 @@ float fill_at(ivec3 ck) {
 	return min((float(w0 & 0xFFFFu) + float(w0 >> 16)) / ONE, 1.0);
 }
 
-// How far past the face of the voxel at ck toward dir (+1 up, -1 down) its run (solid where `solid` is 1,
-// air where 0) goes on before its end, within two voxels: a neighbour of the same stuff adds a voxel, a
-// partial one its share of that stuff (a partial voxel holds its fill as a slab against the full voxel it
-// continues, so a full voxel's end lies past the partial over or under it and an empty voxel's lies short of
-// the partial under or over it), an unlike one nothing.
-float run_past(ivec3 ck, int dir, float solid) {
-	float e = 0.0;
-	for (int i = 1; i <= 2; i++) {
-		float g = fill_at(ck + ivec3(0, 0, dir * i));
-		float share = solid > 0.5 ? g : 1.0 - g;
-		if (share < 1.0) {
-			return e + share;
-		}
-		e += 1.0;
+// The solid runs of ck's column over the seven voxels around it, as heights from ck's floor: a full voxel
+// is solid throughout, a partial one holds its fill as a slab at its floor (where the voxel under it holds
+// at least as much as the one over it) or at its roof, and slabs that touch merge into one run.
+const int RUNS = 7;
+int column_runs(ivec3 ck, out float starts[RUNS], out float ends[RUNS]) {
+	float g[RUNS + 2];
+	for (int i = 0; i < RUNS + 2; i++) {
+		g[i] = fill_at(ck + ivec3(0, 0, i - 4));
 	}
-	return e;
+	int n = 0;
+	for (int i = 1; i <= RUNS; i++) {
+		float f = g[i];
+		if (f <= 0.0) {
+			continue;
+		}
+		float lo = float(i - 4);
+		float a = lo;
+		float b = lo + 1.0;
+		if (f < 1.0) {
+			if (g[i - 1] >= g[i + 1]) {
+				b = lo + f;
+			} else {
+				a = lo + 1.0 - f;
+			}
+		}
+		if (n > 0 && ends[n - 1] >= a - 1e-4) {
+			ends[n - 1] = b;
+		} else {
+			starts[n] = a;
+			ends[n] = b;
+			n++;
+		}
+	}
+	return n;
 }
 
-// The voxel at ck: its density is the signed distance along the column from its centre to the nearest end of
-// its run, solid positive, and `up` and `down` the distances to the end in each direction (run_past, two
-// neighbours each way), so a vertical edge's crossing interpolates to the run's exact end whichever voxel
-// the end lies in: a partial voxel holds its fill as a slab at its floor (where the voxel under it holds
-// at least as much as the one over it) or at its roof, its centre solid when the slab passes it. A slab
-// thinner than a voxel across the face between two partials holds no centre at all (a tunnel's roof under
-// a shallow pit): the voxel with the larger share stands solid for it (the upper on a tie), the slab's far
-// end exact across the face, its near end snapped to that centre. The fill less a half (the density before
-// 2026-11-04) put every end in the middle third of its voxel, which meshed a slope as a stair of bricks and
-// lit it as one, drew a thin roof's top 0.6 m low as a dark riser and lost it where no centre was solid.
+// The voxel at ck: its density is the signed distance along the column from its centre to the nearer end of
+// the run it is in (solid) or of the air it is in (negative), and `up` and `down` the distances to the end
+// in each direction, within 2.5 voxels, so a vertical edge's crossing interpolates to a run's exact end
+// whichever voxel the end lies in (column_runs). A run thinner than a voxel that passes no voxel's centre
+// (a tunnel's roof under a shallow pit, split over two partial voxels) would vanish: when it stands alone,
+// half a voxel or more of air on both sides, the voxel holding its larger part stands solid for it (the
+// upper on a tie), the run's far end exact, its near end snapped to that centre. A sliver a ball's curved
+// cut leaves just over a pit's floor is a centreless run too, but not alone: it stays air, as the surface
+// nets would have it. The fill less a half (the density before 2026-11-04) put every end in the middle third of
+// its voxel, which meshed a slope as a stair of bricks and lit it as one, drew a thin roof's top 0.6 m low
+// as a dark riser and lost it where no centre was solid.
 S sample_at(ivec3 ck) {
 	float f = fill_at(ck);
 	S r;
 	r.df = f - 0.5;
-	bool solid;
-	if (f >= 1.0) {
-		solid = true;
-		r.up = 0.5 + run_past(ck, 1, 1.0);
-		r.down = 0.5 + run_past(ck, -1, 1.0);
-	} else if (f <= 0.0) {
-		solid = false;
-		r.up = -(0.5 + run_past(ck, 1, 0.0));
-		r.down = -(0.5 + run_past(ck, -1, 0.0));
-	} else {
-		float fu = fill_at(ck + ivec3(0, 0, 1));
-		float fd = fill_at(ck - ivec3(0, 0, 1));
-		bool floor_slab = fd >= fu;
-		int dir = floor_slab ? -1 : 1;
-		float fa = floor_slab ? fd : fu;
-		solid = f > 0.5;
-		float free_end;
-		float attached;
-		if (solid) {
-			free_end = f - 0.5;
-			attached = 0.5 + run_past(ck, dir, 1.0);
+	float starts[RUNS];
+	float ends[RUNS];
+	int n = column_runs(ck, starts, ends);
+	const float c = 0.5;
+	bool solid = false;
+	r.up = -2.5;
+	r.down = -2.5;
+	for (int i = 0; i < n; i++) {
+		if (starts[i] <= c && c <= ends[i]) {
+			solid = true;
+			r.up = min(ends[i] - c, 2.5);
+			r.down = min(c - starts[i], 2.5);
+		} else if (starts[i] > c) {
+			r.up = max(r.up, -(starts[i] - c));
 		} else {
-			// The neighbour on the attached side, a partial with no solid centre either, holds its slab
-			// against ours when it lies at its far end: ours stands for both when ours is the larger.
-			float faa = fill_at(ck + ivec3(0, 0, 2 * dir));
-			bool joined = fa > 0.0 && fa <= 0.5 && (floor_slab ? faa < f : faa <= f);
-			if (joined && (f > fa || (f == fa && floor_slab))) {
-				solid = true;
-				free_end = 0.0;
-				attached = 0.5 + fa;
-			} else {
-				free_end = -(0.5 + run_past(ck, -dir, 0.0));
-				attached = -(0.5 - f);
+			r.down = max(r.down, -(c - ends[i]));
+		}
+	}
+	if (!solid) {
+		for (int i = 0; i < n; i++) {
+			bool overlaps = ends[i] > 0.0 && starts[i] < 1.0;
+			bool centreless = floor(ends[i] - 0.5) < ceil(starts[i] - 0.5);
+			bool alone = (i == 0 || starts[i] - ends[i - 1] >= 0.5) && (i + 1 == n || starts[i + 1] - ends[i] >= 0.5);
+			if (overlaps && centreless && alone) {
+				float mine = min(ends[i], 1.0) - max(starts[i], 0.0);
+				float other = ends[i] - starts[i] - mine;
+				if (mine > other || (mine == other && starts[i] < 0.0)) {
+					solid = true;
+					r.up = max(ends[i] - c, 0.0);
+					r.down = max(c - starts[i], 0.0);
+				}
 			}
 		}
-		r.up = floor_slab ? free_end : attached;
-		r.down = floor_slab ? attached : free_end;
 	}
 	r.d = (solid ? 1.0 : -1.0) * min(abs(r.up), abs(r.down));
 	r.mat = 0u;

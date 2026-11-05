@@ -265,7 +265,11 @@ func _process(delta: float) -> void:
 	box.remesh_dirty(Time.get_ticks_msec() / 1000.0)
 	if box.exists() and box.top() != _box_top:
 		_box_top = box.top()
-		_tiles[0].material_override.set_shader_parameter("box_top", float(_box_top))
+		# The band the chunks' meshes draw in: a voxel inside the box's floor and ceiling, where the mesh is
+		# complete (its last crossing lies half a voxel in); the tiles draw the ground outside it.
+		for m: ShaderMaterial in [_tiles[0].material_override, box.chunk_material]:
+			m.set_shader_parameter("box_top", float(_box_top) - 1.0)
+			m.set_shader_parameter("box_bottom", float(box.bottom()) + 1.0)
 		patch.box_top = float(_box_top)
 	# Settled tiles are packed after the step's lists, so the pack sees the last apply.
 	var settled := sim.step(window, delta)
@@ -560,6 +564,7 @@ func _chunk_material() -> ShaderMaterial:
 	m.set_shader_parameter("dtheta", params.dtheta())
 	m.set_shader_parameter("z0", -params.length / 2.0)
 	m.set_shader_parameter("n_theta", params.n_theta())
+	m.set_shader_parameter("R", params.radius)
 	return m
 
 

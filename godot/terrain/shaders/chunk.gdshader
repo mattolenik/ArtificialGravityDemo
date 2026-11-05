@@ -15,9 +15,16 @@ uniform float dtheta;
 // Station-local z of row 0.
 uniform float z0;
 uniform int n_theta;
+// The hull radius and the box's band: the mesh is complete only between a voxel over the box's floor and a
+// voxel under its ceiling, and the ground tile draws the rest, so the fragments outside the band go.
+uniform float R = 1e9;
+uniform float box_bottom = -1e9;
+uniform float box_top = 1e9;
 
 // The normal's component toward the axis: 1 on a flat floor, -1 on a roof.
 varying float up;
+// The vertex's height over the hull.
+varying float h_v;
 
 
 void vertex() {
@@ -25,6 +32,7 @@ void vertex() {
 	theta_z = vec2(atan(VERTEX.x, -VERTEX.y), VERTEX.z);
 	vec3 up_local = normalize(vec3(-VERTEX.x, -VERTEX.y, 0.0));
 	up = dot(NORMAL, up_local);
+	h_v = R - length(VERTEX.xy);
 	bar_up = (VIEW_MATRIX * vec4(mat3(MODEL_MATRIX) * up_local, 0.0)).xyz;
 }
 
@@ -36,6 +44,9 @@ float hash(ivec2 p) {
 }
 
 void fragment() {
+	if (h_v >= box_top || h_v < box_bottom) {
+		discard;
+	}
 	int id = clamp(int(round(COLOR.r * 255.0)), 0, 3);
 	bool pile = COLOR.g > 0.5;
 	id = pile ? 0 : id;

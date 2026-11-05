@@ -21,8 +21,10 @@ varying float wet;
 // The vertex's texels: loose dirt, m, and saturation, 0..1.
 varying float loose_v;
 varying float sat_v;
-// Cells to the nearest chunk drawn by its mesh (cylinder_tile.gdshaderinc's chunk_dist).
+// Cells to the nearest chunk drawn by its mesh (cylinder_tile.gdshaderinc's chunk_dist), and the vertex's
+// ground height, for the box's band.
 varying float chunk_d;
+varying float h_v;
 
 void vertex() {
 	ivec2 k = grid_cell(VERTEX);
@@ -40,8 +42,10 @@ void vertex() {
 	up = n.y;
 	NORMAL = unbend_normal(VERTEX.x, n);
 	bar_up = (VIEW_MATRIX * vec4(mat3(MODEL_MATRIX) * unbend_normal(VERTEX.x, vec3(0.0, 1.0, 0.0)), 0.0)).xyz;
-	chunk_d = chunk_dist(p, h);
-	VERTEX = bend(VERTEX.x, VERTEX.z, (in_hole(p, 0.0) || chunk_d < 2.0) ? h - 0.25 * cell : h);
+	chunk_d = chunk_dist(p);
+	h_v = h;
+	float sink = in_hole(p, 0.0) ? 1.0 : (chunk_d < 2.0 ? box_band(h) : 0.0);
+	VERTEX = bend(VERTEX.x, VERTEX.z, h - 0.25 * cell * sink);
 }
 
 // Value in [0, 1] per integer cell.
@@ -52,7 +56,7 @@ float hash(ivec2 p) {
 }
 
 void fragment() {
-	if (in_hole(theta_z, 1.0) || chunk_d < 1.0) {
+	if (in_hole(theta_z, 1.0) || (chunk_d < 1.0 && box_band(h_v) > 0.0)) {
 		discard;
 	}
 	ivec2 k = ivec2(round(local_cell));
