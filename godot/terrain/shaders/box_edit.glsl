@@ -1,7 +1,7 @@
 #[compute]
 #version 450
 
-// The box's tool ops (VoxelBox.scoop and dump; tamp, bore and spoil follow): one workgroup of 8 x 8 x 8
+// The box's tool ops (VoxelBox.scoop and dump; tamp, bore, spoil and pillar follow): one workgroup of 8 x 8 x 8
 // invocations over the ball's bounding box of voxels (`first`, `extent`; theta index unwrapped near the
 // centre), the ball of `radius` m around `centre` (theta index, z index, height, continuous) in metres
 // (across: cells times (R - h) dtheta). Modes:
@@ -38,6 +38,12 @@
 //   its ground, or a sheet over 1 cm) refuses the tick with counter[1] set: the window's bore pumps instead.
 // 5 spoil: `amount` m³ of fresh loose spread evenly over the disc's columns, each share onto the column's
 //   stack top as the push places it (the voxel over a full top), counted in counter[0].
+// 6 pillar, one column (the disc of radius 0) over the voxels from the hit's height to its reach over it: the
+//   voxels there holding a pillar become air, counted negative in counter[0] (in millionths, as the other
+//   counts); with none, the floor's voxels from the hit's up (holding solid or loose, not a roof's hanging
+//   underside) are passed and the air over them up to the first voxel holding solid (the roof) becomes solid
+//   ONE of material PILLAR, counted in counter[0]. No roof within the range (the air runs out of it, into an
+//   unallocated brick or onto loose with nothing solid in it): nothing changes, counted 0. No mass moves.
 // A changed voxel flags its column dirty and wakes its brick.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
@@ -425,6 +431,38 @@ void spoil_column(ivec2 cxz) {
 	store_column(cxz, c);
 }
 
+void pillar_column(ivec2 cxz) {
+	Column c = load_column(cxz);
+	int n = 0;
+	for (int i = 0; i < pc.extent.z; i++) {
+		if (c.fs[i] > 0u && int(c.w1[i] & 255u) == PILLAR) {
+			c.fs[i] = 0u;
+			c.w1[i] &= 0x00FF0000u;
+			n--;
+		}
+	}
+	if (n == 0) {
+		int i = 0;
+		while (i < pc.extent.z && c.ok[i] && c.fs[i] + c.fl[i] > 0u && ((c.w1[i] >> 24) & 1u) == 0u) {
+			i++;
+		}
+		int lo = i;
+		while (i < pc.extent.z && c.ok[i] && c.fs[i] + c.fl[i] == 0u) {
+			i++;
+		}
+		if (i == lo || i == pc.extent.z || !c.ok[i] || c.fs[i] == 0u) {
+			return;
+		}
+		for (int k = lo; k < i; k++) {
+			c.fs[k] = uint(ONE);
+			c.w1[k] = (c.w1[k] & 0x00FF0000u) | uint(PILLAR);
+			n++;
+		}
+	}
+	atomicAdd(counter[0], uint(n * 1000000));
+	store_column(cxz, c);
+}
+
 // Whether a scoop would give the column at ckxy a fifth gap: four stored already, and the ball's voxels
 // there plus one either side all full solid.
 bool fifth_gap(ivec2 ckxy) {
@@ -678,6 +716,8 @@ void main() {
 		bore_column(ck.xy);
 	} else if (pc.mode == 5) {
 		spoil_column(ck.xy);
+	} else if (pc.mode == 6) {
+		pillar_column(ck.xy);
 	}
 }
 // (A change to box_column.glslh does not reimport this file: edit it to pick the include up.)

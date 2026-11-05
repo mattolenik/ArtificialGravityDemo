@@ -75,6 +75,12 @@
 ##    voxel holding dirt with air under and over it are counted and printed (the shells of 2026-11-04: the
 ##    surface's skin the scoop keeps over a ball cut under it, box_edit.glsl's THIN_ROOF, the same slab as a
 ##    tunnel's roof; reported, not asserted, until the collapse project).
+## pillar (the middle of a chunk 216 cells past the spawn): the tunnel phase's pit, five scoops deep (_pit to
+##    4.2 m), and its tunnel, the player stood two cells in; Tools.place_pillar at the tunnel's cell 4 along
+##    +z: the voxels between the floor's and the roof's hold solid FRACTION_ONE of material 4, one run, and once
+##    settled the packed column's first gap is a pillar's (gap_material0 == 4); the same again takes it away
+##    (no pillar voxel left, the gap's material 0 once settled, the gap kept); place_pillar on the open ground
+##    3 cells antispinward of the pit stands nothing (no roof within the reach). Tools.pillars counts each.
 ## The GPU time of the unpack lists (the first fill, the moves, the reload) and the pack lists is printed
 ## against 0.5 ms per brick allocated.
 extends "res://terrain/tool_run.gd"
@@ -98,7 +104,8 @@ func _route() -> void:
 		"tunnel": _tunnel.bind(Vector2i(t_site.x / 16 * 16 + 8, t_site.y / 16 * 16 + 5)), "inside": _inside,
 		"tscroll": _tunnel_scroll, "trestart": _tunnel_restart,
 		"play": _play.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 48) / 16 * 16 + 5)),
-		"shell": _shell.bind(Vector2i(spawn.x / 16 * 16 + 8, (spawn.y - 120) / 16 * 16 + 8))}
+		"shell": _shell.bind(Vector2i(spawn.x / 16 * 16 + 8, (spawn.y - 120) / 16 * 16 + 8)),
+		"pillar": _pillar.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 96) / 16 * 16 + 5))}
 	for phase: String in phases:
 		if not only.is_empty() and phase != only and not (only in ["inside", "tscroll", "trestart"] and phase == "tunnel") \
 				and not (only in ["tscroll", "trestart"] and phase == "inside"):
@@ -598,14 +605,9 @@ func _tunnel(c: Vector2i) -> bool:
 	var box := _terrain.box
 	# A 2 x 2 pit, a scoop at a time round its cells until the first is 3.5 m deep: under dirt's 4 m free height
 	# so its walls stand, and deep enough for a 3 m tunnel under half a metre of roof.
-	var pit: Array[Vector2i] = [c, c + Vector2i(1, 0), c + Vector2i(0, 1), c + Vector2i(1, 1)]
-	var top := _f(_read("surface"), c)
-	var scoops := 0
-	while top - _f(_read("surface"), c) < 3.5 and scoops < 24:
-		await _scoop(pit[scoops % 4])
-		scoops += 1
-		await _frames(15)
-	var depth := top - _f(_read("surface"), c)
+	var scoops0 := _tools.scoops
+	var depth := await _pit(c, 3.5)
+	var scoops := _tools.scoops - scoops0
 	var waited := await _settled(c)
 	# Into the pit, over its first cell: the tunnel's floor is cut from that cell's floor.
 	_terrain.teleport((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5)
@@ -703,6 +705,19 @@ func _tunnel(c: Vector2i) -> bool:
 			parts = Vector2(st.node.mesh_ms, st.node.shape_ms)
 	print("tunnel: the remesh lists %s; the longest chunk landing %.2f ms (budget 2; of it the surface %.2f, the trimesh %.2f)" % [Smoke._stat(ms, 0.5), build, parts.x, parts.y])
 	return true
+
+
+## Scoops round the cells of the 2 x 2 pit at c (c and the cells +theta and +z of it), a ball at a time, until
+## c's surface is `depth` m under where it was (at most 24 scoops): the depth reached.
+func _pit(c: Vector2i, depth: float) -> float:
+	var pit: Array[Vector2i] = [c, c + Vector2i(1, 0), c + Vector2i(0, 1), c + Vector2i(1, 1)]
+	var top := _f(_read("surface"), c)
+	var scoops := 0
+	while top - _f(_read("surface"), c) < depth and scoops < 24:
+		await _scoop(pit[scoops % 4])
+		scoops += 1
+		await _frames(15)
+	return top - _f(_read("surface"), c)
 
 
 ## The tunnel phase's pit cell and the tunnel's floor height, for the inside phase.
@@ -1106,6 +1121,72 @@ func _shell(s: Vector2i) -> bool:
 
 func _cell_of(v: Vector3) -> Vector2i:
 	return _terrain.params.cell_of(Cyl.theta_of(v), v.z)
+
+
+## Phase pillar at c (see the header). False after quitting on a timeout.
+func _pillar(c: Vector2i) -> bool:
+	if not await _teleport(c + Vector2i(5, 0)):
+		return false
+	var p := _terrain.params
+	var depth := await _pit(c, 4.2)
+	var waited := await _settled(c)
+	_terrain.teleport((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5)
+	if not await _settled_patch():
+		return false
+	var floor_h := _f(_read("surface"), c) + _f(_read("loose"), c)
+	var aim := func(x: float, d: float, h: float) -> Vector3:
+		return Cyl.position((c.x + x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5 + d, floor_h + h, p.radius)
+	for k in 7:
+		await _scoop_at(aim.call(0.5, 1.5 + 0.5 * k, 1.5))
+	var landed := await _chunk_landed(VoxelBox.chunk_of_cell(c + Vector2i(0, 3)), 3.0)
+	await _frames(20)
+	# _stand_in_tunnel stands the player on _tunnel_floor's tunnel; the tunnel phase's is kept for the exit scoop.
+	var kept := _tunnel_floor
+	_tunnel_floor = floor_h
+	var stood := await _stand_in_tunnel(c)
+	_tunnel_floor = kept
+	print("pillar: the pit %.2f m deep, settled in %.2f s; the tunnel's chunk meshed in %.2f s; the player stood in it: %s" % [depth, waited, landed, stood])
+	_report("a tunnel under a pit five scoops deep, the player in it", depth >= 4.2 and waited >= 0.0 and landed >= 0.0 and stood)
+	var cell := c + Vector2i(0, 4)
+	var bottom := _terrain.box.bottom()
+	# The pillar's voxels: those holding solid of material 4.
+	var pillar_of := func(vox: Dictionary) -> Array[int]:
+		var out: Array[int] = []
+		for i in vox.solid.size():
+			if vox.material[i] == VoxelBox.PILLAR and vox.solid[i] > 0:
+				out.append(i)
+		return out
+	var n0 := _tools.pillars
+	_tools.place_pillar(cell)
+	await _frames(1)
+	var vox := _column_vox(_stack(cell), cell)
+	var ks: Array[int] = pillar_of.call(vox)
+	var stands: bool = not ks.is_empty() and ks[-1] - ks[0] + 1 == ks.size() and ks[0] > 0 and ks[-1] + 1 < vox.solid.size() \
+			and ks.all(func(i: int) -> bool: return vox.solid[i] == VoxelColumn.FRACTION_ONE and vox.loose[i] == 0) \
+			and vox.solid[ks[0] - 1] + vox.loose[ks[0] - 1] > 0 and vox.solid[ks[-1] + 1] > 0
+	waited = await _settled(cell)
+	var gm := _b(_read("gap_material0"), cell)
+	print("pillar: at %s over the floor at %.2f: voxels %s (heights %d..%d), the floor's voxel %d+%d, the roof's %d; settled in %.2f s, the first gap %.2f..%.2f of material %d; pillars %d" % [
+			cell, floor_h, ks, bottom + (ks[0] if ks else 0), bottom + (ks[-1] + 1 if ks else 0), vox.solid[ks[0] - 1] if ks else -1, vox.loose[ks[0] - 1] if ks else -1,
+			vox.solid[ks[-1] + 1] if ks else -1, waited, _f(_read("gap_bottom0"), cell), _f(_read("gap_top0"), cell), gm, _tools.pillars])
+	_report("a pillar stands from a tunnel's floor to its roof, whole voxels of material 4", stands)
+	_report("the pack stores the pillar as its gap's material", waited >= 0.0 and gm == VoxelBox.PILLAR and _tools.pillars == n0 + 1)
+	_tools.place_pillar(cell)
+	await _frames(1)
+	var after := _column_vox(_stack(cell), cell)
+	var gone: bool = (pillar_of.call(after) as Array[int]).is_empty() and ks.all(func(i: int) -> bool: return after.solid[i] + after.loose[i] == 0)
+	waited = await _settled(cell)
+	gm = _b(_read("gap_material0"), cell)
+	var gap := _f(_read("gap_top0"), cell) - _f(_read("gap_bottom0"), cell)
+	print("pillar: taken away: no pillar voxel and its voxels air %s; settled in %.2f s, the first gap %.2f m of material %d; pillars %d" % [gone, waited, gap, gm, _tools.pillars])
+	_report("a second P takes the pillar away", gone and waited >= 0.0 and gm == 0 and gap > 2.0 and _tools.pillars == n0)
+	var open := c + Vector2i(-3, 0)
+	_tools.place_pillar(open)
+	await _frames(10)
+	var bare: bool = (pillar_of.call(_column_vox(_stack(open), open)) as Array[int]).is_empty()
+	print("pillar: on the open ground at %s: no pillar voxel %s; pillars %d" % [open, bare, _tools.pillars])
+	_report("P on open ground stands nothing", bare and _tools.pillars == n0)
+	return true
 
 
 ## Phase tscroll (see the header). False after quitting on a timeout.

@@ -17,7 +17,10 @@
 ## line and is not saved; under a litre left after a dump (the ball's voxels round down) counts as empty. The
 ## player is kept out of the dirt: a dump moves a player nearer its point than the
 ## pile's repose radius plus PILE_MARGIN out to that distance, and every physics tick a player whose feet the
-## collider has risen over (the dump on their cell, a pile slumping under them) is stood on it.
+## collider has risen over (the dump on their cell, a pile slumping under them) is stood on it. The pillar: P
+## at the shovel's aim (not a wall's level ball) stands a pillar from the floor there up to the roof over it
+## within the free height and a metre (VoxelBox.pillar), or takes away the pillar standing there; refused
+## within a cell of the player's own cell (it would stand through the player).
 class_name Tools
 extends Node
 
@@ -39,6 +42,10 @@ const EMPTY := 1e-3
 
 ## Tamps made, for the driver.
 var tamps := 0
+## Pillars placed less those taken away, for the drivers.
+var pillars := 0
+## A pillar's counter landing (its signed voxel count; NAN until it lands, _process consumes it).
+var _pillar_result := NAN
 ## The placed auger, null while there is none.
 var auger: Auger
 ## m³ of loose dirt the shovel holds (a scoop's counter, solid ground times the swell); 0 when empty.
@@ -93,6 +100,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			_t_scooped = false
 		return
 	if not key.pressed:
+		return
+	if key.keycode == KEY_P:
+		var hit := shovel_hit()
+		if hit.is_empty() or hit.level:
+			print("Nowhere to stand a pillar")
+		elif not terrain.sim.stalled():
+			pillar(hit.position)
 		return
 	if key.keycode == KEY_Y:
 		if held <= 0.0:
@@ -220,6 +234,39 @@ func dump(aim := Vector3.INF) -> void:
 		print("Nowhere to dump the dirt")
 
 
+## Stands a pillar on the floor at station-local `at` up to the roof over it, or takes away the one there
+## (VoxelBox.pillar, reaching the free height and a metre); its counter lands in _pillared. A line printed,
+## nothing dispatched, within a cell of the player's cell or where the box refuses.
+func pillar(at: Vector3) -> void:
+	var p := terrain.params
+	var c := _cell_of(at)
+	var me := player_cell()
+	@warning_ignore("integer_division")
+	var dx := posmod(c.x - me.x + p.n_theta() / 2, p.n_theta()) - p.n_theta() / 2
+	if maxi(absi(dx), absi(c.y - me.y)) <= 1:
+		print("Too close to stand a pillar")
+	elif terrain.box.pillar(at, terrain.materials.roof_span_dry[0] + 1.0, _pillared):
+		terrain.touch(c, 1)
+	else:
+		print("Nowhere to stand a pillar")
+
+
+## The drivers' P aimed at a cell: the floor under its centre a ray down from over the player's head meets (a
+## tunnel's floor under its roof), else the cell's collider point.
+func place_pillar(c: Vector2i) -> void:
+	var p := terrain.params
+	var me := terrain.station.to_local(player.global_position)
+	var probe := Cyl.position((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5, Cyl.height_of(me, p.radius) + 0.9, p.radius)
+	var ground := terrain.ground_below(probe, 3.0)
+	pillar(ground if ground.is_finite() else surface_point(c))
+
+
+## A pillar's voxel span from the hit at hit_h m of height: the voxel holding the hit to the voxel `reach` m
+## over it.
+static func pillar_range(hit_h: float, reach: float) -> Vector2i:
+	return Vector2i(floori(hit_h), floori(hit_h + reach))
+
+
 ## The drivers' scoop and dump aimed at a cell: its centre on the collider.
 func scoop_cell(c: Vector2i) -> void:
 	scoop(surface_point(c))
@@ -245,14 +292,20 @@ func _scooped(volume: float, refused: bool) -> void:
 	_scoop_refused = refused
 
 
+## A pillar's counter landing: stores only.
+func _pillared(count: float, _flag: bool) -> void:
+	_pillar_result = count
+
+
 ## A dump's counter landing: what the box placed.
 func _placed(volume: float, _flag: bool) -> void:
 	_dump_result = volume
 
 
-## Takes up a landed scoop (what it took is held, or a scoop that found only rock or a full column says so)
-## and a landed dump (what was placed leaves the hand), shows the aim's ring, then scoops while T is held: at
-## once on the press, then every scoop_interval once the last scoop has landed. A refused scoop, a scoop that
+## Takes up a landed scoop (what it took is held, or a scoop that found only rock or a full column says so),
+## a landed dump (what was placed leaves the hand) and a landed pillar (its line printed, counted), shows the
+## aim's ring, then scoops while T is held: at once on the press, then every scoop_interval once the last scoop
+## has landed. A refused scoop, a scoop that
 ## found rock, or the viewer leaving the player ends the press's scooping, so a hold on the sky or on rock does
 ## not print every interval.
 func _process(_delta: float) -> void:
@@ -277,6 +330,16 @@ func _process(_delta: float) -> void:
 			held = 0.0
 		_dump_result = -1.0
 		_show_held()
+	if not is_nan(_pillar_result):
+		var n := roundi(_pillar_result)
+		if n > 0:
+			print("A pillar of %d m" % n)
+		elif n < 0:
+			print("The pillar taken away")
+		else:
+			print("Nothing to hold up there")
+		pillars += signi(n)
+		_pillar_result = NAN
 	if terrain.viewer != player:
 		_t_down = false
 		patch.visible = false

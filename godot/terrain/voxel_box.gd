@@ -66,6 +66,7 @@ const EDIT_DUMP := 1
 const EDIT_TAMP := 3
 const EDIT_BORE := 4
 const EDIT_SPOIL := 5
+const EDIT_PILLAR := 6
 const EDIT_PC_BYTES := 128
 ## Sub-samples per axis of a voxel for a ball's coverage (box_edit.glsl's SUB; Tools.ball_volume).
 const SUB := 8
@@ -800,6 +801,24 @@ func spoil(p: Vector3, radius: int, volume: float, placed: Callable) -> bool:
 	return _disc_op(EDIT_SPOIL, p, radius, volume, 0.0, Vector2i(1, 0), placed)
 
 
+## Stands a pillar in the column at station-local p, from the voxel of p's height to the voxel `reach` m over
+## it (Tools.pillar_range), or takes away the pillar standing there (box_edit.glsl's pillar); counted(count,
+## false) lands with the voxels filled, minus those taken, 0 where there is no roof within the reach. False,
+## nothing dispatched, when the column is not wholly in the box.
+func pillar(p: Vector3, reach: float, counted: Callable) -> bool:
+	var g := grid_of(p)
+	# Tools.pillar_range's span, written out: the box does not load Tools (its preloaded auger scene would leak
+	# from every headless test that loads the box).
+	var span := Vector2i(floori(g.z), floori(g.z + reach))
+	var bb := disc_box(g, 0, 0, span.y - span.x)
+	if bb[1] == Vector3i.ZERO:
+		return false
+	dirty_pending = true
+	_stats_pending = true
+	RenderingServer.call_on_render_thread(_edit_rd.bind(_edit_pc(EDIT_PILLAR, bb[0], bb[1], g, 0.0, PackedFloat32Array(), 0.0), PackedInt32Array(), PackedByteArray(), counted))
+	return true
+
+
 ## One ball op: the counter cleared, the listed slots flagged needed and allocated (a dump), the op dispatched
 ## over its one workgroup, the counter read back into cb(m3, flag).
 func _edit_rd(block: PackedByteArray, slots: PackedInt32Array, alloc_block: PackedByteArray, cb: Callable) -> void:
@@ -829,11 +848,11 @@ func _edit_rd(block: PackedByteArray, slots: PackedInt32Array, alloc_block: Pack
 		push_error("box counter readback: %s" % error_string(err))
 
 
-## Inside the device's readback flush: hands the counter (m³, and whether the op was refused) to cb, which must
-## only store them.
+## Inside the device's readback flush: hands the counter (m³, or the pillar's signed voxel count, and whether
+## the op was refused) to cb, which must only store them.
 func _counted(data: PackedByteArray, cb: Callable) -> void:
 	if cb.is_valid():
-		cb.call(data.decode_u32(0) * 1e-6, data.decode_u32(4) != 0)
+		cb.call(data.decode_s32(0) * 1e-6, data.decode_u32(4) != 0)
 
 
 ## The Params block of box_edit.glsl (std430, EDIT_PC_BYTES).

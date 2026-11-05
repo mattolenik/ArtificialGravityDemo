@@ -67,5 +67,7 @@ func _initialize() -> void:
 	check(is_equal_approx(Tools.level_floor(INF, 410.3), 409.8), "a first wall scoop: half a metre under the feet")
 	check(Tools.level_floor(409.8, 409.85) == 409.8 and Tools.level_floor(409.8, 409.35) == 409.8 and Tools.level_floor(409.8, 410.75) == 409.8, "on the tunnel's floor, or near it: the same floor")
 	check(is_equal_approx(Tools.level_floor(409.8, 409.2), 408.7) and is_equal_approx(Tools.level_floor(409.8, 410.8), 410.3), "off it: anchored anew")
+	# A pillar stands from the voxel of the hit's height up to the voxel of its reach over it.
+	check(Tools.pillar_range(402.3, 6.0) == Vector2i(402, 408), "a pillar's voxel range")
 	if failed: quit(1)
 	else: print("PASS"); quit(0)
