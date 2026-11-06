@@ -17,7 +17,9 @@
 //   the obstacle keeps the material where it is.
 //   Slope stability with the free height: the column's surface voxel (its top solid voxel, the one the
 //   window's surface lies in) standing over a disturbed neighbour's ground (the window's edit_mask set; its
-//   surface plus loose) by more than max(stand slope × edge distance, free height), both mixed dry to
+//   surface plus loose, or the bottom of this column's top solid run when that is higher, VoxelBox.wall_step:
+//   a roof's lip at a cave's mouth or an entrance pit is as tall as the roof, not the room under it, so the
+//   cave's height never counts) by more than max(stand slope × edge distance, free height), both mixed dry to
 //   saturated by the column's saturation (Materials), fails by slump_rate of the excess, at most the voxel's
 //   solid, never under bedrock_top, never rock: the solid leaves as `out`'s high half and arrives as loose
 //   times the swell in the voxel's own room (half of it at most) and the room over it (a quarter at most, so
@@ -378,6 +380,7 @@ void flux_column(ivec2 cxz, int kz0, int my_e, int my_ai) {
 	uint m = mt_[y_top];
 	float stand = mix(mt.stand_dry[m], mt.stand_sat[m], sat);
 	float free_h = mix(mt.free_dry[m], mt.free_sat[m], sat);
+	float lip = imageLoad(w_gap_top0, t).r;  // the top run's bottom (0: no gap): the face is the run, not the room
 	float fail = 0.0;
 	for (int d = 0; d < 8; d++) {
 		ivec2 n = cxz + DIR8[d];
@@ -388,7 +391,7 @@ void flux_column(ivec2 cxz, int kz0, int my_e, int my_ai) {
 		float h_n = imageLoad(w_surface, tn).r + imageLoad(w_loose, tn).r;
 		float across = 0.5 * ((pc.R - s_h) + (pc.R - h_n)) * pc.dtheta;
 		float w = DIR8[d].y == 0 ? across : (DIR8[d].x == 0 ? 1.0 : sqrt(across * across + 1.0));
-		fail = max(fail, (s_h - h_n) - max(stand * w, free_h));
+		fail = max(fail, (s_h - max(h_n, lip)) - max(stand * w, free_h));
 	}
 	if (fail <= 1e-3) {
 		return;

@@ -137,7 +137,8 @@ func _route() -> void:
 		"play": _play.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 48) / 16 * 16 + 5)),
 		"shell": _shell.bind(Vector2i(spawn.x / 16 * 16 + 8, (spawn.y - 120) / 16 * 16 + 8)),
 		"roof": _roof.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 72) / 16 * 16 + 5)),
-		"pillar": _pillar.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 96) / 16 * 16 + 5))}
+		"pillar": _pillar.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 96) / 16 * 16 + 5)),
+		"deep": _deep.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 120) / 16 * 16 + 5))}
 	for phase: String in phases:
 		if not only.is_empty() and phase != only and not (only in ["inside", "tscroll", "trestart"] and phase == "tunnel") \
 				and not (only in ["tscroll", "trestart"] and phase == "inside"):
@@ -633,7 +634,7 @@ func _box_summary() -> void:
 		if t.name.begins_with("box_sand_") and t.name.trim_prefix("box_sand_").to_int() > 0:
 			per.append(t.ms / t.name.trim_prefix("box_sand_").to_int())
 	print("  box_sand    per step per active brick %s" % Smoke._stat(per, 0.25))
-	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup", "tunnel", "inside", "tscroll", "trestart", "play", "shell", "roof", "pillar"]:
+	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup", "tunnel", "inside", "tscroll", "trestart", "play", "shell", "roof", "pillar", "deep"]:
 		var st := _stat_of(phase)
 		if st.cpu.is_empty():
 			continue
@@ -1320,6 +1321,109 @@ func _roof(c: Vector2i) -> bool:
 			t_roof, reach, wide, st[0], lag])
 	_report("the dig is clean until the roof yields", is_finite(st[1]) and st[0] <= 0.02)
 	_report("the roof yields all at once, the ground sunk a metre within a second of the middle's first move", is_finite(lag) and lag <= 1.0)
+	return true
+
+
+## Phase deep at c: the roof phase's pit and tunnel, then a room within the roof's reach (stable), then the
+## same balls a ball's radius lower, layer by layer, the pit's floor with them (the third a ring wider: the walls
+## dug from the lower floor, balls centred on the room's faces), to a room over 12 m tall under an entrance pit
+## over 13 m deep: the room's height must not matter to the roof (the user, 2026-11-05: a stable cave collapsed
+## when dug deeper; the slope rule read the step from the roof's top to the pit's floor, and once the pit passed
+## the free height the rim's failure thinned the mouth's roof and each fallen column stood the next over the
+## room's floor, so the roof unzipped; the step now stops at the top run's bottom). After each layer, 3 s, the
+## ground over the middle (never moves) and the loose in the room's box (none until the pit passes the free
+## height and its own walls cave) against before the room.
+func _deep(c: Vector2i) -> bool:
+	if not await _teleport(c + Vector2i(5, 0)):
+		return false
+	var p := _terrain.params
+	var depth := await _pit(c, 4.2)
+	await _settled(c)
+	_terrain.teleport((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5)
+	if not await _settled_patch():
+		return false
+	var floor_h := _f(_read("surface"), c) + _f(_read("loose"), c)
+	var aim := func(x: float, d: float, h: float) -> Vector3:
+		return Cyl.position((c.x + x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5 + d, floor_h + h, p.radius)
+	for k in 7:
+		await _scoop_at(aim.call(0.5, 1.5 + 0.5 * k, 1.5))
+	await _settled(c + Vector2i(0, 3))
+	var s1 := _read("surface")
+	var gt1 := _read("gap_top0")
+	var t_roof := _f(s1, c + Vector2i(0, 4)) - _f(gt1, c + Vector2i(0, 4))
+	# DEEP_DRY=1 in the environment: the saturated spans set to the dry ones, so the column's saturation moves
+	# neither the free height nor the reach.
+	var sat_b := _read("saturation")
+	if OS.get_environment("DEEP_DRY") == "1":
+		_terrain.materials.roof_span_saturated[0] = _terrain.materials.roof_span_dry[0]
+		_terrain.box.update_materials()
+	print("deep: the saturation at the pit %d, the tunnel %d, the room's middle %d (of 255); roof spans dry %.0f saturated %.0f" % [
+			_b(sat_b, c), _b(sat_b, c + Vector2i(0, 3)), _b(sat_b, c + Vector2i(0, 8)), _terrain.materials.roof_span_dry[0], _terrain.materials.roof_span_saturated[0]])
+	var reach := VoxelBox.roof_reach(_terrain.materials.roof_span_dry[0], _terrain.materials.roof_span_saturated[0], 0.0, t_roof, _terrain.tool_params.roof_thickness_max)
+	var wide := floori(2.0 * reach) - 4
+	var rows: Array[float] = [0.5]
+	for i in range(1, ceili((wide / 2.0 - 1.5) / 1.5) + 1):
+		rows.append(0.5 - 1.5 * i)
+		rows.append(0.5 + 1.5 * i)
+	var nk := 2 * (wide - 2) + 1
+	var mid := c + Vector2i(0, floori(wide / 2.0 + 1.25))
+	var middle: Array[Vector2i] = [mid, mid + Vector2i(1, 0), mid + Vector2i(0, 1), mid + Vector2i(1, 1)]
+	var cells := _box(mid + Vector2i(1, 0), wide + 2)
+	var sw := _read("surface")
+	var lw := _read("loose")
+	var top0: Array[float] = []
+	for x in middle:
+		top0.append(_f(sw, x) + _f(lw, x))
+	var loose0 := _box_loose(cells)
+	# The tunnel's roof, rows 2 to 5 of its two columns, and the pit's depth.
+	var roof: Array[Vector2i] = []
+	for row in range(2, 6):
+		roof.append(c + Vector2i(0, row))
+		roof.append(c + Vector2i(1, row))
+	var out: Array[String] = []
+	var ok := true
+	for layer: Array in [[1.5, 0, 0], [0.0, 0, 1], [-1.5, 0, 1], [-1.8, 1, 1], [-3.3, 0, 1], [-4.8, 0, 1], [-6.3, 0, 1], [-7.8, 0, 1]]:
+		var h: float = layer[0]
+		var ring: int = layer[1]
+		var pit: int = layer[2]
+		var at: Array[float] = rows.duplicate()
+		if ring > 0:
+			at.append(rows.min() - 1.5)
+			at.append(rows.max() + 1.5)
+		if pit > 0:
+			for k in 4:
+				await _scoop_at(aim.call(0.5, 0.5 * k, h))
+		for x: float in at:
+			for k in range(-3 * ring, nk + 3 * ring):
+				await _scoop_at(aim.call(x, 2.0 + 0.5 * k, h))
+		await get_tree().create_timer(3.0).timeout
+		var sf := _read("surface")
+		var lf := _read("loose")
+		var sunk := 0.0
+		for i in middle.size():
+			sunk = maxf(sunk, top0[i] - _f(sf, middle[i]) - _f(lf, middle[i]))
+		var moved := 0.0
+		for x in roof:
+			moved = maxf(moved, absf(_f(sf, x) - _f(s1, x)))
+		var loose := _box_loose(cells) - loose0
+		var feet := Cyl.height_of(_station.to_local(_player.global_position), p.radius)
+		var vox := _column_vox(_stack(mid), mid)
+		var runs: Array[String] = []
+		var run_from := -1
+		for i in vox.solid.size() + 1:
+			var on: bool = i < vox.solid.size() and vox.solid[i] > 0
+			if on and run_from < 0:
+				run_from = i
+			elif not on and run_from >= 0:
+				runs.append("%d..%d" % [_terrain.box.bottom() + run_from, _terrain.box.bottom() + i])
+				run_from = -1
+		out.append("balls at %+.1f m%s%s: the pit %.2f m deep, the surface over the tunnel's roof moved %.3f m, the ground over the middle sank %.3f m, %.4f m³ of loose in the room's box; the feet at %.1f, the box %d..%d, the ground at %.1f; %d gap overflows; the middle's solid runs %s, its window surface %.2f, gap %.2f..%.2f" % [
+				h, " a ring wider" if ring > 0 else "", " and the pit" if pit > 0 else "", floor_h - _f(sf, c), moved, sunk, loose,
+				feet, _terrain.box.bottom(), _terrain.box.top(), floor_h + depth, _terrain.box.read_stats()[VoxelBox.SLOTS], " ".join(runs), _f(sf, mid), _f(_read("gap_bottom0"), mid), _f(_read("gap_top0"), mid)])
+		# The pit's own walls cave past the free height (its rim's loose lands in the box); the roof never goes.
+		ok = ok and sunk <= 0.05 and (loose <= 0.01 or floor_h + depth - _f(sf, c) >= _terrain.materials.roof_span_dry[0])
+	print("deep: the pit %.2f m deep; the tunnel's roof %.2f m thick reaches %.2f m; the room %d m wide, %d rows by %d balls: %s" % [depth, t_roof, reach, wide, rows.size(), nk, "; ".join(out)])
+	_report("a room within the reach holds however deep its floor and its entrance pit go", ok)
 	return true
 
 

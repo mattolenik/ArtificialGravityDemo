@@ -38,6 +38,9 @@ func _initialize() -> void:
 	# The cave-in's free height (the tunnels design): a step fails only when it is both steeper than the stand
 	# slope over the edge distance and taller than the free height.
 	check(not VoxelBox.wall_fails(3.0, 1.0, 1.0, 4.0) and VoxelBox.wall_fails(5.0, 1.0, 1.0, 4.0) and not VoxelBox.wall_fails(0.9, 1.0, 1.0, 0.0), "wall_fails")
+	# The step a surface voxel stands over a neighbour's ground stops at the bottom of its own top solid run: a
+	# roof's lip at a cave's mouth or an entrance pit is as tall as the roof, not the room under it (0: no gap).
+	check(is_equal_approx(VoxelBox.wall_step(414.0, 403.0, 412.4), 1.6) and VoxelBox.wall_step(414.0, 403.0, 0.0) == 11.0 and VoxelBox.wall_step(414.0, 413.0, 412.4) == 1.0, "wall_step stops at the top run's bottom")
 	# The span rule (Task 4): the reach, half the roof span mixed dry to saturated, times the thickness capped
 	# at one; a roof voxel fails with no support within the reach, or held from one side only beyond half of it.
 	check(VoxelBox.roof_reach(5.0, 1.5, 0.0, 1.0) == 2.5 and VoxelBox.roof_reach(5.0, 1.5, 0.0, 0.5) == 1.25 and VoxelBox.roof_reach(5.0, 1.5, 1.0, 1.0) == 0.75 and VoxelBox.roof_reach(5.0, 1.5, 0.0, 2.0) == 5.0 and VoxelBox.roof_reach(5.0, 1.5, 0.0, 4.0) == 7.5, "the reach grows with the dirt over the roof, to the cap")

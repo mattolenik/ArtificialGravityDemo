@@ -303,6 +303,14 @@ static func wall_fails(step: float, w: float, stand_tan: float, free: float) -> 
 	return step > maxf(stand_tan * w, free)
 
 
+## The step a column's surface at s_h stands over a neighbour's ground at h_n (its surface plus loose), stopped at
+## the bottom of the column's own top solid run, `lip` (the window's gap_top0; 0 with no gap): the lip of a
+## roof at a cave's mouth or an entrance pit is as tall as the roof, not the room under it, so a cave's height
+## never counts toward the free height (the user, 2026-11-05).
+static func wall_step(s_h: float, h_n: float, lip: float) -> float:
+	return s_h - maxf(h_n, lip)
+
+
 ## The reach of a roof voxel, in m (box_sand.glsl's yield rule): half the material's roof span, dry to saturated
 ## by the column's saturation, times the thickness of solid over the voxel in m, at most `cap`
 ## (ToolParams.roof_thickness_max).
