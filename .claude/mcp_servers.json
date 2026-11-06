@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "godot-mcp": {
+      "command": "bun",
+      "args": [
+        "godot-mcp/dist/index.js",
+        "--project",
+        "godot"
+      ]
+    }
+  }
+}
