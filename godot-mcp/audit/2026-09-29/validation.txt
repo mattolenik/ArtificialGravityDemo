@@ -1,0 +1,21 @@
+Audit revision: cb41a6a478417bf56ad73e55f3a3a2b7e0cb0262
+Date: 2026-09-29
+Environment: macOS; Node v24.15.0; npm 11.12.1; Godot 4.7.stable.official.5b4e0cb0f
+npm ci --ignore-scripts: passed, 74 packages added
+npm run build: passed; tracked dist content identical (executable permission restored after build)
+npm test: 17 files, 150 tests passed
+npm run test:coverage: 17 files, 150 tests passed
+Statements: 29.14% (1154/3960)
+Branches: 24.5% (572/2334)
+Functions: 35.04% (171/488)
+Lines: 29.4% (1090/3707)
+Production handlers with particularly low statements coverage:
+ scene-tools.ts 6.55%; resource-tools.ts 1.84%; script-tools.ts 2.32%; shader-tools.ts 3.63%
+ ui-component-tools.ts 1.24%; ui-layout-tools.ts 2.62%; ui-theme-tools.ts 4.9%
+ editor-tools.ts 16.49%, branches 1.58%
+npm pack --dry-run after completed build: 83 entries, dist/index.js present
+HTTP actual listener: valid request 200; hostile Host 403; hostile Origin 403; null Origin 403
+MCP schema invalid-input smoke: isError true
+Shader generation: all 11 effects + five custom shader types pass engine syntax checks
+Separate bridge subagent exercised isolated headless editor and attached runtime.
+Implementation files unchanged. Audit artifacts only; no fixes, commits, or remote writes.

@@ -1,0 +1,36 @@
+FIXTURES /var/folders/qj/8hf63fb90v3gsk726drqfxlr0000gn/T/godot-audit-repro-CUeQnz
+{"name":"multiline_scene_dictionary_loss","reproduced":true,"detail":{"metadata/inventory":{}}}
+{"name":"packed_array_quoted","reproduced":true,"detail":"[gd_scene format=3]\n\n[node name=\"Root\" type=\"Node2D\"]\nmetadata/inventory = {}\n\n[node name=\"Polygon\" type=\"Polygon2D\" parent=\".\"]\npolygon = \"PackedVector2Array(0, 0, 10, 0, 0, 10)\"\n"}
+{"name":"multiline_animation_keys_loss","reproduced":true,"detail":{"length":1,"loopMode":"none","step":0.03333333333333333,"tracks":[{"path":".:position","interpolation":"linear","updateMode":"continuous","loopWrap":true,"keyframes":[]}]}}
+{"name":"animation_edit_deletes_existing_keys","reproduced":true,"detail":{"success":true,"path":"edited.tres","trackIndex":0,"keyframeCount":1}}
+{"name":"remove_deletes_sibling_descendant","reproduced":true,"detail":[{"name":"Root","type":"Node2D","properties":{}},{"name":"Player2","type":"Node2D","parent":".","properties":{}}]}
+{"name":"rename_orphans_descendant","reproduced":true,"detail":{"header":{"type":"gd_scene","format":3},"externalResources":[],"subResources":[],"nodes":[{"name":"Root","type":"Node2D","properties":{}},{"name":"Hero","type":"Node2D","parent":".","properties":{}},{"name":"Sprite","type":"Sprite2D","parent":"Player","properties":{}},{"name":"Player2","type":"Node2D","parent":".","properties":{}},{"name":"Sprite","type":"Sprite2D","parent":"Player2","properties":{}}],"connections":[{"signal":"ready","from":"Player/Sprite","to":"Player","method":"hide"}]}}
+{"name":"incorrect_scene_tree","reproduced":true,"detail":{"Root":{"type":"Node2D","properties":{},"_children":{}},".":{"_children":{"Player":{"type":"Node2D","properties":{},"_children":{}},"Player2":{"type":"Node2D","properties":{},"_children":{}}}},"Player":{"_children":{"Sprite":{"type":"Sprite2D","properties":{},"_children":{}}}},"Player2":{"_children":{"Sprite":{"type":"Sprite2D","properties":{},"_children":{}}}}}}
+{"name":"symlink_escape","reproduced":true,"detail":"/var/folders/qj/8hf63fb90v3gsk726drqfxlr0000gn/T/godot-audit-repro-CUeQnz/outside/escape.tres"}
+{"name":"resource_serialization_dictionary.tres","reproduced":true,"detail":"[gd_resource type=\"Resource\" load_steps=1 format=3]\n\n[resource]\nmetadata/inventory = [object Object]\n"}
+{"name":"resource_serialization_quoted.tres","reproduced":true,"detail":"[gd_resource type=\"Resource\" load_steps=1 format=3]\n\n[resource]\nresource_name = \"Say \"hello\"\"\n"}
+{"name":"zero_cost_wave_hang","reproduced":true,"detail":{"stdout":"SCHEMA_ACCEPTED {\"waveCount\":1,\"startingDifficulty\":1,\"difficultyScale\":1.2,\"enemyTypes\":[{\"name\":\"slime\",\"baseCost\":0,\"minWave\":1}]}\n","error":"ETIMEDOUT"}}
+ENGINE_VERIFICATION
+Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
+
+original.tscn INVENTORY={ "coins": 42, "items": ["sword", "shield"] } POLYGON=[(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
+roundtrip.tscn INVENTORY={  } POLYGON=[]
+original.tres KEYS=2
+edited.tres KEYS=1
+HERO_CHILD_COUNT=0
+dictionary.tres LOADED=<Object#null>
+quoted.tres LOADED=Say  (res://quoted.tres):<Resource#-9223372009440803380>
+WARNING: Parent path './Player' for node 'Sprite' has vanished when instantiating: 'res://renamed.tscn'.
+     at: instantiate (scene/resources/packed_scene.cpp:213)
+     GDScript backtrace (most recent call first):
+         [0] _init (res://verify.gd:10)
+ERROR: res://dictionary.tres:4 - Parse Error: Unexpected identifier 'object'.
+   at: _printerr (scene/resources/resource_format_text.cpp:41)
+   GDScript backtrace (most recent call first):
+       [0] _init (res://verify.gd:14)
+ERROR: Failed loading resource: res://dictionary.tres.
+   at: _load (core/io/resource_loader.cpp:317)
+   GDScript backtrace (most recent call first):
+       [0] _init (res://verify.gd:14)
+
+SUMMARY 11/11 audit bugs reproduced
