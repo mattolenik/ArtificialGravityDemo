@@ -1,0 +1,151 @@
+FIXTURES /var/folders/qj/8hf63fb90v3gsk726drqfxlr0000gn/T/godot-generation-audit-hL99Wx
+audio {
+  success: true,
+  path: 'res://default_bus_layout.tres',
+  updatedBus: {
+    name: 'Master',
+    send: '',
+    volumeDb: -6,
+    mute: false,
+    solo: false,
+    bypassFx: false
+  },
+  busCount: 1
+}
+input {
+  success: true,
+  projectPath: 'res://project.godot',
+  action: { name: 'jump', deadzone: 0.5, events: [ [Object] ] }
+}
+relative menu {
+  success: true,
+  scene_path: 'scenes/menu.tscn',
+  script_path: 'scenes/menu.gd',
+  message: 'Created menu scene at scenes/menu.tscn',
+  buttons: [ 'Play' ]
+}
+empty menu {
+  success: true,
+  scene_path: 'res://empty_menu.tscn',
+  script_path: 'res://empty_menu.gd',
+  message: 'Created menu scene at res://empty_menu.tscn',
+  buttons: []
+}
+theme {
+  success: true,
+  path: 'res://transparent.tres',
+  message: 'Created StyleBoxFlat at res://transparent.tres'
+}
+script generated extends Node
+## player movement
+
+@export var speed: float = 200.0
+
+func _process(delta: float) -> void:
+	var direction := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
+	position += direction * speed * delta
+
+validation {
+  valid: true,
+  path: undefined,
+  issues: [],
+  summary: { errors: 0, warnings: 0, suggestions: 0 }
+}
+NAV_VALIDATION {
+  scenePath: 'res://nav.tscn',
+  valid: true,
+  errors: [],
+  warnings: [],
+  checkedAgents: [ 'Agent' ]
+}
+NAV_BAKE_PLAN {
+  scenePath: 'res://nav.tscn',
+  regionCount: 1,
+  agentCount: 1,
+  linkCount: 0,
+  missingRegionResources: [],
+  readyForBake: true,
+  checklist: [
+    'Open scene in Godot editor.',
+    'Inspect 1 region node(s) and assign navigation polygons/meshes where missing.',
+    'Run region bake/update in editor for each navigation map.',
+    'Play scene and verify agents can reach intended targets.'
+  ]
+}
+ENGINE verify.gd 0  Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
+
+EFFECTS_BEFORE=1
+EFFECTS_AFTER=0
+CTRL_AFTER=false
+ALPHA=1.0
+MARGIN=-1.0
+RELATIVE_MENU=(res://scenes/menu.tscn):<PackedScene#-9223372009558243890>
+EMPTY_MENU=(res://empty_menu.tscn):<PackedScene#-9223372009054927409>
+MOVEMENT=(res://movement.gd):<GDScript#-9223372008920709680>
+ WARNING: Case mismatch opening requested file '/Users/alexmeckes/Library/Application Support/Godot/app_userdata/Audit/logs/godot.log', stored as '/Users/alexmeckes/Library/Application Support/Godot/app_userdata/audit/logs/godot.log' in the filesystem. This file will not open when exported to other case-sensitive platforms.
+     at: open_internal (drivers/unix/file_access_unix.cpp:112)
+ERROR: Attempt to open script 'res://scenes/scenes/menu.gd' resulted in error 'File not found'.
+   at: load_source_code (modules/gdscript/gdscript.cpp:1139)
+   GDScript backtrace (most recent call first):
+       [0] _initialize (res://verify.gd:11)
+ERROR: Failed loading resource: res://scenes/scenes/menu.gd.
+   at: _load (core/io/resource_loader.cpp:317)
+   GDScript backtrace (most recent call first):
+       [0] _initialize (res://verify.gd:11)
+ERROR: res://scenes/menu.tscn:12 - Parse Error: [ext_resource] referenced non-existent resource at: res://scenes/scenes/menu.gd.
+   at: _printerr (scene/resources/resource_format_text.cpp:41)
+   GDScript backtrace (most recent call first):
+       [0] _initialize (res://verify.gd:11)
+SCRIPT ERROR: Parse Error: Expected indented block after function declaration.
+          at: GDScript::reload (res://empty_menu.gd:4)
+          GDScript backtrace (most recent call first):
+              [0] _initialize (res://verify.gd:12)
+ERROR: Failed to load script "res://empty_menu.gd" with error "Parse error".
+   at: load (modules/gdscript/gdscript_resource_format.cpp:46)
+   GDScript backtrace (most recent call first):
+       [0] _initialize (res://verify.gd:12)
+SCRIPT ERROR: Parse Error: Identifier "position" not declared in the current scope.
+          at: GDScript::reload (res://movement.gd:8)
+          GDScript backtrace (most recent call first):
+              [0] _initialize (res://verify.gd:13)
+ERROR: Failed to load script "res://movement.gd" with error "Parse error".
+   at: load (modules/gdscript/gdscript_resource_format.cpp:46)
+   GDScript backtrace (most recent call first):
+       [0] _initialize (res://verify.gd:13)
+
+ENGINE verify_shaders.gd 0  Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
+
+CHECK=res://flash.gdshader
+UNIFORMS=[{ "name": "flash_color", "class_name": &"", "type": 20, "hint": 0, "hint_string": "", "usage": 6 }, { "name": "flash_amount", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,1.0,0.0010000000475", "usage": 6 }]
+CHECK=res://outline.gdshader
+UNIFORMS=[{ "name": "outline_color", "class_name": &"", "type": 20, "hint": 0, "hint_string": "", "usage": 6 }, { "name": "outline_width", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,10.0,0.0010000000475", "usage": 6 }]
+CHECK=res://dissolve.gdshader
+UNIFORMS=[{ "name": "dissolve_texture", "class_name": &"", "type": 24, "hint": 17, "hint_string": "Texture2D", "usage": 6 }, { "name": "dissolve_amount", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,1.0,0.0010000000475", "usage": 6 }, { "name": "edge_width", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,0.20000000298023,0.0010000000475", "usage": 6 }, { "name": "edge_color", "class_name": &"", "type": 20, "hint": 0, "hint_string": "", "usage": 6 }]
+CHECK=res://pixelate.gdshader
+UNIFORMS=[{ "name": "pixel_size", "class_name": &"", "type": 3, "hint": 1, "hint_string": "1.0,100.0,0.0010000000475", "usage": 6 }]
+CHECK=res://wave.gdshader
+UNIFORMS=[{ "name": "wave_amplitude", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,0.10000000149012,0.0010000000475", "usage": 6 }, { "name": "wave_frequency", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,50.0,0.0010000000475", "usage": 6 }, { "name": "wave_speed", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,10.0,0.0010000000475", "usage": 6 }]
+CHECK=res://gradient_map.gdshader
+UNIFORMS=[{ "name": "gradient", "class_name": &"", "type": 24, "hint": 17, "hint_string": "Texture2D", "usage": 6 }, { "name": "mix_amount", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,1.0,0.0010000000475", "usage": 6 }]
+CHECK=res://chromatic_aberration.gdshader
+UNIFORMS=[{ "name": "offset", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,0.01999999955297,0.0010000000475", "usage": 6 }]
+CHECK=res://vignette.gdshader
+UNIFORMS=[{ "name": "vignette_intensity", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,1.0,0.0010000000475", "usage": 6 }, { "name": "vignette_opacity", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,1.0,0.0010000000475", "usage": 6 }]
+CHECK=res://crt.gdshader
+UNIFORMS=[{ "name": "scanline_count", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,1000.0,0.0010000000475", "usage": 6 }, { "name": "scanline_intensity", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,1.0,0.0010000000475", "usage": 6 }, { "name": "curvature", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,0.10000000149012,0.0010000000475", "usage": 6 }]
+CHECK=res://hologram.gdshader
+UNIFORMS=[{ "name": "hologram_color", "class_name": &"", "type": 20, "hint": 0, "hint_string": "", "usage": 6 }, { "name": "scan_speed", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,10.0,0.0010000000475", "usage": 6 }, { "name": "scan_line_count", "class_name": &"", "type": 3, "hint": 1, "hint_string": "10.0,200.0,0.0010000000475", "usage": 6 }, { "name": "flicker_speed", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,20.0,0.0010000000475", "usage": 6 }]
+CHECK=res://fresnel.gdshader
+UNIFORMS=[{ "name": "rim_color", "class_name": &"", "type": 20, "hint": 0, "hint_string": "", "usage": 6 }, { "name": "rim_power", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,10.0,0.0010000000475", "usage": 6 }, { "name": "albedo_color", "class_name": &"", "type": 20, "hint": 0, "hint_string": "", "usage": 6 }]
+CHECK=res://custom_canvas_item.gdshader
+UNIFORMS=[]
+CHECK=res://custom_spatial.gdshader
+UNIFORMS=[{ "name": "albedo_color", "class_name": &"", "type": 20, "hint": 0, "hint_string": "", "usage": 6 }, { "name": "metallic", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,1.0,0.0010000000475", "usage": 6 }, { "name": "roughness", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,1.0,0.0010000000475", "usage": 6 }]
+CHECK=res://custom_particles.gdshader
+UNIFORMS=[{ "name": "initial_speed", "class_name": &"", "type": 3, "hint": 1, "hint_string": "0.0,100.0,0.0010000000475", "usage": 6 }]
+CHECK=res://custom_sky.gdshader
+UNIFORMS=[]
+CHECK=res://custom_fog.gdshader
+UNIFORMS=[]
+ WARNING: Case mismatch opening requested file '/Users/alexmeckes/Library/Application Support/Godot/app_userdata/Audit/logs/godot.log', stored as '/Users/alexmeckes/Library/Application Support/Godot/app_userdata/audit/logs/godot.log' in the filesystem. This file will not open when exported to other case-sensitive platforms.
+     at: open_internal (drivers/unix/file_access_unix.cpp:112)

@@ -1,0 +1,73 @@
+{
+  "name": "@genai-gametools/godot-mcp",
+  "version": "0.2.0",
+  "description": "MCP server for AI-assisted Godot game development - file editing, live editor control, and procedural generation",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "godot-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "addons",
+    "docs",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc && node -e \"require('node:fs').chmodSync('dist/index.js',0o755)\"",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "start:http": "node dist/index.js --transport http",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "inspector": "npx @modelcontextprotocol/inspector node dist/index.js",
+    "prepublishOnly": "npm run build && npm test",
+    "test:cli": "node scripts/smoke-cli.mjs",
+    "test:godot": "node scripts/test-godot.mjs",
+    "test:bridge": "node scripts/test-bridge.mjs"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "godot",
+    "godot-4",
+    "gamedev",
+    "game-development",
+    "ai",
+    "claude",
+    "procedural-generation",
+    "gdscript"
+  ],
+  "author": "Alex Meckes",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexmeckes/godot-mcp.git"
+  },
+  "homepage": "https://github.com/alexmeckes/godot-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/alexmeckes/godot-mcp/issues"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "ws": "^8.21.3",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.13",
+    "@vitest/coverage-v8": "4.1.11",
+    "typescript": "^5.6.0",
+    "vite": "6.4.3",
+    "vitest": "4.1.11"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
