@@ -69,5 +69,13 @@ func _initialize() -> void:
 	check(is_equal_approx(Tools.level_floor(409.8, 409.2), 408.7) and is_equal_approx(Tools.level_floor(409.8, 410.8), 410.3), "off it: anchored anew")
 	# A pillar stands from the voxel of the hit's height up to the voxel of its reach over it.
 	check(Tools.pillar_range(402.3, 6.0) == Vector2i(402, 408) and Tools.pillar_range(402.3, 11.0) == Vector2i(402, 409), "a pillar's voxel range, a brick's column at most")
+	# The levers: a slider sets a ToolParams float or one entry of a MaterialSet row, and the table lists real
+	# properties within their ranges.
+	Levers.set_lever(t, "slump_rate", -1, 0.5)
+	Levers.set_lever(m, "roof_span_dry", 0, 7.0)
+	check(t.slump_rate == 0.5 and m.roof_span_dry[0] == 7.0 and m.roof_span_dry[1] == 12.0, "a lever sets its number")
+	for l: Array in Levers.LEVERS:
+		var v: float = m.get(l[1])[l[2]] if l[2] >= 0 else t.get(l[1])
+		check(v >= l[3] and v <= l[4] and l[3] < l[4], "lever %s in range" % l[0])
 	if failed: quit(1)
 	else: print("PASS"); quit(0)

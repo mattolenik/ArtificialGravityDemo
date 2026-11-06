@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3]
+[gd_scene load_steps=16 format=3]
 
 [ext_resource type="PackedScene" path="res://station.tscn" id="1"]
 [ext_resource type="Script" path="res://emitter.gd" id="2"]
@@ -12,6 +12,7 @@
 [ext_resource type="Script" path="res://terrain/debug_edit.gd" id="10"]
 [ext_resource type="Script" path="res://terrain/tools.gd" id="11"]
 [ext_resource type="PackedScene" path="res://terrain/shovel_patch.tscn" id="12"]
+[ext_resource type="Script" path="res://terrain/levers.gd" id="13"]
 
 [sub_resource type="Environment" id="1"]
 ambient_light_source = 2
@@ -95,6 +96,11 @@ script = ExtResource("7")
 
 [node name="Shovel" type="Label" parent="Panel/Box"]
 layout_mode = 2
+
+[node name="Levers" type="GridContainer" parent="Panel/Box" node_paths=PackedStringArray("terrain")]
+layout_mode = 2
+script = ExtResource("13")
+terrain = NodePath("../../../Station/Terrain")
 
 [node name="ClickTeleport" type="Node" parent="." node_paths=PackedStringArray("terrain")]
 script = ExtResource("8")

@@ -292,6 +292,11 @@ func material_table() -> PackedByteArray:
 	return b
 
 
+## Re-uploads the table after a MaterialSet value changed (the levers).
+func update_materials() -> void:
+	_rd.buffer_update(_materials, 0, MATERIALS_BYTES, material_table())
+
+
 ## The slope stability rule with the free height: a solid step of `step` m over an edge distance w fails only
 ## when it is both steeper than the stand slope and taller than the free height.
 static func wall_fails(step: float, w: float, stand_tan: float, free: float) -> bool:
