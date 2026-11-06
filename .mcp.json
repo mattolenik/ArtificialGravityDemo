@@ -1,12 +1,14 @@
 {
   "mcpServers": {
     "godot-mcp": {
+      "type": "stdio",
       "command": "bun",
       "args": [
         "godot-mcp/dist/index.js",
         "--project",
         "godot"
-      ]
+      ],
+      "env": {}
     }
   }
 }
