@@ -138,7 +138,8 @@ func _route() -> void:
 		"shell": _shell.bind(Vector2i(spawn.x / 16 * 16 + 8, (spawn.y - 120) / 16 * 16 + 8)),
 		"roof": _roof.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 72) / 16 * 16 + 5)),
 		"pillar": _pillar.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 96) / 16 * 16 + 5)),
-		"deep": _deep.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 120) / 16 * 16 + 5))}
+		"deep": _deep.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 120) / 16 * 16 + 5)),
+		"crust": _crust.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 144) / 16 * 16 + 5))}
 	for phase: String in phases:
 		if not only.is_empty() and phase != only and not (only in ["inside", "tscroll", "trestart"] and phase == "tunnel") \
 				and not (only in ["tscroll", "trestart"] and phase == "inside"):
@@ -634,7 +635,7 @@ func _box_summary() -> void:
 		if t.name.begins_with("box_sand_") and t.name.trim_prefix("box_sand_").to_int() > 0:
 			per.append(t.ms / t.name.trim_prefix("box_sand_").to_int())
 	print("  box_sand    per step per active brick %s" % Smoke._stat(per, 0.25))
-	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup", "tunnel", "inside", "tscroll", "trestart", "play", "shell", "roof", "pillar", "deep"]:
+	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup", "tunnel", "inside", "tscroll", "trestart", "play", "shell", "roof", "pillar", "deep", "crust"]:
 		var st := _stat_of(phase)
 		if st.cpu.is_empty():
 			continue
@@ -1427,6 +1428,131 @@ func _deep(c: Vector2i) -> bool:
 	return true
 
 
+## Phase crust from c (see the header): a collapse whose chimney meets the box's ceiling with ground still over
+## it (the user, 2026-11-05: after a collapse under a hill one sees through the hill; the void stopped at the
+## box's top, the crust over it stood). A site every 16 rows on from c until the ground stands 1 to 3.5 m over
+## a brick plane (g); roof_thickness_max set to 1 m for the phase (reach 5 m, a 16 m room yields); a pit g + 5
+## deep so the tunnel's roof lies 2 m under the plane; a room within the reach; its floor and the pit's dug
+## down three balls (the feet g + 9.5 m under the ground: the box's top on the plane, the ground over it); the
+## room widened past the reach at the roof's height. Then 10 s: the ground over the room's middle must sink a
+## metre or more (the void climbs through the crust to the surface), conserved.
+func _crust(c0: Vector2i) -> bool:
+	var p := _terrain.params
+	var c := c0
+	var g := 0.0
+	for i in 12:
+		c = c0 + Vector2i(0, 16 * i)
+		if not await _teleport(c + Vector2i(5, 0)):
+			return false
+		var top := _f(_read("surface"), c)
+		g = top - 16.0 * floorf(top / 16.0)
+		if g >= 1.0 and g < 3.5:
+			break
+	if g < 1.0 or g >= 3.5:
+		print("crust: no site with the ground 1 to 3.5 m over a brick plane in 12 tries from %s" % c0)
+		return false
+	var s0 := _read("surface")
+	var cb0 := _read("clay_bottom")
+	var ct0 := _read("clay_top")
+	var ground := _f(s0, c)
+	var cap0 := _terrain.tool_params.roof_thickness_max
+	_terrain.tool_params.roof_thickness_max = 1.0
+	# CRUST_SHALLOW=1 in the environment: a pit 3 m shallower, so the box's top stays over the ground and the
+	# collapse climbs to the surface inside the box: the same dig's conservation without the pour.
+	var shallow := OS.get_environment("CRUST_SHALLOW") == "1"
+	var depth := await _pit(c, g + (2.0 if shallow else 5.0))
+	await _settled(c)
+	_terrain.teleport((c.x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5)
+	if not await _settled_patch():
+		return false
+	var floor_h := _f(_read("surface"), c) + _f(_read("loose"), c)
+	var aim := func(x: float, d: float, h: float) -> Vector3:
+		return Cyl.position((c.x + x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5 + d, floor_h + h, p.radius)
+	for k in 7:
+		await _scoop_at(aim.call(0.5, 1.5 + 0.5 * k, 1.5))
+	await _settled(c + Vector2i(0, 3))
+	var reach := VoxelBox.roof_reach(_terrain.materials.roof_span_dry[0], _terrain.materials.roof_span_saturated[0], 0.0, 1.0, 1.0)
+	var wide := ceili(2.0 * (reach + 1.5) + 3.0)
+	var nk := 2 * (wide - 2) + 1
+	var mid := c + Vector2i(0, floori(wide / 2.0 + 1.25))
+	var middle: Array[Vector2i] = [mid, mid + Vector2i(1, 0), mid + Vector2i(0, 1), mid + Vector2i(1, 1)]
+	var cells := _box(mid + Vector2i(1, 0), wide + 2)
+	var sw := _read("surface")
+	var lw := _read("loose")
+	var top0: Array[float] = []
+	for x in middle:
+		top0.append(_f(sw, x) + _f(lw, x))
+	var lost0 := _swelled_loss(cells, sw, cb0, ct0)
+	var loose0 := _box_loose(cells)
+	var loose0_w := _vol(lw, sw, cells) + _gap_loose(cells)
+	var held0 := _tools.held
+	var clipped0: int = _terrain.box.read_stats()[VoxelBox.SLOTS + 2]
+	# The room within the reach (rows to 3 cells off the line, 13 balls along), then three layers lower with
+	# the pit, then the rows and length past the reach at the roof's height.
+	var inner: Array[float] = [0.5, -1.0, 2.0, -2.5, 3.5]
+	for h: float in [1.5, 0.0, -1.5, -3.0]:
+		if h < 1.5:
+			for k in 4:
+				await _scoop_at(aim.call(0.5, 0.5 * k, h))
+		for x: float in inner:
+			for k in 13:
+				await _scoop_at(aim.call(x, 2.0 + 0.5 * k, h))
+	await get_tree().create_timer(2.0).timeout
+	var feet := Cyl.height_of(_station.to_local(_player.global_position), p.radius)
+	var box_top := _terrain.box.top()
+	var sf := _read("surface")
+	var lf := _read("loose")
+	var before := 0.0
+	for i in middle.size():
+		before = maxf(before, top0[i] - _f(sf, middle[i]) - _f(lf, middle[i]))
+	# Conservation by the window after the layers, before the widening: the box's move down a brick alone.
+	var lost1 := _swelled_loss(cells, sw, cb0, ct0) - lost0
+	var got1 := _tools.held - held0 + _vol(lf, sf, cells) + _gap_loose(cells) - loose0_w
+	var outer: Array[float] = []
+	for i in range(1, ceili((wide / 2.0 - 1.5) / 1.5) + 1):
+		if not inner.has(0.5 - 1.5 * i):
+			outer.append(0.5 - 1.5 * i)
+		if not inner.has(0.5 + 1.5 * i):
+			outer.append(0.5 + 1.5 * i)
+	for x: float in inner + outer:
+		for k in nk:
+			if x in inner and k < 13:
+				continue
+			await _scoop_at(aim.call(x, 2.0 + 0.5 * k, 1.5))
+	var start := Time.get_ticks_msec()
+	var sank := 0.0
+	var fell := -1.0
+	while Time.get_ticks_msec() - start < 10000:
+		await _frames(30)
+		sf = _read("surface")
+		lf = _read("loose")
+		sank = INF
+		for i in middle.size():
+			sank = minf(sank, top0[i] - _f(sf, middle[i]) - _f(lf, middle[i]))
+		if sank >= 1.0:
+			fell = (Time.get_ticks_msec() - start) / 1000.0
+			break
+	var waited := await _settled(mid, 20.0)
+	var s2 := _read("surface")
+	var l2 := _read("loose")
+	var vox := _column_vox(_stack(mid), mid)
+	var ceiling: float = vox.solid[VoxelBox.BRICKS_UP * VoxelBox.BRICK - 1] / float(VoxelColumn.FRACTION_ONE)
+	var lost := _swelled_loss(cells, sw, cb0, ct0) - lost0
+	# The loose by the box's voxels (the window's count carries the pack's overflow merges, the inside phase).
+	var above := 0.0  # the surface loose over the box's top, out of its voxels (the baseline's box held every height)
+	for x in cells:
+		if _f(s2, x) > box_top:
+			above += _f(l2, x) * _area(_f(s2, x))
+	var got := _tools.held - held0 + _box_loose(cells) + above - loose0
+	var got_w := _tools.held - held0 + _vol(l2, s2, cells) + _gap_loose(cells) - loose0_w
+	_terrain.tool_params.roof_thickness_max = cap0
+	print("crust: at %s the ground %.2f m over the brick plane; the pit %.2f m deep, the roof's reach %.1f m, the room %d m wide; after the floor's three layers the feet at %.1f, the box's top %d, the ground at %.1f, the middle sunk %.3f m; widened: the ground over the middle sank %.2f m or more in %.2f s (settled in %.2f s); the box's ceiling voxel over the middle holds %.2f solid under a surface %.2f m over the box's top; the solid lost (swelled) %.4f m³ for %.4f got by the window (%+.4f %%; by the box's voxels %.4f, %+.4f %%, short of the window by the pack's %d gap-overflow merges, the slivers they turn to loose in the save; %.4f of surface loose over the box's top); the sand clipped %d counts of arriving loose at full voxels; after the layers, before the widening, the window had %.4f lost for %.4f got (%+.4f %%)" % [
+			c, g, depth, reach, wide, feet, box_top, ground, before, sank, fell, waited, ceiling, _f(s2, mid) - box_top, lost, got_w, _residual("crust", got_w, lost), got, (got / lost - 1.0) * 100.0, _terrain.box.read_stats()[VoxelBox.SLOTS], above, _terrain.box.read_stats()[VoxelBox.SLOTS + 2] - clipped0, lost1, got1, (got1 / lost1 - 1.0) * 100.0])
+	_report("the room is dug with the box's top %s the ground" % ("over" if shallow else "on the plane under"), (box_top > ground if shallow else box_top < ground) and box_top > floor_h and before <= 0.05)
+	_report("a collapse under ground the box does not reach climbs through to the surface, conserved", fell >= 0.0 and absf(got_w - lost) <= 1e-3 * lost)
+	return true
+
+
 func _cell_of(v: Vector3) -> Vector2i:
 	return _terrain.params.cell_of(Cyl.theta_of(v), v.z)
 
@@ -1451,12 +1577,18 @@ func _pillar(c: Vector2i) -> bool:
 		return Cyl.position((c.x + x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5 + d, floor_h + h, p.radius)
 	var free := _terrain.materials.roof_span_dry[0]
 	# The room dug round the post later: wider and longer than twice the roof's reach (half the span times the
-	# roof's thickness, the pit's depth less the ball's 3 m) and the yield margin, the post at its middle, so the
-	# middle is doomed once the post goes and no wall is within reach.
-	var reach_est := VoxelBox.roof_reach(free, _terrain.materials.roof_span_saturated[0], 0.0, depth - 3.0, _terrain.tool_params.roof_thickness_max)
+	# roof's thickness, read at the tunnel's fourth row once its first seven balls are in: the pit's depth less
+	# the ball's 3 m read it 0.6 m too thin, and a room sized from that, 22 m under a 2.23 m roof reaching
+	# 11.14 m, stayed within the yield margin once the post went, 2026-11-05) and the yield margin, the post at
+	# its middle, so the middle is doomed once the post goes and no wall is within reach.
+	for k in 7:
+		await _scoop_at(aim.call(0.5, 1.5 + 0.5 * k, 1.5))
+	await _frames(10)
+	var t_est := _f(_read("surface"), c + Vector2i(0, 4)) - _f(_read("gap_top0"), c + Vector2i(0, 4))
+	var reach_est := VoxelBox.roof_reach(free, _terrain.materials.roof_span_saturated[0], 0.0, t_est, _terrain.tool_params.roof_thickness_max)
 	var wide := ceili(2.0 * (reach_est + 1.5) + 3.0)
 	var post_row := floori(wide / 2.0 + 1.25)
-	for k in 2 * post_row - 1:
+	for k in range(7, 2 * post_row - 1):
 		await _scoop_at(aim.call(0.5, 1.5 + 0.5 * k, 1.5))
 	var landed := await _chunk_landed(VoxelBox.chunk_of_cell(c + Vector2i(0, 3)), 3.0)
 	await _frames(20)

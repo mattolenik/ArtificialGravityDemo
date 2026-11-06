@@ -66,7 +66,7 @@ layout(set = 0, binding = 10, std430) restrict readonly buffer Materials {
 	float free_dry[5];
 	float free_sat[5];
 } mt;
-layout(set = 0, binding = 11, r32f) uniform restrict readonly image2D w_surface;
+layout(set = 0, binding = 11, r32f) uniform restrict image2D w_surface;  // written by the pour at the box's ceiling
 layout(set = 0, binding = 12, r32f) uniform restrict readonly image2D w_bedrock;
 layout(set = 0, binding = 13, r32f) uniform restrict readonly image2D w_clay_bottom;
 layout(set = 0, binding = 14, r32f) uniform restrict readonly image2D w_clay_top;
@@ -468,6 +468,7 @@ void span_column(ivec2 cxz, int kz0, int my_ai) {
 	// The voxel under the brick's bottom voxel; outside the box it is solid (no roof voxel over it).
 	V vb = find(ivec3(cxz, kz0 - 1));
 	uint below_s = vb.e < 0 ? uint(ONE) : (vb.ok ? pool[vb.addr] & 0xFFFFu : 0u);
+	bool ceiling = kz0 + 16 == pc.origin.z * 16 + K;  // the box's top brick
 	for (int y = 0; y < 16; y++) {
 		uint s_below = y > 0 ? fs[y - 1] : below_s;
 		if (fs[y] == 0u || mt_[y] >= 2u || s_below >= quarter) {
@@ -592,7 +593,13 @@ void span_column(ivec2 cxz, int kz0, int my_ai) {
 			continue;
 		}
 		if (cut == fs[y]) {
-			pool[me.addr + 1] = w1 & 0x01FFFFFFu;  // the last of it goes: the air left is not doomed
+			// The last of it goes: the air left is not doomed, unless it is the box's ceiling with ground still
+			// stored over the box, which the next step pours in.
+			ivec2 tt;
+			bool crust = ceiling && y == 15 && texel(ivec2(wrap(cxz.x, pc.n_theta), cxz.y), tt) && imageLoad(w_surface, tt).r > float(kz0 + 16);
+			if (!crust) {
+				pool[me.addr + 1] &= 0x01FFFFFFu;
+			}
 		}
 		uint left = uint(roundh(float(cut) * swell));
 		for (int i = 0; i < nt && left > 0u; i++) {
@@ -676,6 +683,36 @@ void apply_column(ivec2 cxz, int kz0, int my_e, int my_ai) {
 	}
 	if (moved) {
 		atomicOr(box_stats[my_e], 1u);
+	}
+	// The pour at the box's ceiling: a doomed voxel the chimney emptied, with ground stored over the box, takes a
+	// voxel of that run once the step's arrivals have landed (nothing was sent against the room it loses), the
+	// surface lowered by its volume (VoxelBox.pour_drop; volumes per unit of angle and length, the radius R - h
+	// times the height), its material by the strata at the slice that left the surface, and goes again next
+	// step by the yield rule, so a collapse the box does not reach the top of climbs through the crust to the
+	// surface instead of leaving a void under it (the user, 2026-11-05: a view through a hill).
+	if (kz0 + 16 == pc.origin.z * 16 + K) {
+		V mv = find(ivec3(cxz, kz0 + 15));
+		uint w0 = pool[mv.addr];
+		ivec2 tt;
+		if ((w0 & 0xFFFFu) == 0u && (pool[mv.addr + 1] >> 25) == 127u && texel(ivec2(wrap(cxz.x, pc.n_theta), cxz.y), tt)) {
+			float surf = imageLoad(w_surface, tt).r;
+			float top = float(kz0 + 16);
+			if (surf > top) {
+				float above = (surf - top) * (pc.R - surf) + 0.5 * (surf - top) * (surf - top);
+				float voxel = pc.R - float(kz0 + 15) - 0.5;
+				float take = min(float(int(ONE) - int(w0 >> 16)) / ONE * voxel, above);
+				uint q = uint(floor(take / voxel * ONE));
+				if (q > 0u) {
+					Col cc = read_col(tt);
+					float ds = take >= above ? surf - top : -(pc.R - surf) + sqrt((pc.R - surf) * (pc.R - surf) + 2.0 * take);
+					imageStore(w_surface, tt, vec4(surf - ds));
+					pool[mv.addr] = q | (w0 & 0xFFFF0000u);
+					pool[mv.addr + 1] = uint(material_at(surf - 0.5 * ds, cc)) | (uint(cc.comp) << 8) | (uint(cc.sat) << 16) | (127u << 25);
+					dirty[mv.col] = 1u;
+					atomicOr(box_stats[my_e], 1u);
+				}
+			}
+		}
 	}
 }
 

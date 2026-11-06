@@ -311,6 +311,14 @@ static func wall_step(s_h: float, h_n: float, lip: float) -> float:
 	return s_h - maxf(h_n, lip)
 
 
+## The height a column's surface at surf (on a hull of radius R) falls when a column volume `take` (per unit of
+## angle and length: the cylinder's radius R - h times the height) leaves its top: box_sand.glsl's pour at the
+## box's ceiling, where a doomed voxel the chimney emptied takes a voxel of the ground stored over the box so a
+## collapse climbs through the crust to the surface instead of leaving a void under it (the user, 2026-11-05).
+static func pour_drop(take: float, surf: float, R: float) -> float:
+	return -(R - surf) + sqrt((R - surf) * (R - surf) + 2.0 * take)
+
+
 ## The reach of a roof voxel, in m (box_sand.glsl's yield rule): half the material's roof span, dry to saturated
 ## by the column's saturation, times the thickness of solid over the voxel in m, at most `cap`
 ## (ToolParams.roof_thickness_max).

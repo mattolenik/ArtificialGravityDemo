@@ -41,6 +41,10 @@ func _initialize() -> void:
 	# The step a surface voxel stands over a neighbour's ground stops at the bottom of its own top solid run: a
 	# roof's lip at a cave's mouth or an entrance pit is as tall as the roof, not the room under it (0: no gap).
 	check(is_equal_approx(VoxelBox.wall_step(414.0, 403.0, 412.4), 1.6) and VoxelBox.wall_step(414.0, 403.0, 0.0) == 11.0 and VoxelBox.wall_step(414.0, 413.0, 412.4) == 1.0, "wall_step stops at the top run's bottom")
+	# A collapse at the box's ceiling pours the ground stored over the box into the emptied voxel: the surface
+	# drops by the height whose column volume (per unit of angle, the cylinder's radius falling with height)
+	# matches what the voxel took: a metre at 100 m from the axis is 100.5 units; the whole run when it fits.
+	check(is_equal_approx(VoxelBox.pour_drop(100.5, 100.0, 200.0), 1.0) and is_equal_approx(VoxelBox.pour_drop(0.0, 100.0, 200.0), 0.0) and VoxelBox.pour_drop(49.5, 190.0, 200.0) < 5.0, "pour_drop: the surface's fall for a column volume")
 	# The span rule (Task 4): the reach, half the roof span mixed dry to saturated, times the thickness capped
 	# at one; a roof voxel fails with no support within the reach, or held from one side only beyond half of it.
 	check(VoxelBox.roof_reach(5.0, 1.5, 0.0, 1.0) == 2.5 and VoxelBox.roof_reach(5.0, 1.5, 0.0, 0.5) == 1.25 and VoxelBox.roof_reach(5.0, 1.5, 1.0, 1.0) == 0.75 and VoxelBox.roof_reach(5.0, 1.5, 0.0, 2.0) == 5.0 and VoxelBox.roof_reach(5.0, 1.5, 0.0, 4.0) == 7.5, "the reach grows with the dirt over the roof, to the cap")
