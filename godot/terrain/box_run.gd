@@ -82,12 +82,14 @@
 ##    pit, five scoops deep, and its tunnel, 3 m wide under a roof over a voxel thick: 10 s after it settles
 ##    the surface over the tunnel's roof (rows 3 to 5, both columns) is unchanged within 0.05 m and its gap
 ##    tops within a quarter voxel (the underside's partial voxel may drop; the loose there printed); then dug
-##    to a room 4 m wider than the free height and as long (balls on the tunnel's line and every 1.5 cells
-##    either side, every half metre from 2 m along): within 20 s the ground (surface and loose) over the room's middle 2 x 2
-##    cells sinks by a metre or more (the roof fell and the chimney reached the surface; before the ground
-##    sinks, the roof's underside over the middle, read from the chunk mesh after every fifth ball and every half
-##    second after, drops 0.3 m or more from where it was first met: the span rule's strain, drawn as a sag; and
-##    the ground over the middle has sunk a metre within a second of the lowest reading: the roof goes whole), and once settled the
+##    to a room wider than twice the roof's reach and the yield margin, and as long (balls on the tunnel's line
+##    and every 1.5 cells either side, every half metre from 2 m along): every fifth ball, until the ground over
+##    the room's middle first moves (its surface, or loose in its column), its surface is unchanged within 0.02 m
+##    (a clean dig: the yield rule moves nothing until it yields), and within a second of that first move the
+##    ground has sunk a metre (the roof and the dirt over it go at once, the area past the reach together; a
+##    trickle with no fall after it fails this); within 20 s
+##    the ground (surface and loose) over the room's middle 2 x 2 cells sinks by a metre or more (the roof fell
+##    and the chimney reached the surface), and once settled the
 ##    loose gained over the box of 10 round the room, the shovel's included, is the solid lost there times the
 ##    swell within 0.1 %.
 ## pillar (the middle of a chunk 216 cells past the spawn): the tunnel phase's pit, six scoops deep (_pit to
@@ -100,9 +102,8 @@
 ##    under the tunnel's floor (solid over it, as a wall's) stands nothing; P aimed a quarter metre under the
 ##    open ground's surface 3 cells antispinward of the pit stands nothing (sky over it, no roof within the
 ##    reach). Tools.pillars counts each.
-##    Then the post stood again and the tunnel dug round it to a room 6 m wider than the free height (past the
-##    reach and a half each way: the underside partials standing within half the reach of a wall would else
-##    carry the middle's full voxel as a beam) and 4 m longer, the post at its middle (balls on its line and
+##    Then the post stood again and the tunnel dug round it to a room wider and longer than twice the roof's
+##    reach and the yield margin (sized from the pit's depth less the ball's 3 m), the post at its middle (balls on its line and
 ##    every 1.5 cells either side, every half metre from 1.5 m along): 10 s on, over the post's column
 ##    and the one past it (the room's middle), on its row and the row before it, the surface is unchanged
 ##    since before the pit within 0.05 m and the solid loses under 0.25 m³ (at most the underside's sliver);
@@ -216,7 +217,7 @@ func _stack(cell: Vector2i) -> Array[PackedByteArray]:
 ## The 64 voxels of cell's column from its stack, as VoxelColumn returns them.
 func _column_vox(stack: Array[PackedByteArray], cell: Vector2i) -> Dictionary:
 	var n := VoxelBox.BRICKS_UP * VoxelBox.BRICK
-	var vox := {"solid": PackedInt32Array(), "loose": PackedInt32Array(), "material": PackedByteArray(), "compaction": PackedByteArray(), "hanging": PackedByteArray(), "strain": PackedByteArray()}
+	var vox := {"solid": PackedInt32Array(), "loose": PackedInt32Array(), "material": PackedByteArray(), "compaction": PackedByteArray(), "hanging": PackedByteArray(), "yield": PackedByteArray()}
 	for k: String in vox:
 		vox[k].resize(n)
 	var x := posmod(cell.x, VoxelBox.BRICK)
@@ -232,7 +233,7 @@ func _column_vox(stack: Array[PackedByteArray], cell: Vector2i) -> Dictionary:
 			vox.material[i] = v.material
 			vox.compaction[i] = v.compaction
 			vox.hanging[i] = v.hanging
-			vox.strain[i] = v.strain
+			vox.yield[i] = v.yield
 	return vox
 
 
@@ -1231,12 +1232,14 @@ func _roof(c: Vector2i) -> bool:
 	# round bore is at its widest and the walls' voxels hold under half, so near the pit, with no end wall
 	# within the reach, it fails as a cantilever. The full voxel over it reads the walls whole and holds.
 	_report("a 3 m tunnel under a roof over a voxel thick holds", depth >= 4.2 and waited >= 0.0 and waited2 >= 0.0 and moved <= 0.05 and rose <= 0.25)
-	# Widened and lengthened past the free height: balls along the tunnel's line and every 1.5 cells either
-	# side of it (2.5 cells apart, the balls would leave a ridge at the hollow's top that props the roof) to a
-	# room 4 m wider than the free height, every half metre from 2 m along to a room as long. A room no wider
-	# than the free height stands, held across its short side as a tunnel is (the span rule's disc reads both ways).
+	# Wider than twice the roof's reach (half the span times its thickness, the tunnel's roof's here) and the
+	# yield margin, so the middle is doomed when the last rows go; balls on the tunnel's line first and every
+	# 1.5 cells either side (2.5 cells apart, the balls would leave a ridge at the hollow's top that props the
+	# roof), every half metre from 2 m along to a room as long.
 	var free := _terrain.materials.roof_span_dry[0]
-	var wide := int(free) + 4
+	var t_roof := _f(s1, c + Vector2i(0, 4)) - _f(gt1, c + Vector2i(0, 4))
+	var reach := VoxelBox.roof_reach(free, _terrain.materials.roof_span_saturated[0], 0.0, t_roof, _terrain.tool_params.roof_thickness_max)
+	var wide := ceili(2.0 * (reach + 1.5) + 3.0)
 	var rows: Array[float] = [0.5]
 	for i in range(1, ceili((wide / 2.0 - 1.5) / 1.5) + 1):
 		rows.append(0.5 - 1.5 * i)
@@ -1254,56 +1257,27 @@ func _roof(c: Vector2i) -> bool:
 	var loose0 := _vol(lw, sw, cells) + _gap_loose(cells)
 	var held0 := _tools.held
 	var clipped0: int = _terrain.box.read_stats()[VoxelBox.SLOTS + 2]
-	# The roof's underside over the room's middle: the lowest vertex of the chunk's mesh over the cell that faces
-	# down, between the window's roof there (the first gap's top) and a metre under it, while that roof stays
-	# where it was once the room reached the cell: the sag the mesh draws before the roof fails (a failing
-	# column reads as fill anywhere; the loose the half-cut walls slump onto the floor faces up). A ray would
-	# not do: the trimesh ignores its back faces, so none cast from inside the roof meets the underside.
-	# State in an array: a lambda copies a float.
-	var roof_h := func(gt: float) -> float:
-		var st_: Dictionary = _terrain.box.touched.get(VoxelBox.chunk_of_cell(mid), {})
-		if st_.is_empty() or st_.node == null or st_.node._mesh.mesh == null:
-			return INF
-		var arrays: Array = st_.node._mesh.mesh.surface_get_arrays(0)
-		var vs: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-		var ns: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
-		var cth := (mid.x + 0.5) * p.dtheta()
-		var cz := -p.length / 2.0 + mid.y + 0.5
-		var low := INF
-		for i in vs.size():
-			var v := vs[i]
-			var h := Cyl.height_of(v, p.radius)
-			if h > gt - 1.0 and h < gt + 0.6 and absf(v.z - cz) <= 0.6 and absf(wrapf(Cyl.theta_of(v) - cth, -PI, PI)) * (p.radius - gt) <= 0.6 \
-					and ns[i].dot(-Vector3(v.x, v.y, 0.0).normalized()) < -0.3:
-				low = minf(low, h)
-		return low
-	# The roof first met, the lowest met, the window's roof once it read the same twice (the rows after the
-	# first cut the middle column's edge), the last reading, the time of the lowest, and the time the ground
-	# over the middle had sunk a metre (the fall follows the sag's end whole: within a second).
-	var st: Array[float] = [INF, INF, INF, -INF, INF, INF]
+	# The dig stays clean until the roof yields: every fifth ball, the ground over the middle (surface and
+	# loose, against before the widening) and the loose in the middle's column. The first move is the first
+	# sample where either changed (the roof's underside falls into the room a few steps before the ground
+	# over it follows, the rubble under it making room step by step), and the ground must have sunk a metre
+	# within a second of it: a trickle, loose with no fall after it, fails that. State in an array: a lambda
+	# copies a float.
+	var st: Array[float] = [0.0, INF, INF]  # the most the surface moved before the first move, the time of the first move, of the metre
 	var sample := func() -> void:
-		if not is_finite(st[5]):
-			var sf := _read("surface")
-			var lf := _read("loose")
-			var sunk := INF
-			for i in middle.size():
-				sunk = minf(sunk, top0[i] - _f(sf, middle[i]) - _f(lf, middle[i]))
-			if sunk >= 1.0:
-				st[5] = Time.get_ticks_msec()
-		var gt: float = _f(_read("gap_top0"), mid)
-		if not is_finite(st[2]):
-			if gt > floor_h + 2.0 and absf(gt - st[3]) <= 0.01:
-				st[2] = gt
-			st[3] = gt
-			return
-		if absf(gt - st[2]) > 0.05:
-			return
-		var r: float = roof_h.call(st[2])
-		if r > st[2] - 1.0 and r < st[2] + 0.6:
-			st[0] = r if not is_finite(st[0]) else st[0]
-			if r < st[1]:
-				st[1] = r
-				st[4] = Time.get_ticks_msec()
+		var sf := _read("surface")
+		var lf := _read("loose")
+		var sunk := INF
+		for i in middle.size():
+			sunk = minf(sunk, top0[i] - _f(sf, middle[i]) - _f(lf, middle[i]))
+		var now := Time.get_ticks_msec()
+		if not is_finite(st[1]):
+			if absf(sunk) > 0.05 or _box_volumes([mid])[0] > 0.01:
+				st[1] = now
+			else:
+				st[0] = maxf(st[0], absf(sunk))
+		if is_finite(st[1]) and not is_finite(st[2]) and sunk >= 1.0:
+			st[2] = now
 	for x: float in rows:
 		for k in nk:
 			await _scoop_at(aim.call(x, 2.0 + 0.5 * k, 1.5))
@@ -1323,8 +1297,7 @@ func _roof(c: Vector2i) -> bool:
 		if sank >= 1.0:
 			fell = (Time.get_ticks_msec() - start) / 1000.0
 			break
-	var sag := st[0] - st[1]
-	var lag := (st[5] - st[4]) / 1000.0
+	var lag := (st[2] - st[1]) / 1000.0
 	var waited3 := await _settled(c + Vector2i(1, 3), 20.0)
 	var s2 := _read("surface")
 	var l2 := _read("loose")
@@ -1343,10 +1316,10 @@ func _roof(c: Vector2i) -> bool:
 	print("roof: over the box of %d the solid lost (swelled) %.6f m³ for %.6f held + %.6f loose = %.6f (%+.4f %%); the sand clipped %d counts of arriving loose at full voxels" % [
 			wide + 2, lost, _tools.held - held0, got - (_tools.held - held0), got, _residual("roof", got, lost), clipped])
 	_report("a room too wide climbs to a sinkhole, conserved", fell >= 0.0 and waited3 >= 0.0 and absf(got - lost) <= 1e-3 * lost and clipped == 0)
-	print("roof: the underside over the room's middle was first met %.2f m over the floor (the window's roof there %.2f) and sagged %.3f m at most while that roof stood; the ground over the middle had sunk a metre %.2f s after the lowest reading" % [
-			st[0] - floor_h, st[2] - floor_h, sag, lag])
-	_report("a room too wide sags before its roof falls", fell >= 0.0 and sag >= 0.3)
-	_report("a sagged roof comes down whole, the ground sunk within a second of the sag's end", is_finite(lag) and lag <= 1.0)
+	print("roof: the tunnel's roof %.2f m thick reaches %.2f m, the room dug %d m wide; until the middle first moved (its surface, or loose in its column) its surface moved %.3f m at most; the ground over it had sunk a metre %.2f s after that first move" % [
+			t_roof, reach, wide, st[0], lag])
+	_report("the dig is clean until the roof yields", is_finite(st[1]) and st[0] <= 0.02)
+	_report("the roof yields all at once, the ground sunk a metre within a second of the middle's first move", is_finite(lag) and lag <= 1.0)
 	return true
 
 
@@ -1373,8 +1346,12 @@ func _pillar(c: Vector2i) -> bool:
 	var aim := func(x: float, d: float, h: float) -> Vector3:
 		return Cyl.position((c.x + x + 0.5) * p.dtheta(), -p.length / 2.0 + c.y + 0.5 + d, floor_h + h, p.radius)
 	var free := _terrain.materials.roof_span_dry[0]
-	# The post's cell along the tunnel: the middle of the room dug round it, 4 m longer than the free height.
-	var post_row := int(free / 2.0) + 2
+	# The room dug round the post later: wider and longer than twice the roof's reach (half the span times the
+	# roof's thickness, the pit's depth less the ball's 3 m) and the yield margin, the post at its middle, so the
+	# middle is doomed once the post goes and no wall is within reach.
+	var reach_est := VoxelBox.roof_reach(free, _terrain.materials.roof_span_saturated[0], 0.0, depth - 3.0, _terrain.tool_params.roof_thickness_max)
+	var wide := ceili(2.0 * (reach_est + 1.5) + 3.0)
+	var post_row := floori(wide / 2.0 + 1.25)
 	for k in 2 * post_row - 1:
 		await _scoop_at(aim.call(0.5, 1.5 + 0.5 * k, 1.5))
 	var landed := await _chunk_landed(VoxelBox.chunk_of_cell(c + Vector2i(0, 3)), 3.0)
@@ -1462,20 +1439,20 @@ func _pillar(c: Vector2i) -> bool:
 	var bare: bool = (pillar_of.call(_column_vox(_stack(open), open)) as Array[int]).is_empty()
 	print("pillar: on the open ground at %s, aimed at %.2f (the surface %.2f): no pillar voxel %s; pillars %d" % [open, open_h, open_h + 0.25, bare, _tools.pillars])
 	_report("P on open ground stands nothing", bare and _tools.pillars == n0)
-	# The post stood again and the tunnel dug round it to a room 6 m wider than the free height (balls every 1.5
-	# cells either side of its line) and 4 m longer: the roof over the room's middle, the post's column and those
-	# either side, is held by the post (the span rule's worked case) and falls when the post goes. Wider than
-	# the free height alone is not enough: the roof's underside partials within half the reach of a wall stand,
-	# and when they hold half a voxel (a pit 5 m deep leaves 0.58) the full voxel over the middle spans between
-	# them as a beam; the room's half-width is past the reach and a half, so the middle sees no such pair.
+	# The post stood again and the tunnel dug round it to a room wider than twice the roof's reach (half the
+	# span times its thickness here) and the yield margin (balls every 1.5 cells either side of its line) and
+	# 4 m longer than the free height: the roof over the room's middle, the post's column and those either
+	# side, is held by the post (a support within its reach) and is doomed when the post goes.
+	var t_roof := _f(_read("surface"), cell) - _f(_read("gap_top0"), cell)
+	var reach := VoxelBox.roof_reach(free, _terrain.materials.roof_span_saturated[0], 0.0, t_roof, _terrain.tool_params.roof_thickness_max)
 	_tools.place_pillar(cell)
 	await _frames(1)
 	var rows: Array[float] = [0.5]
-	for i in range(1, ceili(((free + 6.0) / 2.0 - 1.5) / 1.5) + 1):
+	for i in range(1, ceili((wide / 2.0 - 1.5) / 1.5) + 1):
 		rows.append(0.5 - 1.5 * i)
 		rows.append(0.5 + 1.5 * i)
 	for x: float in rows:
-		for k in 2 * int(free) + 3:
+		for k in 2 * (wide - 2) + 1:
 			await _scoop_at(aim.call(x, 1.5 + 0.5 * k, 1.5))
 	# The room's middle on the post's row and the row before it (by the pit): the post's column and the one
 	# past it, which fall when the post goes. The column on the post's other side keeps a ledge when it goes
@@ -1495,8 +1472,8 @@ func _pillar(c: Vector2i) -> bool:
 		drift = maxf(drift, absf(d))
 		moved = maxf(moved, absf(_f(s1, sides[i]) - _f(s0, sides[i])))
 		drifts.append("%s %+.4f" % [sides[i] - cell, d])
-	print("pillar: stood again at %s (pillars %d), the room dug %d rows of balls wide by %d along: 10 s on the surface over the room's middle moved %.3f m at most since before the pit, its solid %.4f m³ (%s)" % [
-			cell, _tools.pillars, rows.size(), 2 * int(free) + 3, moved, drift, ", ".join(drifts)])
+	print("pillar: stood again at %s (pillars %d), the roof %.2f m thick reaching %.2f m, the room dug %d m wide (%d rows of balls) by %d along: 10 s on the surface over the room's middle moved %.3f m at most since before the pit, its solid %.4f m³ (%s)" % [
+			cell, _tools.pillars, t_roof, reach, wide, rows.size(), 2 * (wide - 2) + 1, moved, drift, ", ".join(drifts)])
 	# A column off the post's row and column may drop its roof's underside sliver, under a quarter voxel (0.11 m³
 	# at (1, -1) over a 4.20 m pit), as the roof phase's tunnel does: it reads its supports a voxel down, where
 	# the bore is widest. The roof over it holds; a fall loses a metre of it.

@@ -40,10 +40,10 @@ func _initialize() -> void:
 	check(not VoxelBox.wall_fails(3.0, 1.0, 1.0, 4.0) and VoxelBox.wall_fails(5.0, 1.0, 1.0, 4.0) and not VoxelBox.wall_fails(0.9, 1.0, 1.0, 0.0), "wall_fails")
 	# The span rule (Task 4): the reach, half the roof span mixed dry to saturated, times the thickness capped
 	# at one; a roof voxel fails with no support within the reach, or held from one side only beyond half of it.
-	check(VoxelBox.roof_reach(5.0, 1.5, 0.0, 1.0) == 2.5 and VoxelBox.roof_reach(5.0, 1.5, 0.0, 0.5) == 1.25 and VoxelBox.roof_reach(5.0, 1.5, 1.0, 1.0) == 0.75 and VoxelBox.roof_reach(5.0, 1.5, 0.0, 2.0) == 2.5, "the reach")
-	check(not VoxelBox.span_fails(1.5, 1.5, 2.5) and VoxelBox.span_fails(3.0, 3.0, 2.5) and VoxelBox.span_fails(2.0, 4.0, 2.5) and not VoxelBox.span_fails(1.0, 4.0, 2.5) and VoxelBox.span_fails(INF, INF, 2.5), "the span rule")
-	check(VoxelBox.span_fails(1.5, 1.5, VoxelBox.roof_reach(5.0, 1.5, 1.0, 1.0)), "a wet roof over a 3 m tunnel fails")
-	check(not VoxelBox.span_fails(1.0, 1.0, 2.5), "the box's edge is a support")
+	check(VoxelBox.roof_reach(5.0, 1.5, 0.0, 1.0) == 2.5 and VoxelBox.roof_reach(5.0, 1.5, 0.0, 0.5) == 1.25 and VoxelBox.roof_reach(5.0, 1.5, 1.0, 1.0) == 0.75 and VoxelBox.roof_reach(5.0, 1.5, 0.0, 2.0) == 5.0 and VoxelBox.roof_reach(5.0, 1.5, 0.0, 4.0) == 7.5, "the reach grows with the dirt over the roof, to the cap")
+	check(not VoxelBox.span_fails(1.5, 2.5) and not VoxelBox.span_fails(3.5, 2.5) and VoxelBox.span_fails(4.5, 2.5) and VoxelBox.span_fails(INF, 2.5), "the yield rule: past the reach it holds within the margin, then goes")
+	check(VoxelBox.span_fails(2.5, VoxelBox.roof_reach(5.0, 1.5, 1.0, 1.0)), "a wet roof over a 5 m room fails")
+	check(not VoxelBox.span_fails(1.0, 2.5), "the box's edge is a support")
 	# The Materials block of box_sand.glsl: tan of the stand slopes dry and saturated, the swell, the free
 	# heights dry and saturated (the roof spans), per material.
 	b.materials = load("res://terrain/materials.tres")

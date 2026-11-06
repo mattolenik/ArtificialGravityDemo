@@ -22,28 +22,21 @@
 //   solid, never under bedrock_top, never rock: the solid leaves as `out`'s high half and arrives as loose
 //   times the swell in the voxel's own room (half of it at most) and the room over it (a quarter at most, so
 //   the falls' and slumps' shares still fit beside it); less failure when less fits.
-//   The span rule (span_column, after the slope stability): a roof voxel (dirt or clay holding any solid, the
-//   voxel under it holding under a quarter) reaches half the material's free height (its roof span), dry to
-//   saturated by the column's saturation, times the roof's thickness (the solid from it up to the first voxel
-//   under a quarter, in metres, capped at one). In the layer under it, within the reach (theta scaled by the
-//   cell's width), a support is a voxel holding half a voxel of solid (loose counting only directly under the
-//   roof voxel, a pile it rests on: the rubble of a cell that fell would else prop the sagging cell beside it),
-//   a pillar, a post's cap (the voxel standing on a pillar voxel, which a neighbour's roof voxel a layer over the post's top
-//   reads), or one outside the box (VoxelBox.span_fails): with none it fails, and with the nearest beyond half
-//   the reach and none across from it (more than a right angle away) it fails as a cantilever. It fails as the slope
-//   stability's voxel does, slump_rate of its solid a step (all of it once that is under move_eps): `out`'s high
-//   half, arriving as loose times the swell in its own room (half at most; a quarter when the voxel over it
-//   may fail into it too) and the room of the air voxel under it (a quarter at most). The apply pass's face rule
-//   wakes the brick over a failing top voxel, so a chimney climbs across bricks. Before it fails, a roof voxel
-//   sags: its strain (the top seven bits of its second word, not saved) rises sag_rate a step, slower near
-//   the cantilever limit (so a room's middle goes first and the sag is a bowl), falls back at a quarter of that
-//   while it holds (a layer resting a moment on the rubble of the one under it keeps nearly all of it), keeps
-//   its brick active, and box_mesh.glsl draws its underside lower by it. At full strain the whole voxel goes in
-//   a step, its loose placed in the air voxels under it (half of each one's room, nearest first, down to solid
-//   or six voxels; none in its own voxel, whose rubble would prop the voxel over it; with less room, as much
-//   as fits, the rest the steps after), and the failure hands full strain to the dirt or clay voxel over it
-//   and to any neighbour already straining, so a roof and its overburden come down together in a few steps
-//   rather than layer by sagging layer, and the ceiling never recedes upward as a slab dissolves.
+//   The yield rule (span_column, after the slope stability): a roof voxel (dirt or clay holding any solid, the
+//   voxel under it holding under a quarter) reaches half the material's roof span, dry to saturated by the
+//   column's saturation, times the thickness of solid over it (from it up to the first air voxel, in metres,
+//   at most roof_thickness_max: the more dirt over a cave, the more it holds). In the layer under it, within
+//   the reach (theta scaled by the cell's width), a support is a voxel holding half a voxel of solid (loose
+//   counting only directly under the roof voxel: a pile it rests on), a pillar, a post's cap (the voxel
+//   standing on a pillar voxel, which a neighbour's roof voxel a layer over the post's top reads), or one
+//   outside the box: with one it holds (VoxelBox.span_fails). Past the reach it is flagged (the top seven
+//   bits of its second word, 1; never saved) and still holds; past the reach by YIELD_MARGIN it is doomed
+//   (127) and goes now, the whole of its solid in a step, its loose placed in the air voxels under it (half
+//   of each one's room, nearest first, down to solid or six voxels; none in its own voxel, whose rubble would
+//   prop the voxel over it; with less room, as much as fits, the rest the steps after), and it dooms the dirt
+//   or clay voxel over it and every flagged neighbour at its height, their bricks woken, so the whole area
+//   past the reach and the overburden come down together, and nothing moves before that. The apply pass's
+//   face rule wakes the brick over a failing top voxel, so a chimney climbs across bricks.
 // 1 apply: each voxel takes its arrivals, loses what it sent, stores the result when it changed, flags its
 //   column dirty (the pack writes the window) and, over move_eps, its brick active (bit 0 of its slot) and the
 //   brick across any face it lies on (bit 1).
@@ -116,7 +109,7 @@ layout(push_constant, std430) uniform Params {
 	float slump_rate;
 	vec3 repose_tan;       // dirt's repose, dry, damp and saturated
 	float move_eps;        // m; the smallest change that flags activity
-	float sag_rate;        // the share of a roof voxel's strain a step adds (a step over ToolParams.sag_time)
+	float roof_thickness_max;  // m of solid over a roof voxel that count toward its reach (ToolParams)
 	float pad0, pad1, pad2;
 } pc;
 
@@ -441,11 +434,10 @@ void flux_column(ivec2 cxz, int kz0, int my_e, int my_ai) {
 
 // Whether voxel p of the support layer holds a roof: half a voxel of solid, or a pillar, or, directly under
 // the roof voxel (`under`), half a voxel of solid and loose together (a pile it rests on; loose beside it props
-// nothing: the rubble of a cell that fell a few steps before propped the sagging cell beside it, which
-// straightened and stood as a chimney of roof over the sinkhole, and with loose never a support a roof over
-// a pile had no rest, the pile slumping away under it and the roof dripping onto it again); a voxel outside
-// the box (beyond the index laterally, or under its bottom) counts as support, air (an unallocated brick)
-// does not.
+// nothing: the rubble of cells that fell would else prop the cell beside them, and with loose never a support
+// a roof over a pile had no rest, the pile slumping away under it and the roof falling onto it again); a
+// voxel outside the box (beyond the index laterally, or under its bottom) counts as support, air (an
+// unallocated brick) does not.
 bool support(ivec3 p, bool under) {
 	V v = find(p);
 	if (v.e < 0) {
@@ -465,6 +457,9 @@ bool support(ivec3 p, bool under) {
 }
 
 // The span rule at the column's roof voxels, after flux_column has read the column (fs, fl, mt_, sat).
+// A roof voxel past its reach by this much yields (the header), in m.
+const float YIELD_MARGIN = 1.5;
+
 void span_column(ivec2 cxz, int kz0, int my_ai) {
 	uint quarter = uint(ONE) / 4u;
 	// The voxel under the brick's bottom voxel; outside the box it is solid (no roof voxel over it).
@@ -481,94 +476,80 @@ void span_column(ivec2 cxz, int kz0, int my_ai) {
 		if ((flux[fi] >> 16) != 0u) {
 			continue;  // the slope stability already cut it this step
 		}
-		// The thickness: the solid from this voxel up to the first under a quarter, in metres, capped at one.
-		float th = 0.0;
-		uint s_up = 0u;
-		uint m_up = 255u;
-		for (int ky = y; ky <= y + 4 && th < 1.0; ky++) {
-			uint s_k = 0u;
-			uint m_k = 255u;
-			if (ky < 16) {
-				s_k = fs[ky];
-				m_k = mt_[ky];
-			} else {
-				V vu = find(ivec3(cxz, kz0 + ky));
-				if (vu.ok) {
-					s_k = pool[vu.addr] & 0xFFFFu;
-					m_k = pool[vu.addr + 1] & 255u;
-				}
-			}
-			if (ky == y + 1) {
-				s_up = s_k;
-				m_up = m_k;
-			}
-			if (ky > y && s_k < quarter) {
-				break;
-			}
-			th += float(s_k) / ONE;
-		}
-		uint m = mt_[y];
-		float reach = 0.5 * mix(mt.free_dry[m], mt.free_sat[m], sat) * min(th, 1.0);
-		// The support disc in the layer under: the nearest support, then one across from it (more than a right
-		// angle away). Distances are between voxel centres, theta scaled by the cell's width at the roof's
-		// underside.
-		float w = pc.dtheta * (pc.R - float(k));
-		int n = int(ceil(reach));
-		float best = 1.0e9;
-		vec2 dir = vec2(0.0);
-		for (int dz = -n; dz <= n; dz++) {
-			for (int dx = -n; dx <= n; dx++) {
-				vec2 o = vec2(float(dx) * w, float(dz));
-				float dd = length(o);
-				if (dd <= reach && dd < best && support(ivec3(cxz + ivec2(dx, dz), k - 1), dx == 0 && dz == 0)) {
-					best = dd;
-					dir = o;
-				}
-			}
-		}
-		bool holds = best <= 0.5 * reach;  // VoxelBox.span_fails
-		for (int dz = -n; dz <= n && !holds && best <= reach; dz++) {
-			for (int dx = -n; dx <= n && !holds; dx++) {
-				vec2 o = vec2(float(dx) * w, float(dz));
-				holds = length(o) <= reach && dot(o, dir) < 0.0 && support(ivec3(cxz + ivec2(dx, dz), k - 1), false);
-			}
-		}
-		// The strain before the failure (the header): the top seven bits of the second word.
 		uint w1 = pool[me.addr + 1];
-		int strain = int(w1 >> 25);
-		int rate = max(1, int(round(pc.sag_rate * 127.0)));
-		if (holds) {
-			if (strain > 0) {
-				pool[me.addr + 1] = (w1 & 0x01FFFFFFu) | (uint(max(strain - max(1, rate / 4), 0)) << 25);
-				dirty[me.col] = 1u;
-				atomicOr(box_stats[me.e], 1u);
+		uint state = w1 >> 25;
+		if (state != 127u) {
+			// The thickness: the solid from this voxel up to the first air voxel, in metres, capped.
+			float th = 0.0;
+			for (int ky = y; ky < y + 16 && th < pc.roof_thickness_max; ky++) {
+				uint s_k = 0u;
+				if (ky < 16) {
+					s_k = fs[ky];
+				} else {
+					V vu = find(ivec3(cxz, kz0 + ky));
+					s_k = vu.ok ? pool[vu.addr] & 0xFFFFu : 0u;
+				}
+				if (ky > y && s_k == 0u) {
+					break;
+				}
+				th += float(s_k) / ONE;
 			}
-			continue;
+			uint m = mt_[y];
+			float reach = 0.5 * mix(mt.free_dry[m], mt.free_sat[m], sat) * min(th, pc.roof_thickness_max);
+			// The nearest support in the layer under, within the reach and the margin, searched ring by ring
+			// outward (a wall a cell or two away ends it after a few cells; only a cell past the reach scans the
+			// disc): the search ends at the first within the reach. Distances are between voxel centres, theta
+			// scaled by the cell's width at the roof's underside.
+			float w = pc.dtheta * (pc.R - float(k));
+			float limit = reach + YIELD_MARGIN;
+			int n = int(ceil(limit));
+			float best = 1.0e9;
+			for (int r = 0; r <= n && best > reach; r++) {
+				for (int i = -r; i <= r && best > reach; i++) {
+					for (int side = 0; side < 4 && best > reach; side++) {
+						if (r == 0 && side > 0) {
+							break;
+						}
+						if (side >= 2 && (i == r || i == -r)) {
+							continue;  // the corners, met on the first two sides
+						}
+						ivec2 d = side == 0 ? ivec2(r, i) : (side == 1 ? ivec2(-r, i) : (side == 2 ? ivec2(i, r) : ivec2(i, -r)));
+						vec2 o = vec2(float(d.x) * w, float(d.y));
+						float dd = length(o);
+						if (dd <= limit && dd < best && support(ivec3(cxz + d, k - 1), r == 0)) {
+							best = dd;
+						}
+					}
+				}
+			}
+			uint next = best <= reach ? 0u : (best <= limit ? 1u : 127u);
+			if (next != 127u) {
+				if (next != state) {
+					pool[me.addr + 1] = (w1 & 0x01FFFFFFu) | (next << 25);
+					dirty[me.col] = 1u;
+				}
+				continue;
+			}
 		}
-		if (strain < 127) {
-			float ease = best > reach ? 1.0 : clamp((best - 0.5 * reach) / (0.5 * reach), 0.25, 1.0);
-			pool[me.addr + 1] = (w1 & 0x01FFFFFFu) | (uint(min(strain + max(1, int(round(float(rate) * ease))), 127)) << 25);
-			dirty[me.col] = 1u;
-			atomicOr(box_stats[me.e], 1u);
-			continue;
-		}
-		// The failure: the whole of the solid in a step, leaving as `out`'s high half and arriving as loose times
-		// the swell in the air voxels under it, nearest first, half of each one's room (the falls' and slumps'
-		// shares still fit beside it), down to the first voxel holding a quarter of solid or six voxels; nothing
-		// in this voxel itself (its own rubble would prop the voxel over it). With less room, as much as fits,
-		// the rest the steps after. The voxel over it, dirt or clay, takes full strain (it fails as soon as this
-		// one is out from under it), as does any neighbour at this height already straining.
+		// Doomed: the voxel over it and the flagged neighbours go with it, their bricks woken.
 		V vu = find(ivec3(cxz, k + 1));
 		if (vu.ok && (pool[vu.addr] & 0xFFFFu) > 0u && (pool[vu.addr + 1] & 255u) < 2u) {
 			atomicOr(pool[vu.addr + 1], 127u << 25);
+			atomicOr(box_stats[vu.e], 1u);
 		}
 		for (int d = 0; d < 4; d++) {
 			V vn = find(ivec3(cxz + DIR8[d], k));
-			if (vn.ok && (pool[vn.addr + 1] >> 25) > 0u) {
+			if (vn.ok && (pool[vn.addr + 1] >> 25) != 0u) {
 				atomicOr(pool[vn.addr + 1], 127u << 25);
+				atomicOr(box_stats[vn.e], 1u);
 			}
 		}
-		float swell = mt.swell[m];
+		// The whole of the solid in a step, leaving as `out`'s high half and arriving as loose times the swell
+		// in the air voxels under it, nearest first, half of each one's room (the falls' and slumps' shares
+		// still fit beside it), down to the first voxel holding a quarter of solid or six voxels; nothing in
+		// this voxel itself (its own rubble would prop the voxel over it). With less room, as much as fits, the
+		// rest the steps after; with none (a pile up to the roof) it waits, doomed, for room.
+		float swell = mt.swell[mt_[y]];
 		V tv[6];
 		int ta[6];
 		int tk[6];
@@ -605,14 +586,10 @@ void span_column(ivec2 cxz, int kz0, int my_ai) {
 		}
 		uint cut = min(fs[y], uint(floor(cap / swell)));
 		if (cut == 0u) {
-			// No room to fall into (a pile up to the roof): it holds, and the sag goes out of it.
-			pool[me.addr + 1] = (w1 & 0x01FFFFFFu) | (uint(max(strain - max(1, rate / 4), 0)) << 25);
-			dirty[me.col] = 1u;
-			atomicOr(box_stats[me.e], 1u);
 			continue;
 		}
 		if (cut == fs[y]) {
-			pool[me.addr + 1] = w1 & 0x01FFFFFFu;  // the last of it goes: no strain on the air left
+			pool[me.addr + 1] = w1 & 0x01FFFFFFu;  // the last of it goes: the air left is not doomed
 		}
 		uint left = uint(roundh(float(cut) * swell));
 		for (int i = 0; i < nt && left > 0u; i++) {

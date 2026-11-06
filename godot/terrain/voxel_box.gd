@@ -298,17 +298,19 @@ static func wall_fails(step: float, w: float, stand_tan: float, free: float) -> 
 	return step > maxf(stand_tan * w, free)
 
 
-## The span rule's reach (box_sand.glsl): half the roof span, mixed dry to saturated by the column's saturation,
-## times the roof's thickness in metres capped at one.
-static func roof_reach(span_dry: float, span_sat: float, sat: float, thickness: float) -> float:
-	return 0.5 * lerpf(span_dry, span_sat, sat) * minf(thickness, 1.0)
+## The reach of a roof voxel, in m (box_sand.glsl's yield rule): half the material's roof span, dry to saturated
+## by the column's saturation, times the thickness of solid over the voxel in m, at most `cap`
+## (ToolParams.roof_thickness_max).
+static func roof_reach(span_dry: float, span_sat: float, sat: float, thickness: float, cap := 3.0) -> float:
+	return 0.5 * lerpf(span_dry, span_sat, sat) * minf(thickness, cap)
 
 
-## The span rule: a roof voxel whose nearest support lies `nearest` m away and whose second support in the
-## half-disc opposite lies `opposite` m away (INF for none) fails with no support within the reach, or held from
-## one side only (a cantilever) beyond half the reach.
-static func span_fails(nearest: float, opposite: float, reach: float) -> bool:
-	return nearest > reach or (opposite > reach and nearest > 0.5 * reach)
+## Whether a roof voxel yields: its nearest solid support (a voxel holding half a voxel of solid in the layer
+## under it, a pillar, a post's cap, the box's edge; loose only directly under it) lies past its reach by more
+## than `margin` m. Past the reach but within the margin it holds, flagged, until a voxel of its area yields
+## and takes it along.
+static func span_fails(nearest: float, reach: float, margin := 1.5) -> bool:
+	return nearest > reach + margin
 
 
 ## The world brick in slot i under the origin.
@@ -495,7 +497,7 @@ func _sand_pc(brick: Vector3i, active: int, mode: int) -> PackedByteArray:
 	b.encode_float(84, tan(deg_to_rad(materials.repose_damp[0])))
 	b.encode_float(88, tan(deg_to_rad(materials.repose_saturated[0])))
 	b.encode_float(92, tool_params.move_eps)
-	b.encode_float(96, STEP / tool_params.sag_time)
+	b.encode_float(96, tool_params.roof_thickness_max)
 	return b
 
 
@@ -941,7 +943,7 @@ static func voxel(brick: PackedByteArray, x: int, y: int, z: int) -> Dictionary:
 	var w0 := brick.decode_u32(o)
 	var w1 := brick.decode_u32(o + 4)
 	return {"solid": w0 & 0xFFFF, "loose": w0 >> 16, "material": w1 & 255, "compaction": (w1 >> 8) & 255,
-			"saturation": (w1 >> 16) & 255, "hanging": (w1 >> 24) & 1, "strain": w1 >> 25}
+			"saturation": (w1 >> 16) & 255, "hanging": (w1 >> 24) & 1, "yield": w1 >> 25}
 
 
 ## The 32 m chunk of a cell.
@@ -1157,5 +1159,4 @@ func _mesh_pc(ch: Vector2i, mode: int) -> PackedByteArray:
 	b.encode_float(40, -params.length / 2.0)
 	b.encode_s32(44, MESH_VERTS)
 	b.encode_s32(48, MESH_INDS)
-	b.encode_float(52, tool_params.sag_depth)
 	return b
