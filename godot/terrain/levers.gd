@@ -20,6 +20,9 @@ const LEVERS := [
 	["dirt repose damp °", "repose_damp", 0, 0.0, 60.0, 1.0],
 	["dirt repose wet °", "repose_saturated", 0, 0.0, 60.0, 1.0],
 	["dirt swell", "swell_factor", 0, 1.0, 2.0, 0.05],
+	["shovel reach m", "shovel_reach", -1, 1.0, 16.0, 0.5],
+	# 3 m at most: the ball's voxel box must stay 8 a side (VoxelBox.ball_box).
+	["shovel ball m", "scoop_ball", -1, 0.5, 3.0, 0.1],
 ]
 
 

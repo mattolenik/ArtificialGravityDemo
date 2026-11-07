@@ -8,7 +8,7 @@
 ## (it climbs on E). The shovel: the crosshair's hit on the terrain colliders within shovel_reach (any
 ## surface: floor, wall or roof) is the aim, shown as a ring decal (ShovelPatch) while there is one; at a wall
 ## (a face steeper than about 40° no lower than a metre under the feet, or ground rising ahead: a hit from a
-## quarter metre over the feet to head height) the ball is lifted onto a level floor,
+## quarter metre over the feet to head height; never a roof, nor looking over 30° up) the ball is lifted onto a level floor,
 ## the last wall scoop's while the feet are near it, else half a metre under the feet (level_floor), so a tunnel
 ## dug walking in runs level instead of ramping with its half-cut floor; T scoops the ball of scoop_ball m there
 ## in the voxel box (loose first, then solid dirt and clay with the swell,
@@ -185,7 +185,8 @@ func shovel_hit() -> Dictionary:
 	# The floor this hit's ball would take; scoop keeps it (the ring's aim each frame must not, or a look at
 	# a wall from up a slope sets the floor a step down keeps).
 	var fl := level_floor(_floor, feet_h)
-	var level := wall_hit(n.dot(up), h, feet_h, fl)
+	var look_up := (-get_viewport().get_camera_3d().global_basis.z).dot(player.up_direction)
+	var level := wall_hit(n.dot(up), h, feet_h, fl, look_up)
 	if level:
 		q = Cyl.position(Cyl.theta_of(q), q.z, fl + terrain.tool_params.scoop_ball, R)
 	if q.distance_to(at) > terrain.tool_params.shovel_reach:
@@ -197,8 +198,10 @@ func shovel_hit() -> Dictionary:
 ## floor fl: a face steeper than about 40° no lower than a metre under the feet at feet_h, or ground rising
 ## ahead from a quarter metre over the feet to head height; never under fl, where the lifted ball would sit
 ## over the hit in the air (a pit's slope dug at the feet: the user, 2026-11-06, a held scoop took nothing).
-static func wall_hit(n_up: float, h: float, feet_h: float, fl: float) -> bool:
-	return h >= fl and ((absf(n_up) < 0.75 and h >= feet_h - 1.0) or (h >= feet_h + 0.25 and h < feet_h + 2.25))
+## Never a roof (the riser wants a face looking up) nor with the look (its dot with up, look_up) over 30° up:
+## a crosshair pointed up digs where it points (the user, 2026-11-06).
+static func wall_hit(n_up: float, h: float, feet_h: float, fl: float, look_up := 0.0) -> bool:
+	return look_up < 0.5 and h >= fl and ((absf(n_up) < 0.75 and h >= feet_h - 1.0) or (n_up > 0.0 and h >= feet_h + 0.25 and h < feet_h + 2.25))
 
 
 ## The floor of a wall scoop's ball, in m of height: `prev` (the last one's) while the feet at feet_h stand within

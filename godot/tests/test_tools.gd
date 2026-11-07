@@ -40,7 +40,7 @@ func _initialize() -> void:
 	# Tunnels: the shovel reaches 4 m (a roof overhead) and scoops a ball of radius 1 m in the box; the ball's
 	# volume by the annuli of its voxels at the shader's sub-sampling is within 1 % of 4/3 pi wherever its
 	# centre lies in a voxel.
-	check(t.shovel_reach == 4.0 and t.scoop_ball == 1.5, "reach and ball")
+	check(t.shovel_reach == 8.0 and t.scoop_ball == 1.5, "reach and ball")
 	var R := 3200.0
 	var dtheta := TAU / 16384
 	for centre: Vector3 in [Vector3(0.5, 0.5, 410.37), Vector3(0.0, 0.0, 410.5), Vector3(0.7, 0.2, 410.9)]:
@@ -72,6 +72,7 @@ func _initialize() -> void:
 	# floor would sit over the hit, in the air: the user, 2026-11-06, a held scoop took nothing).
 	check(Tools.wall_hit(0.1, 413.0, 413.3, 412.8) and Tools.wall_hit(0.9, 414.0, 413.3, 412.8), "a face at the floor, a riser ahead")
 	check(not Tools.wall_hit(0.5, 412.6, 413.3, 412.8) and not Tools.wall_hit(0.9, 413.3, 413.3, 412.8), "a pit's slope under the floor, flat ground")
+	check(not Tools.wall_hit(-1.0, 415.0, 413.3, 412.8) and not Tools.wall_hit(0.1, 414.0, 413.3, 412.8, 0.7), "a roof at head height, a wall looked up at")
 	# A pillar stands from the voxel of the hit's height up to the voxel of its reach over it.
 	check(Tools.pillar_range(402.3, 6.0) == Vector2i(402, 408) and Tools.pillar_range(402.3, 11.0) == Vector2i(402, 409), "a pillar's voxel range, a brick's column at most")
 	# The levers: a slider sets a ToolParams float or one entry of a MaterialSet row, and the table lists real
