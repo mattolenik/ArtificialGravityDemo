@@ -182,15 +182,23 @@ func shovel_hit() -> Dictionary:
 	var n: Vector3 = terrain.station.global_basis.inverse() * hit.normal
 	var feet_h := Cyl.height_of(foot_point(at, up), R)
 	var h := Cyl.height_of(q, R)
-	var level := (absf(n.dot(up)) < 0.75 and h >= feet_h - 1.0) or (h >= feet_h + 0.25 and h < feet_h + 2.25)
 	# The floor this hit's ball would take; scoop keeps it (the ring's aim each frame must not, or a look at
 	# a wall from up a slope sets the floor a step down keeps).
 	var fl := level_floor(_floor, feet_h)
+	var level := wall_hit(n.dot(up), h, feet_h, fl)
 	if level:
 		q = Cyl.position(Cyl.theta_of(q), q.z, fl + terrain.tool_params.scoop_ball, R)
 	if q.distance_to(at) > terrain.tool_params.shovel_reach:
 		return {}
 	return {"position": q, "normal": n, "level": level, "surface": surface, "floor": fl}
+
+
+## Whether a hit at h m of height (its normal's dot with up n_up) is on a wall, its ball lifted onto the level
+## floor fl: a face steeper than about 40° no lower than a metre under the feet at feet_h, or ground rising
+## ahead from a quarter metre over the feet to head height; never under fl, where the lifted ball would sit
+## over the hit in the air (a pit's slope dug at the feet: the user, 2026-11-06, a held scoop took nothing).
+static func wall_hit(n_up: float, h: float, feet_h: float, fl: float) -> bool:
+	return h >= fl and ((absf(n_up) < 0.75 and h >= feet_h - 1.0) or (h >= feet_h + 0.25 and h < feet_h + 2.25))
 
 
 ## The floor of a wall scoop's ball, in m of height: `prev` (the last one's) while the feet at feet_h stand within

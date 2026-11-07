@@ -145,7 +145,8 @@ func _route() -> void:
 		"pillar": _pillar.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 96) / 16 * 16 + 5)),
 		"deep": _deep.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 120) / 16 * 16 + 5)),
 		"crust": _crust.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 144) / 16 * 16 + 5)),
-		"float": _floaters.bind(Vector2i((spawn.x + 40) / 16 * 16 + 8, (spawn.y - 40) / 16 * 16 + 5))}
+		"float": _floaters.bind(Vector2i((spawn.x + 40) / 16 * 16 + 8, (spawn.y - 40) / 16 * 16 + 5)),
+		"aim": _aim.bind(Vector2i((spawn.x + 80) / 16 * 16 + 8, (spawn.y - 40) / 16 * 16 + 5))}
 	for phase: String in phases:
 		if not only.is_empty() and phase != only and not (only in ["inside", "tscroll", "trestart"] and phase == "tunnel") \
 				and not (only in ["tscroll", "trestart"] and phase == "inside"):
@@ -641,7 +642,7 @@ func _box_summary() -> void:
 		if t.name.begins_with("box_sand_") and t.name.trim_prefix("box_sand_").to_int() > 0:
 			per.append(t.ms / t.name.trim_prefix("box_sand_").to_int())
 	print("  box_sand    per step per active brick %s" % Smoke._stat(per, 0.25))
-	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup", "tunnel", "inside", "tscroll", "trestart", "play", "shell", "roof", "pillar", "deep", "crust", "float"]:
+	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup", "tunnel", "inside", "tscroll", "trestart", "play", "shell", "roof", "pillar", "deep", "crust", "float", "aim"]:
 		var st := _stat_of(phase)
 		if st.cpu.is_empty():
 			continue
@@ -2308,3 +2309,55 @@ func _islands_in(cells: Array[Vector2i], k_lo: int, k_hi: int) -> Dictionary:
 						under.append("%.2f+%.2f/%d" % [vx.solid[w.z - d] / float(one), vx.loose[w.z - d] / float(one), vx.yield[w.z - d]])
 					out.where.append("%s h %d: %.2f yield %d under (solid+loose/yield) %s" % [Vector2i(w.x, w.y), _terrain.box.bottom() + w.z, vx.solid[w.z] / float(one), vx.yield[w.z], " ".join(under)])
 	return out
+
+
+## aim (the user, 2026-11-06: a held scoop took nothing until the cursor moved): the look held still at four
+## pitches, scoops as held T makes them (each once the last landed and scoop_interval after it), each scoop's
+## hit, centre, the data's top under it and what it took logged, with the raw ray's hit (the camera's distance
+## to it, its height) at the scoop and a second after the aim leaves reach. Every scoop with an aim takes a cubic
+## metre or more: the pit's slope under the level floor read as a wall lifted the ball over it (0.3 m³ and down).
+func _aim(c: Vector2i) -> bool:
+	var R := _terrain.params.radius
+	var raw := func() -> String:
+		var h := DebugEdit.look_hit(get_viewport(), [_player.get_rid()])
+		if h.is_empty():
+			return "ray none"
+		var cam := get_viewport().get_camera_3d().global_position
+		var q := _station.to_local(h.position)
+		return "ray %.2f m from the camera (%.2f from the player) h %.2f" % [cam.distance_to(h.position), _station.to_local(_player.global_position).distance_to(q), Cyl.height_of(q, R)]
+	var weak := 0
+	for k in 4:
+		var look_down: float = [250.0, 350.0, 450.0, 300.0][k]
+		var back: int = [3, 2, 2, 3][k]
+		var cc := c + Vector2i(0, 10 * k)
+		if not await _teleport(cc + Vector2i(0, -back)):
+			return false
+		_face(Vector3(0, 0, 1))
+		_player.look(Vector2(0.0, look_down))
+		await _frames(10)
+		var lines: Array[String] = []
+		for i in 8:
+			var hit := _tools.shovel_hit()
+			if hit.is_empty():
+				var r0: String = raw.call()
+				await get_tree().create_timer(1.0).timeout
+				lines.append("%d: no aim (%s; a second on: %s, aim %s)" % [i, r0, raw.call(), not _tools.shovel_hit().is_empty()])
+				if _tools.shovel_hit().is_empty():
+					break
+				hit = _tools.shovel_hit()
+			var held0 := _tools.held
+			var sc: Vector3 = hit.surface
+			var cell := _terrain.params.cell_of(Cyl.theta_of(sc), sc.z)
+			var sd := _read("surface")
+			var ld := _read("loose")
+			var r1: String = raw.call()
+			_tools.scoop()
+			await _landed_scoop()
+			weak += 1 if _tools.held - held0 < 1.0 else 0
+			lines.append("%d: hit h %.2f centre h %.2f level %s data top %.2f at %s covered %s took %.3f; %s" % [i, Cyl.height_of(sc, R),
+					Cyl.height_of(hit.position, R), hit.level, _f(sd, cell) + _f(ld, cell), cell, _terrain.box.covers(sc), _tools.held - held0, r1])
+			await get_tree().create_timer(_terrain.tool_params.scoop_interval).timeout
+		_player.look(Vector2(0.0, -look_down))
+		print("aim look %d from %d back:\n  %s" % [look_down, back, "\n  ".join(lines)])
+	_report("every held scoop with an aim takes a cubic metre or more (%d took less)" % weak, weak == 0)
+	return true

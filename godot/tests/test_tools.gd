@@ -67,6 +67,11 @@ func _initialize() -> void:
 	check(is_equal_approx(Tools.level_floor(INF, 410.3), 409.8), "a first wall scoop: half a metre under the feet")
 	check(Tools.level_floor(409.8, 409.85) == 409.8 and Tools.level_floor(409.8, 409.35) == 409.8 and Tools.level_floor(409.8, 410.75) == 409.8, "on the tunnel's floor, or near it: the same floor")
 	check(is_equal_approx(Tools.level_floor(409.8, 409.2), 408.7) and is_equal_approx(Tools.level_floor(409.8, 410.8), 410.3), "off it: anchored anew")
+	# The wall rule (feet at 413.3, so a new tunnel's floor at 412.8): a face ahead from the floor up, a step's
+	# riser at head height; not the slope of a pit dug at the feet under that floor (the ball lifted onto the
+	# floor would sit over the hit, in the air: the user, 2026-11-06, a held scoop took nothing).
+	check(Tools.wall_hit(0.1, 413.0, 413.3, 412.8) and Tools.wall_hit(0.9, 414.0, 413.3, 412.8), "a face at the floor, a riser ahead")
+	check(not Tools.wall_hit(0.5, 412.6, 413.3, 412.8) and not Tools.wall_hit(0.9, 413.3, 413.3, 412.8), "a pit's slope under the floor, flat ground")
 	# A pillar stands from the voxel of the hit's height up to the voxel of its reach over it.
 	check(Tools.pillar_range(402.3, 6.0) == Vector2i(402, 408) and Tools.pillar_range(402.3, 11.0) == Vector2i(402, 409), "a pillar's voxel range, a brick's column at most")
 	# The levers: a slider sets a ToolParams float or one entry of a MaterialSet row, and the table lists real
