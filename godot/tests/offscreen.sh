@@ -18,7 +18,10 @@ log=$2
 shift 2 || { echo "usage: offscreen.sh <scene> </abs/log> [user args...]"; exit 2; }
 case "$log" in /*) ;; *) echo "the log path must be absolute"; exit 2;; esac
 rm -f "$log"
-godot --headless --path "$PWD" --import >/dev/null 2>&1 || { echo "the import failed: rerun it before the drivers"; exit 2; }
+# A shader that fails to parse (a reserved word such as `half` or `active`) leaves its pipeline invalid and
+# the run hangs on buffer errors: the import's output is read for it.
+import_out=$(godot --headless --path "$PWD" --import 2>&1) || { echo "the import failed: rerun it before the drivers"; exit 2; }
+echo "$import_out" | grep -E "Failed parse|Reserved word|SHADER ERROR" && { echo "a shader failed to parse: see above"; exit 2; }
 prev=$(osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true' 2>/dev/null)
 if [ -n "$prev" ]; then
   (sleep 1; osascript -e "tell application \"$prev\" to activate" >/dev/null 2>&1) &

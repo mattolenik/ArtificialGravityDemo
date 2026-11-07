@@ -1503,7 +1503,7 @@ func _deep(c: Vector2i) -> bool:
 				var v0 := _column_vox(_stack(isle), isle)
 				var comp := _component(isle, _terrain.box.bottom() + k_isle)
 				var s_isle0 := _f(_read("surface"), isle)
-				print("deep: the island's core joins %d voxels of solid over a quarter full on the CPU's flood; it reaches the hill: %s" % [comp.size, comp.hill])
+				print("deep: the island's core joins %d voxels of solid over half full on the CPU's flood; it reaches the hill: %s" % [comp.size, comp.hill])
 				await get_tree().create_timer(2.0).timeout
 				var v1 := _column_vox(_stack(isle), isle)
 				var pocket := _box(isle, 4)
@@ -1798,7 +1798,7 @@ func _slivers(cells: Array[Vector2i]) -> Dictionary:
 	return out
 
 
-## The solid joined to the voxel at (cell, height h) six ways through voxels holding a quarter or more, flooded
+## The solid joined to the voxel at (cell, height h) six ways through voxels holding half or more, flooded
 ## on the CPU from the box's bricks within `reach` cells and heights of it and a budget of voxels: the count,
 ## and whether the flood met the window's edge or the budget (then it is the hill, not an island). The
 ## check of the scoop's island flood.
@@ -1832,7 +1832,7 @@ func _component(cell: Vector2i, h: int, reach := 12, budget := 3000) -> Dictiona
 				edge = true
 				continue
 			var vx: Dictionary = columns[wc]
-			if vx.solid[k] < one / 4 or vx.material[k] >= 2:
+			if vx.solid[k] < one / 2 or vx.material[k] >= 2:
 				continue
 			seen[n] = true
 			queue.append(n)

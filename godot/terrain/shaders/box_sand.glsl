@@ -507,15 +507,15 @@ void span_column(ivec2 cxz, int kz0, int my_ai) {
 				}
 				th += float(s_k) / ONE;
 			}
-			// The sliver rule: with no solid over it, a voxel holding under half a voxel of solid, or with solid on
-			// at most one of its four sides, hangs on its sides alone and drops (a ridge's edge, a ball cut's skin,
-			// a peg of dirt a dig left jutting); a wider ledge reads its supports as a slab.
+			// The sliver rule: with no solid over it, a voxel holding under half a voxel of solid, or with half a
+			// voxel of solid on at most one of its four sides, hangs on its sides alone and drops (a ridge's edge,
+			// a ball cut's skin, a peg of dirt a dig left jutting); a wider ledge reads its supports as a slab.
 			bool sliver = false;
 			if (k_air == k + 1) {
 				int sides = 0;
 				for (int d = 0; d < 4; d++) {
 					V vn = find(ivec3(cxz + DIR8[d], k));
-					if (vn.e < 0 || (vn.ok && (pool[vn.addr] & 0xFFFFu) >= quarter)) {
+					if (vn.e < 0 || (vn.ok && (pool[vn.addr] & 0xFFFFu) >= uint(ONE) / 2u)) {
 						sides++;
 					}
 				}

@@ -182,21 +182,22 @@ uint solid_of(ivec3 ck) {
 }
 
 // Dirt a scoop cut loose from everything falls (the user, 2026-11-06): from every voxel of the ball's bounding
-// box and a cell round it that holds a quarter of solid, a flood six ways through such voxels within the
+// box and two cells round it that holds half a voxel of solid, a flood six ways through such voxels (a cut's
+// remnant under half a voxel joins nothing: a block hung by one stood) within the
 // window round the ball's centre. A flood that meets rock or a pillar, the box's edge, the window's edge or
 // the budget (a mass that size is the hill) or a voxel an earlier flood grounded is grounded, and its voxels
 // are marked so (held); one that ends short of all of those is an island, and every voxel of it is doomed
 // (the yield rule's state, box_sand.glsl), so the sand cuts it, bottom first. One invocation, after the
 // scoop's stores.
 void islands() {
-	uint quarter = uint(ONE) / 4u;
+	uint half_v = uint(ONE) / 2u;  // `half` is reserved in GLSL
 	ivec3 c0 = ivec3(floor(pc.centre)) - IW / 2;
 	for (int i = 0; i < IW * IW * IW / 32; i++) {
 		seen[i] = 0u;
 		held[i] = 0u;
 	}
-	ivec3 lo = max(pc.first - 1, c0);
-	ivec3 hi = min(pc.first + pc.extent + 1, c0 + IW);
+	ivec3 lo = max(pc.first - 2, c0);
+	ivec3 hi = min(pc.first + pc.extent + 2, c0 + IW);
 	for (int z = lo.z; z < hi.z; z++) {
 		for (int y = lo.y; y < hi.y; y++) {
 			for (int x = lo.x; x < hi.x; x++) {
@@ -206,7 +207,7 @@ void islands() {
 					continue;
 				}
 				int addr, col;
-				if (!voxel_addr(ivec3(x, y, z), addr, col) || (pool[addr] & 0xFFFFu) < quarter || (pool[addr + 1] & 255u) >= 2u) {
+				if (!voxel_addr(ivec3(x, y, z), addr, col) || (pool[addr] & 0xFFFFu) < half_v || (pool[addr + 1] & 255u) >= 2u) {
 					continue;
 				}
 				seen[idx >> 5] |= 1u << (idx & 31);
@@ -230,7 +231,7 @@ void islands() {
 							break;
 						}
 						int na, nc;
-						if (!voxel_addr(n, na, nc) || (pool[na] & 0xFFFFu) < quarter) {
+						if (!voxel_addr(n, na, nc) || (pool[na] & 0xFFFFu) < half_v) {
 							continue;
 						}
 						if ((pool[na + 1] & 255u) >= 2u) {
