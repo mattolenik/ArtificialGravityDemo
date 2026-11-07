@@ -67,6 +67,12 @@ offset_bottom = 120.0
 
 [node name="Buttons" type="HBoxContainer" parent="Panel/Box"]
 
+[node name="FirstPerson" type="Button" parent="Panel/Box/Buttons"]
+layout_mode = 2
+focus_mode = 0
+toggle_mode = true
+text = "First person"
+
 [node name="Spawn" type="Button" parent="Panel/Box/Buttons"]
 layout_mode = 2
 focus_mode = 0
@@ -119,6 +125,7 @@ patch = NodePath("ShovelPatch")
 
 [node name="ShovelPatch" parent="Tools" instance=ExtResource("12")]
 
+[connection signal="toggled" from="Panel/Box/Buttons/FirstPerson" to="Station/Player" method="set_first_person"]
 [connection signal="pressed" from="Panel/Box/Buttons/Spawn" to="Station/Emitter" method="spawn"]
 [connection signal="pressed" from="Panel/Box/Buttons/Clear" to="Station/Emitter" method="clear_spawned"]
 [connection signal="pressed" from="Panel/Box/Buttons/View" to="Station/Emitter" method="toggle_spawn_view"]

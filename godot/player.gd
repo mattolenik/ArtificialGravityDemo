@@ -31,13 +31,29 @@ const AIRBORNE_TICKS := 9
 var _jump_cooldown := 0.0
 ## Ticks since the floor was last under the body.
 var _airborne := 0
+## The third-person camera arm's height over the body's centre and its length, from the scene.
+var _arm_height := 0.0
+var _arm_length := 0.0
 
 @onready var _pivot: SpringArm3D = $CameraPivot
+
+## The eyes' height over the body's centre in first person: 1.7 m over the feet, 1 m under the centre.
+const EYE := 0.7
 
 
 func _ready() -> void:
 	# The camera arm must not collide with the player's own capsule.
 	_pivot.add_excluded_object(get_rid())
+	_arm_height = _pivot.position.y
+	_arm_length = _pivot.spring_length
+
+
+## First person (the camera at the eyes, the body hidden) or third (the arm behind and over the head): the
+## top-left button's toggle.
+func set_first_person(on: bool) -> void:
+	_pivot.position.y = EYE if on else _arm_height
+	_pivot.spring_length = 0.0 if on else _arm_length
+	$MeshInstance3D.visible = not on
 
 
 ## Click the world to capture the mouse for looking around; Esc releases it.

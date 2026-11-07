@@ -43,6 +43,15 @@ func _initialize() -> void:
 		check(absf(heading.angle_to(-player.global_basis.z) - 0.3) < 0.001, "yaw at %d°" % deg)
 		check(player.global_basis.y.dot(-down) > 0.999, "upright after look at %d°" % deg)
 		check(is_equal_approx(player.get_node("CameraPivot").rotation.x, 1.4), "pitch clamp at %d°" % deg)
+		# First person puts the camera at the eyes and hides the body; off again, the arm comes back.
+		var cam: Camera3D = player.get_node("CameraPivot/Camera3D")
+		player.set_first_person(true)
+		await physics_frame
+		var eye := player.to_local(cam.global_position)
+		check(eye.distance_to(Vector3(0, Player.EYE, 0)) < 1e-3 and not player.get_node("MeshInstance3D").visible, "first person at %d°: the eye at %s" % [deg, eye])
+		player.set_first_person(false)
+		await physics_frame
+		check(player.to_local(cam.global_position).distance_to(Vector3(0, Player.EYE, 0)) > 1.0 and player.get_node("MeshInstance3D").visible, "third person again at %d°" % deg)
 		station.free()
 	if failed:
 		quit(1)
