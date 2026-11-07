@@ -123,6 +123,13 @@ const int SUB = 8;
 // is where such a slab should fall.
 const float THIN_ROOF = 0.3;
 shared uint refuse;
+// The islands flood (islands): its window round the ball's centre, in voxels, its seen bits and its queue
+// (the budget), shared by the workgroup since one invocation runs it.
+const int IW = 32;
+const int IBUDGET = 2048;
+shared uint seen[IW * IW * IW / 32];
+shared uint held[IW * IW * IW / 32];  // seen and grounded: a later flood that touches one is grounded too
+shared uint queue[IBUDGET];
 
 // The brick slot of voxel ck (theta unwrapped, z, height index), -1 outside the box or off the station.
 int slot_of_voxel(ivec3 ck) {
@@ -172,6 +179,102 @@ bool voxel_addr(ivec3 ck, out int addr, out int col) {
 uint solid_of(ivec3 ck) {
 	int addr, col;
 	return voxel_addr(ck, addr, col) ? pool[addr] & 0xFFFFu : 0u;
+}
+
+// Dirt a scoop cut loose from everything falls (the user, 2026-11-06): from every voxel of the ball's bounding
+// box and a cell round it that holds a quarter of solid, a flood six ways through such voxels within the
+// window round the ball's centre. A flood that meets rock or a pillar, the box's edge, the window's edge or
+// the budget (a mass that size is the hill) or a voxel an earlier flood grounded is grounded, and its voxels
+// are marked so (held); one that ends short of all of those is an island, and every voxel of it is doomed
+// (the yield rule's state, box_sand.glsl), so the sand cuts it, bottom first. One invocation, after the
+// scoop's stores.
+void islands() {
+	uint quarter = uint(ONE) / 4u;
+	ivec3 c0 = ivec3(floor(pc.centre)) - IW / 2;
+	for (int i = 0; i < IW * IW * IW / 32; i++) {
+		seen[i] = 0u;
+		held[i] = 0u;
+	}
+	ivec3 lo = max(pc.first - 1, c0);
+	ivec3 hi = min(pc.first + pc.extent + 1, c0 + IW);
+	for (int z = lo.z; z < hi.z; z++) {
+		for (int y = lo.y; y < hi.y; y++) {
+			for (int x = lo.x; x < hi.x; x++) {
+				ivec3 o = ivec3(x, y, z) - c0;
+				int idx = (o.z * IW + o.y) * IW + o.x;
+				if ((seen[idx >> 5] & (1u << (idx & 31))) != 0u) {
+					continue;
+				}
+				int addr, col;
+				if (!voxel_addr(ivec3(x, y, z), addr, col) || (pool[addr] & 0xFFFFu) < quarter || (pool[addr + 1] & 255u) >= 2u) {
+					continue;
+				}
+				seen[idx >> 5] |= 1u << (idx & 31);
+				queue[0] = uint(idx);
+				int head = 0;
+				int tail = 1;
+				bool ground = false;
+				while (head < tail && !ground) {
+					int qi = int(queue[head++]);
+					ivec3 oo = ivec3(qi % IW, (qi / IW) % IW, qi / (IW * IW));
+					if (any(equal(oo, ivec3(0))) || any(equal(oo, ivec3(IW - 1)))) {
+						ground = true;
+						break;
+					}
+					ivec3 p = c0 + oo;
+					for (int d = 0; d < 6 && !ground; d++) {
+						ivec3 st = d < 2 ? ivec3(d == 0 ? 1 : -1, 0, 0) : (d < 4 ? ivec3(0, d == 2 ? 1 : -1, 0) : ivec3(0, 0, d == 4 ? 1 : -1));
+						ivec3 n = p + st;
+						if (slot_of_voxel(n) < 0) {
+							ground = true;
+							break;
+						}
+						int na, nc;
+						if (!voxel_addr(n, na, nc) || (pool[na] & 0xFFFFu) < quarter) {
+							continue;
+						}
+						if ((pool[na + 1] & 255u) >= 2u) {
+							ground = true;
+							break;
+						}
+						ivec3 no = oo + st;
+						int ni = (no.z * IW + no.y) * IW + no.x;
+						if ((seen[ni >> 5] & (1u << (ni & 31))) != 0u) {
+							// Seen by an earlier flood: grounded with it, or an island already doomed.
+							if ((held[ni >> 5] & (1u << (ni & 31))) != 0u) {
+								ground = true;
+								break;
+							}
+							continue;
+						}
+						seen[ni >> 5] |= 1u << (ni & 31);
+						if (tail >= IBUDGET) {
+							ground = true;
+							break;
+						}
+						queue[tail++] = uint(ni);
+					}
+				}
+				if (ground) {
+					for (int i = 0; i < tail; i++) {
+						int qi = int(queue[i]);
+						held[qi >> 5] |= 1u << (qi & 31);
+					}
+					continue;
+				}
+				for (int i = 0; i < tail; i++) {
+					int qi = int(queue[i]);
+					ivec3 p = c0 + ivec3(qi % IW, (qi / IW) % IW, qi / (IW * IW));
+					int a2, c2;
+					if (voxel_addr(p, a2, c2)) {
+						pool[a2 + 1] |= 127u << 25;
+						dirty[c2] = 1u;
+						wake(p);
+					}
+				}
+			}
+		}
+	}
 }
 
 // Whether the sub-sample at (a, b, c) of voxel ck lies in the ball.
@@ -710,6 +813,11 @@ void main() {
 		}
 		if (in_box && l.z == 0) {
 			scoop_column(ck.xy);
+		}
+		barrier();
+		memoryBarrierBuffer();
+		if (l == ivec3(0)) {
+			islands();
 		}
 		return;
 	}

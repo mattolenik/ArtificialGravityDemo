@@ -336,6 +336,12 @@ static func span_fails(nearest: float, reach: float, margin := 1.5) -> bool:
 	return nearest > reach + margin
 
 
+## The sliver rule (box_sand.glsl): a roof voxel with no solid over it that holds under half a voxel of solid,
+## or has solid on at most one of its four sides, hangs on its sides alone and drops at once.
+static func sliver_falls(solid: float, over: float, sides: int) -> bool:
+	return over == 0.0 and (solid < 0.5 or sides <= 1)
+
+
 ## The world brick in slot i under the origin.
 func brick_at_slot(i: int) -> Vector3i:
 	@warning_ignore("integer_division")

@@ -44,6 +44,7 @@ func _initialize() -> void:
 	# A collapse at the box's ceiling pours the ground stored over the box into the emptied voxel: the surface
 	# drops by the height whose column volume (per unit of angle, the cylinder's radius falling with height)
 	# matches what the voxel took: a metre at 100 m from the axis is 100.5 units; the whole run when it fits.
+	check(VoxelBox.sliver_falls(0.3, 0.0, 4) and VoxelBox.sliver_falls(1.0, 0.0, 1) and not VoxelBox.sliver_falls(1.0, 0.0, 2) and not VoxelBox.sliver_falls(0.3, 0.6, 0), "a sliver with nothing over it drops, a ledge or a roof's underside holds")
 	check(is_equal_approx(VoxelBox.pour_drop(100.5, 100.0, 200.0), 1.0) and is_equal_approx(VoxelBox.pour_drop(0.0, 100.0, 200.0), 0.0) and VoxelBox.pour_drop(49.5, 190.0, 200.0) < 5.0, "pour_drop: the surface's fall for a column volume")
 	# The span rule (Task 4): the reach, half the roof span mixed dry to saturated, times the thickness capped
 	# at one; a roof voxel fails with no support within the reach, or held from one side only beyond half of it.

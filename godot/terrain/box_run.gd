@@ -1332,8 +1332,12 @@ func _roof(c: Vector2i) -> bool:
 ## when dug deeper; the slope rule read the step from the roof's top to the pit's floor, and once the pit passed
 ## the free height the rim's failure thinned the mouth's roof and each fallen column stood the next over the
 ## room's floor, so the roof unzipped; the step now stops at the top run's bottom). After each layer, 3 s, the
-## ground over the middle (never moves) and the loose in the room's box (none until the pit passes the free
-## height and its own walls cave) against before the room.
+## ground over the middle (never moves) and the loose in the room's box (the slivers the ball cuts leave until
+## the pit passes the free height and its own walls cave) against before the room. With it (2026-11-06): no
+## open edge inside a chunk's mesh and the two chunks at the room's far wall agreeing where they overlap, a
+## dig in the next chunk's skirt remeshing it, no sliver hanging with air over and under it after the room,
+## and an island (26 balls round a point in the side wall) doomed by the scoop's flood and fallen within 2 s,
+## the ground over it unmoved.
 func _deep(c: Vector2i) -> bool:
 	if not await _teleport(c + Vector2i(5, 0)):
 		return false
@@ -1419,6 +1423,7 @@ func _deep(c: Vector2i) -> bool:
 				runs.append("%d..%d" % [_terrain.box.bottom() + run_from, _terrain.box.bottom() + i])
 				run_from = -1
 		if h == 1.5 or h == -7.8:
+			await _settled(mid, 20.0)
 			await _frames(30)
 			var cr := {"open": 0, "where": []}
 			for ch in [VoxelBox.chunk_of_cell(mid), VoxelBox.chunk_of_cell(c)]:
@@ -1443,8 +1448,78 @@ func _deep(c: Vector2i) -> bool:
 						pass_i, ca, _chunk_faces(ca), sa.get("dirty", -1), now - sa.get("at", -INF), cb, _chunk_faces(cb), sb.get("dirty", -1), now - sb.get("at", -INF), g_ab, g_ba])
 				if pass_i == 0:
 					await get_tree().create_timer(3.0).timeout
-			_report("the chunk meshes agree where they overlap, dug", cr.open == 0 and gap >= 0.0 and gap <= 0.02)
+			if _chunk_faces(cb) > 0:
+				_report("the chunk meshes agree where they overlap, dug", cr.open == 0 and gap >= 0.0 and gap <= 0.02)
+			else:
+				print("deep: the next chunk %s has no mesh yet after the balls at %+.1f m: nothing to compare" % [cb, h])
 			if h == 1.5:
+				# The room's ball cuts leave slivers hanging from its walls and ceiling with air over and under
+				# them (a ridge's edge, a lip at a wall's foot): the yield rule drops them.
+				var sl := _slivers(cells)
+				print("deep: %d slivers hang in the room's box with air over and under them: %s" % [sl.count, "; ".join(sl.where)])
+				_report("no sliver hangs on its sides alone", sl.count == 0)
+			if h == -7.8:
+				# An island: twenty-six balls 3 m off a point 13 cells into the room's side wall (the hollow they open
+				# stays 2 m short of the room, so the roof's span does not grow) at a voxel boundary
+				# near the room's middle height (every direction of the 3 x 3 x 3 cube; two balls 45 degrees apart
+				# meet within 1.5 m of the centre, so nothing joins the core to the wall) leave a core about 3 m
+				# across floating in the hollow they open: the scoop's flood dooms it and the sand drops it.
+				var hi := roundf(floor_h - 3.0) - floor_h
+				var isle := c + Vector2i(13, 6)
+				# Top first and the bottom axis ball last: the curved cuts leave partials the pack stores as thin
+				# runs, so the hollow's columns reach four gaps and a late ball over them is refused (a fifth).
+				var pocket0 := _box(c + Vector2i(13, 6), 6)
+				var sol0 := _box_volumes(pocket0)[1]
+				var loo0 := _box_volumes(pocket0)[0]
+				var held_i := _tools.held
+				var offs: Array[Vector3] = []
+				for dz in [1, 0, -1]:
+					for dy in [-1, 0, 1]:
+						for dx in [-1, 0, 1]:
+							if dx != 0 or dy != 0 or dz != 0:
+								offs.append(Vector3(dx, dy, dz).normalized() * 3.0)
+				offs.sort_custom(func(a1: Vector3, b1: Vector3) -> bool: return a1.z > b1.z or (a1.z == b1.z and absf(a1.x) + absf(a1.y) < absf(b1.x) + absf(b1.y)))
+				_terrain.set_process(false)  # the scoop ops still run; nothing the flood dooms is cut yet
+				for o: Vector3 in offs:
+					await _scoop_at(aim.call(13.0 + o.x, 6.0 + o.y, hi + o.z))
+					if _tools._scoop_refused:
+						print("deep: the island ball at %s was refused (a fifth gap)" % o)
+				var doomed2: Array[String] = []
+				var doomed_v := 0.0
+				var stacks3 := {}
+				for x in pocket0:
+					var key := Vector2i(floori(x.x / 16.0), floori(x.y / 16.0))
+					if not stacks3.has(key):
+						stacks3[key] = _stack(x)
+					var vx3 := _column_vox(stacks3[key], x)
+					for i in vx3.solid.size():
+						if vx3.yield[i] == 127 and vx3.solid[i] > 0:
+							doomed_v += vx3.solid[i] / float(VoxelColumn.FRACTION_ONE)
+							if doomed2.size() < 12:
+								doomed2.append("%s h %d: %.2f" % [x - isle, _terrain.box.bottom() + i, vx3.solid[i] / float(VoxelColumn.FRACTION_ONE)])
+				print("deep: with the sand held, the balls left %.1f m³ of solid doomed in the pocket's box, first ones (cell from the island's, height, solid): %s" % [doomed_v, "; ".join(doomed2)])
+				_terrain.set_process(true)
+				var k_isle := floori(floor_h + hi) - _terrain.box.bottom()
+				var v0 := _column_vox(_stack(isle), isle)
+				var comp := _component(isle, _terrain.box.bottom() + k_isle)
+				var s_isle0 := _f(_read("surface"), isle)
+				print("deep: the island's core joins %d voxels of solid over a quarter full on the CPU's flood; it reaches the hill: %s" % [comp.size, comp.hill])
+				await get_tree().create_timer(2.0).timeout
+				var v1 := _column_vox(_stack(isle), isle)
+				var pocket := _box(isle, 4)
+				var ring_s: Array[String] = []
+				for o2 in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1), Vector2i(1, 1)]:
+					var vr := _column_vox(_stack(isle + o2), isle + o2)
+					ring_s.append("%s: %.2f/%.2f" % [o2, vr.solid[k_isle - 1] / float(VoxelColumn.FRACTION_ONE), vr.solid[k_isle] / float(VoxelColumn.FRACTION_ONE)])
+				print("deep: the island voxel at %s h %d held %.2f solid right after the balls and %.2f two seconds on (the voxel under it %.2f, over it %.2f); the core's yield states %d/%d then %d/%d; the ring's solid at the core's two heights %s; %.3f m³ of loose in the pocket's box" % [
+						isle, _terrain.box.bottom() + k_isle, v0.solid[k_isle] / float(VoxelColumn.FRACTION_ONE), v1.solid[k_isle] / float(VoxelColumn.FRACTION_ONE), v1.solid[k_isle - 1] / float(VoxelColumn.FRACTION_ONE), v1.solid[k_isle + 1] / float(VoxelColumn.FRACTION_ONE),
+						v0.yield[k_isle - 1], v0.yield[k_isle], v1.yield[k_isle - 1], v1.yield[k_isle], ", ".join(ring_s), _box_loose(pocket)])
+				print("deep: the surface over the island %.2f before and %.2f after" % [s_isle0, _f(_read("surface"), isle)])
+				var vols := _box_volumes(pocket0)
+				print("deep: the pocket's box of 13: solid %.1f m³ before the balls, %.1f after everything (%.1f gone); the hand took %.1f m³ of loose-equivalent (%.1f of solid); loose %.1f before, %.1f after: %.1f m³ of solid fell beyond the hand's take" % [
+						sol0, vols[1], sol0 - vols[1], _tools.held - held_i, (_tools.held - held_i) / 1.25, loo0, vols[0], sol0 - vols[1] - (_tools.held - held_i) / 1.25])
+				_report("an island of dirt cut loose from everything falls", comp.size >= 1 and not comp.hill and v1.solid[k_isle] == 0 and v1.solid[k_isle - 1] == 0)
+			if h == -7.8:
 				# A ball a metre and a half under the room's floor at its far end, in this chunk's last rows only
 				# (rows 12 to 15: no column of the next chunk changes), lies in the next chunk's skirt: its mesh
 				# must follow (only its own columns' packs flagged it, so it kept drawing the floor over the hole).
@@ -1464,8 +1539,10 @@ func _deep(c: Vector2i) -> bool:
 		out.append("balls at %+.1f m%s%s: the pit %.2f m deep, the surface over the tunnel's roof moved %.3f m, the ground over the middle sank %.3f m, %.4f m³ of loose in the room's box; the feet at %.1f, the box %d..%d, the ground at %.1f; %d gap overflows; the middle's solid runs %s, its window surface %.2f, gap %.2f..%.2f" % [
 				h, " a ring wider" if ring > 0 else "", " and the pit" if pit > 0 else "", floor_h - _f(sf, c), moved, sunk, loose,
 				feet, _terrain.box.bottom(), _terrain.box.top(), floor_h + depth, _terrain.box.read_stats()[VoxelBox.SLOTS], " ".join(runs), _f(sf, mid), _f(_read("gap_bottom0"), mid), _f(_read("gap_top0"), mid)])
-		# The pit's own walls cave past the free height (its rim's loose lands in the box); the roof never goes.
-		ok = ok and sunk <= 0.05 and (loose <= 0.01 or floor_h + depth - _f(sf, c) >= _terrain.materials.roof_span_dry[0])
+		# The pit's own walls cave past the free height (its rim's loose lands in the box); the roof never goes,
+		# and the loose before that is the slivers the ball cuts leave and the sliver rule drops (a few litres
+		# to a few hundred).
+		ok = ok and sunk <= 0.05 and (loose <= 1.0 or floor_h + depth - _f(sf, c) >= _terrain.materials.roof_span_dry[0])
 	print("deep: the pit %.2f m deep; the tunnel's roof %.2f m thick reaches %.2f m; the room %d m wide, %d rows by %d balls: %s" % [depth, t_roof, reach, wide, rows.size(), nk, "; ".join(out)])
 	_report("a room within the reach holds however deep its floor and its entrance pit go", ok)
 	return true
@@ -1699,6 +1776,67 @@ func _overlap_gap(a: Vector2i, b: Vector2i) -> float:
 					_overlap_worst.resize(3)
 			worst = maxf(worst, best)
 	return worst
+
+
+## The dirt or clay voxels in `cells` holding solid under half a voxel with air under them (under a quarter) and
+## no solid over them: slivers hanging on their sides alone, which the yield rule must drop. The count and a
+## few of them (cell, height, solid).
+func _slivers(cells: Array[Vector2i]) -> Dictionary:
+	var out := {"count": 0, "where": []}
+	var stacks := {}
+	var one := VoxelColumn.FRACTION_ONE
+	for c in cells:
+		var key := Vector2i(floori(c.x / 16.0), floori(c.y / 16.0))
+		if not stacks.has(key):
+			stacks[key] = _stack(c)
+		var vox := _column_vox(stacks[key], c)
+		for i in range(1, vox.solid.size() - 1):
+			if vox.material[i] < 2 and vox.solid[i] > 0 and vox.solid[i] < one / 2 and vox.solid[i - 1] < one / 4 and vox.solid[i + 1] == 0:
+				out.count += 1
+				if out.where.size() < 5:
+					out.where.append("%s h %d: %.2f" % [c, _terrain.box.bottom() + i, vox.solid[i] / float(one)])
+	return out
+
+
+## The solid joined to the voxel at (cell, height h) six ways through voxels holding a quarter or more, flooded
+## on the CPU from the box's bricks within `reach` cells and heights of it and a budget of voxels: the count,
+## and whether the flood met the window's edge or the budget (then it is the hill, not an island). The
+## check of the scoop's island flood.
+func _component(cell: Vector2i, h: int, reach := 12, budget := 3000) -> Dictionary:
+	var one := VoxelColumn.FRACTION_ONE
+	var stacks := {}
+	var columns := {}
+	var seen := {}
+	var queue: Array[Vector3i] = [Vector3i(cell.x, cell.y, h)]
+	seen[queue[0]] = true
+	var edge := false
+	var i := 0
+	while i < queue.size() and queue.size() < budget:
+		var v := queue[i]
+		i += 1
+		if absi(v.x - cell.x) >= reach or absi(v.y - cell.y) >= reach or absi(v.z - h) >= reach:
+			edge = true
+			break
+		for st: Vector3i in [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 1, 0), Vector3i(0, -1, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]:
+			var n: Vector3i = v + st
+			if seen.has(n):
+				continue
+			var wc := Vector2i(n.x, n.y)
+			if not columns.has(wc):
+				var key := Vector2i(floori(wc.x / 16.0), floori(wc.y / 16.0))
+				if not stacks.has(key):
+					stacks[key] = _stack(wc)
+				columns[wc] = _column_vox(stacks[key], wc)
+			var k: int = n.z - _terrain.box.bottom()
+			if k < 0 or k >= 96:
+				edge = true
+				continue
+			var vx: Dictionary = columns[wc]
+			if vx.solid[k] < one / 4 or vx.material[k] >= 2:
+				continue
+			seen[n] = true
+			queue.append(n)
+	return {"size": queue.size(), "hill": edge or queue.size() >= budget}
 
 
 ## A screenshot of the view aimed at station-local `target`, to user://debug/<file>.png, the light bar over

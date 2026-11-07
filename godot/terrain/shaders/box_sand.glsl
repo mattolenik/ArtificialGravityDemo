@@ -38,7 +38,12 @@
 //   prop the voxel over it; with less room, as much as fits, the rest the steps after), and it dooms the dirt
 //   or clay voxel over it and every flagged neighbour at its height, their bricks woken, so the whole area
 //   past the reach and the overburden come down together, and nothing moves before that. The apply pass's
-//   face rule wakes the brick over a failing top voxel, so a chimney climbs across bricks.
+//   face rule wakes the brick over a failing top voxel, so a chimney climbs across bricks. Two more rules
+//   (2026-11-06, the user's floating dirt): a roof voxel with no solid over it that holds under half a voxel,
+//   or has solid on at most one of its four sides, is a sliver hanging on its sides alone and is doomed at
+//   once (a ridge's edge, a ball cut's skin, a peg a dig left); and dirt a scoop cuts loose from everything
+//   arrives doomed (box_edit.glsl's islands, a flood round the ball), so it falls, layer by layer from the
+//   bottom.
 // 1 apply: each voxel takes its arrivals, loses what it sent, stores the result when it changed, flags its
 //   column dirty (the pack writes the window) and, over move_eps, its brick active (bit 0 of its slot) and the
 //   brick across any face it lies on (bit 1).
@@ -483,20 +488,38 @@ void span_column(ivec2 cxz, int kz0, int my_ai) {
 		uint w1 = pool[me.addr + 1];
 		uint state = w1 >> 25;
 		if (state != 127u) {
-			// The thickness: the solid from this voxel up to the first air voxel, in metres, capped.
+			// The thickness: the solid from this voxel up to the first air voxel, in metres, capped; the height of
+			// that air (k_air) tells a sliver with nothing over it.
 			float th = 0.0;
+			int k_air = k + 16;
 			for (int ky = y; ky < y + 16 && th < pc.roof_thickness_max; ky++) {
 				uint s_k = 0u;
 				if (ky < 16) {
 					s_k = fs[ky];
 				} else {
+					// Over the box's top the ground goes on (the stored run): solid, not air.
 					V vu = find(ivec3(cxz, kz0 + ky));
-					s_k = vu.ok ? pool[vu.addr] & 0xFFFFu : 0u;
+					s_k = vu.e < 0 ? uint(ONE) : (vu.ok ? pool[vu.addr] & 0xFFFFu : 0u);
 				}
 				if (ky > y && s_k == 0u) {
+					k_air = kz0 + ky;
 					break;
 				}
 				th += float(s_k) / ONE;
+			}
+			// The sliver rule: with no solid over it, a voxel holding under half a voxel of solid, or with solid on
+			// at most one of its four sides, hangs on its sides alone and drops (a ridge's edge, a ball cut's skin,
+			// a peg of dirt a dig left jutting); a wider ledge reads its supports as a slab.
+			bool sliver = false;
+			if (k_air == k + 1) {
+				int sides = 0;
+				for (int d = 0; d < 4; d++) {
+					V vn = find(ivec3(cxz + DIR8[d], k));
+					if (vn.e < 0 || (vn.ok && (pool[vn.addr] & 0xFFFFu) >= quarter)) {
+						sides++;
+					}
+				}
+				sliver = fs[y] < uint(ONE) / 2u || sides <= 1;
 			}
 			uint m = mt_[y];
 			float reach = 0.5 * mix(mt.free_dry[m], mt.free_sat[m], sat) * min(th, pc.roof_thickness_max);
@@ -526,7 +549,7 @@ void span_column(ivec2 cxz, int kz0, int my_ai) {
 					}
 				}
 			}
-			uint next = best <= reach ? 0u : (best <= limit ? 1u : 127u);
+			uint next = sliver ? 127u : (best <= reach ? 0u : (best <= limit ? 1u : 127u));
 			if (next != 127u) {
 				if (next != state) {
 					pool[me.addr + 1] = (w1 & 0x01FFFFFFu) | (next << 25);
