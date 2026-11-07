@@ -112,6 +112,11 @@
 ##    post's column reloaded from the window (the GPU unpack of its pillar gap) gives them back the same, and
 ##    the surface over the room's middle stays unchanged within 0.05 m; the post taken away, within 10 s the post's column and the one past it lose 0.9 m³ of solid or more
 ##    each (the roof fell and the surface opened). The solid is summed from the voxels, the post's left out.
+## float (F, 40 cells spinward and 40 before the spawn): four islands carved in solid ground 8 m under it as the
+##    deep phase's (26 balls round a centre, top first), the sand running between the balls as in play, the
+##    centre on a voxel boundary or 0.3 m over it and the balls 3 or 3.3 m off it (the partials the cuts leave
+##    differ): no ball refused, and once settled no solid over half full in the hollows' boxes joined to nothing
+##    (the CPU's flood, as box_edit.glsl's islands: a piece reaching the box's edge, rock or a pillar is the hill).
 ## The GPU time of the unpack lists (the first fill, the moves, the reload) and the pack lists is printed
 ## against 0.5 ms per brick allocated.
 extends "res://terrain/tool_run.gd"
@@ -139,7 +144,8 @@ func _route() -> void:
 		"roof": _roof.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 72) / 16 * 16 + 5)),
 		"pillar": _pillar.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 96) / 16 * 16 + 5)),
 		"deep": _deep.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 120) / 16 * 16 + 5)),
-		"crust": _crust.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 144) / 16 * 16 + 5))}
+		"crust": _crust.bind(Vector2i(t_site.x / 16 * 16 + 8, (t_site.y + 144) / 16 * 16 + 5)),
+		"float": _floaters.bind(Vector2i((spawn.x + 40) / 16 * 16 + 8, (spawn.y - 40) / 16 * 16 + 5))}
 	for phase: String in phases:
 		if not only.is_empty() and phase != only and not (only in ["inside", "tscroll", "trestart"] and phase == "tunnel") \
 				and not (only in ["tscroll", "trestart"] and phase == "inside"):
@@ -635,7 +641,7 @@ func _box_summary() -> void:
 		if t.name.begins_with("box_sand_") and t.name.trim_prefix("box_sand_").to_int() > 0:
 			per.append(t.ms / t.name.trim_prefix("box_sand_").to_int())
 	print("  box_sand    per step per active brick %s" % Smoke._stat(per, 0.25))
-	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup", "tunnel", "inside", "tscroll", "trestart", "play", "shell", "roof", "pillar", "deep", "crust"]:
+	for phase: String in ["unpack", "move", "seam", "reload", "shovel", "rock", "sand", "edge", "cave", "pickup", "tunnel", "inside", "tscroll", "trestart", "play", "shell", "roof", "pillar", "deep", "crust", "float"]:
 		var st := _stat_of(phase)
 		if st.cpu.is_empty():
 			continue
@@ -2200,3 +2206,105 @@ func _ray_down() -> Dictionary:
 	ray.exclude = [_player.get_rid()]
 	return _player.get_world_3d().direct_space_state.intersect_ray(ray)
 
+
+## Phase float at c (see the header): four islands cut loose with the sand running (the user, 2026-11-06: a
+## floater dug out in play still stood; the deep phase's island was cut with the sand held).
+func _floaters(c: Vector2i) -> bool:
+	if not await _teleport(c + Vector2i(5, 5)):
+		return false
+	var p := _terrain.params
+	var sw := _read("surface")
+	var lw := _read("loose")
+	var offs: Array[Vector3] = []
+	for dz in [1, 0, -1]:
+		for dy in [-1, 0, 1]:
+			for dx in [-1, 0, 1]:
+				if dx != 0 or dy != 0 or dz != 0:
+					offs.append(Vector3(dx, dy, dz).normalized())
+	offs.sort_custom(func(a1: Vector3, b1: Vector3) -> bool: return a1.z > b1.z or (a1.z == b1.z and absf(a1.x) + absf(a1.y) < absf(b1.x) + absf(b1.y)))
+	# Each site: its cell off c, the centre's height over the voxel boundary 8 m under the ground, the balls' offset.
+	var sites: Array = [[Vector2i(0, 0), 0.0, 3.0], [Vector2i(0, 10), 0.3, 3.0], [Vector2i(10, 0), 0.0, 3.3], [Vector2i(10, 10), 0.3, 3.3]]
+	var tops: Array[float] = []
+	var refused := 0
+	for s: Array in sites:
+		var ci: Vector2i = c + s[0]
+		var top := _f(sw, ci) + _f(lw, ci)
+		tops.append(top)
+		var hc: float = roundf(top - 8.0) + s[1]
+		for o: Vector3 in offs:
+			var q: Vector3 = o * s[2]
+			await _scoop_at(Cyl.position((ci.x + q.x + 0.5) * p.dtheta(), -p.length / 2.0 + ci.y + 0.5 + q.y, hc + q.z, p.radius))
+			if _tools._scoop_refused:
+				refused += 1
+	await _settled(c, 20.0)
+	await _frames(30)
+	var out: Array[String] = []
+	var isles := 0
+	var s2 := _read("surface")
+	for i in sites.size():
+		var ci: Vector2i = c + sites[i][0]
+		var kc: int = floori(roundf(tops[i] - 8.0) + sites[i][1]) - _terrain.box.bottom()
+		var found := _islands_in(_box(ci, 6), kc - 7, kc + 7)
+		isles += int(found.count)
+		out.append("%s (the centre %+.1f m off the boundary, the balls %.1f m off): %d islands of %d voxels; %s; the ground over it moved %+.2f m" % [
+				sites[i][0], sites[i][1], sites[i][2], found.count, found.voxels, "; ".join(found.where), _f(s2, ci) - _f(sw, ci)])
+	print("float: %d balls refused\n  %s" % [refused, "\n  ".join(out)])
+	_report("islands cut loose with the sand running fall", refused == 0 and isles == 0)
+	return true
+
+
+## The pieces of solid over half full joined to nothing among the voxels of `cells` at heights k_lo to k_hi
+## over the box's bottom, flooded on the CPU six ways through such voxels; a piece that reaches the edge of
+## that box, rock or a pillar is the hill. The count of islands and of their voxels, and the first few voxels
+## (cell, height, solid, yield state, the solid under).
+func _islands_in(cells: Array[Vector2i], k_lo: int, k_hi: int) -> Dictionary:
+	var one := VoxelColumn.FRACTION_ONE
+	var stacks := {}
+	var columns := {}
+	for c in cells:
+		var key := Vector2i(floori(c.x / 16.0), floori(c.y / 16.0))
+		if not stacks.has(key):
+			stacks[key] = _stack(c)
+		columns[c] = _column_vox(stacks[key], c)
+	var seen := {}
+	var out := {"count": 0, "voxels": 0, "where": []}
+	for c in cells:
+		for k in range(k_lo, k_hi + 1):
+			var v0 := Vector3i(c.x, c.y, k)
+			if seen.has(v0) or columns[c].solid[k] < one / 2 or columns[c].material[k] >= 2:
+				continue
+			var queue: Array[Vector3i] = [v0]
+			seen[v0] = true
+			var hill := false
+			var i := 0
+			while i < queue.size():
+				var v := queue[i]
+				i += 1
+				for st: Vector3i in [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 1, 0), Vector3i(0, -1, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]:
+					var n: Vector3i = v + st
+					var wc := Vector2i(n.x, n.y)
+					if not columns.has(wc) or n.z < k_lo or n.z > k_hi:
+						hill = true
+						continue
+					var vx: Dictionary = columns[wc]
+					if vx.solid[n.z] < one / 2:
+						continue
+					if vx.material[n.z] >= 2:
+						hill = true
+						continue
+					if seen.has(n):
+						continue
+					seen[n] = true
+					queue.append(n)
+			if hill:
+				continue
+			out.count += 1
+			out.voxels += queue.size()
+			for w in queue:
+				if out.where.size() < 8:
+					var vx: Dictionary = columns[Vector2i(w.x, w.y)]
+					var under: Array[String] = []
+					for d in range(1, 5):
+						under.append("%.2f+%.2f/%d" % [vx.solid[w.z - d] / float(one), vx.loose[w.z - d] / float(one), vx.yield[w.z - d]])
+					out.where.append("%s h %d: %.2f yield %d under (solid+loose/yield) %s" % [Vector2i(w.x, w.y), _terrain.box.bottom() + w.z, vx.solid[w.z] / float(one), vx.yield[w.z], " ".join(under)])
+	return out

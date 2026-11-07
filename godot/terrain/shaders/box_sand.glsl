@@ -25,7 +25,8 @@
 //   times the swell in the voxel's own room (half of it at most) and the room over it (a quarter at most, so
 //   the falls' and slumps' shares still fit beside it); less failure when less fits.
 //   The yield rule (span_column, after the slope stability): a roof voxel (dirt or clay holding any solid, the
-//   voxel under it holding under a quarter) reaches half the material's roof span, dry to saturated by the
+//   voxel under it holding under half: what the islands flood joins through, box_edit.glsl, is a floor, and
+//   less is room for the cut) reaches half the material's roof span, dry to saturated by the
 //   column's saturation, times the thickness of solid over it (from it up to the first air voxel, in metres,
 //   at most roof_thickness_max: the more dirt over a cave, the more it holds). In the layer under it, within
 //   the reach (theta scaled by the cell's width), a support is a voxel holding half a voxel of solid (loose
@@ -43,7 +44,8 @@
 //   or has solid on at most one of its four sides, is a sliver hanging on its sides alone and is doomed at
 //   once (a ridge's edge, a ball cut's skin, a peg a dig left); and dirt a scoop cuts loose from everything
 //   arrives doomed (box_edit.glsl's islands, a flood round the ball), so it falls, layer by layer from the
-//   bottom.
+//   bottom, through the partials a ball's edge left under it (a doomed piece waited on those as a floor
+//   while the floor was a quarter: the user, 2026-11-06, a floater dug out in play still stood).
 // 1 apply: each voxel takes its arrivals, loses what it sent, stores the result when it changed, flags its
 //   column dirty (the pack writes the window) and, over move_eps, its brick active (bit 0 of its slot) and the
 //   brick across any face it lies on (bit 1).
@@ -469,14 +471,17 @@ bool support(ivec3 p, bool under) {
 const float YIELD_MARGIN = 1.5;
 
 void span_column(ivec2 cxz, int kz0, int my_ai) {
-	uint quarter = uint(ONE) / 4u;
+	// Half a voxel of solid is a floor, as box_edit.glsl's islands flood joins through half or more: a voxel
+	// holding less under a roof voxel is room for its cut (a quarter before 2026-11-06, which let a doomed
+	// piece wait on the partial a ball's edge left under it). `half` is reserved in GLSL.
+	uint half_v = uint(ONE) / 2u;
 	// The voxel under the brick's bottom voxel; outside the box it is solid (no roof voxel over it).
 	V vb = find(ivec3(cxz, kz0 - 1));
 	uint below_s = vb.e < 0 ? uint(ONE) : (vb.ok ? pool[vb.addr] & 0xFFFFu : 0u);
 	bool ceiling = kz0 + 16 == pc.origin.z * 16 + K;  // the box's top brick
 	for (int y = 0; y < 16; y++) {
 		uint s_below = y > 0 ? fs[y - 1] : below_s;
-		if (fs[y] == 0u || mt_[y] >= 2u || s_below >= quarter) {
+		if (fs[y] == 0u || mt_[y] >= 2u || s_below >= half_v) {
 			continue;
 		}
 		int k = kz0 + y;
@@ -573,7 +578,7 @@ void span_column(ivec2 cxz, int kz0, int my_ai) {
 		}
 		// The whole of the solid in a step, leaving as `out`'s high half and arriving as loose times the swell
 		// in the air voxels under it, nearest first, half of each one's room (the falls' and slumps' shares
-		// still fit beside it), down to the first voxel holding a quarter of solid or six voxels; nothing in
+		// still fit beside it), down to the first voxel holding half a voxel of solid or six voxels; nothing in
 		// this voxel itself (its own rubble would prop the voxel over it). With less room, as much as fits, the
 		// rest the steps after; with none (a pile up to the roof) it waits, doomed, for room.
 		float swell = mt.swell[mt_[y]];
@@ -596,7 +601,7 @@ void span_column(ivec2 cxz, int kz0, int my_ai) {
 				}
 				w0j = pool[vj.addr];
 			}
-			if ((w0j & 0xFFFFu) >= quarter) {
+			if ((w0j & 0xFFFFu) >= half_v) {
 				break;
 			}
 			int roomj = int(ONE) - int(w0j & 0xFFFFu) - int(w0j >> 16);
