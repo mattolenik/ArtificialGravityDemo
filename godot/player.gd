@@ -10,8 +10,8 @@ signal stepped(floor_velocity: Vector3)
 ## along up_direction it had before moving, at least 0.
 signal landed(speed: float)
 
-## Ticks off the floor that make the next floor contact a landing: 0.15 s at 60 Hz. A 3 m/s jump is airborne
-## about 0.6 s, while the ground dropping a few centimetres under the feet when a collider bake lands is caught
+## Ticks off the floor that make the next floor contact a landing: 0.15 s at 60 Hz. A 4.24 m/s jump is airborne
+## about 0.85 s, while the ground dropping a few centimetres under the feet when a collider bake lands is caught
 ## within two or three ticks, so walking over a pile never counts as a landing.
 const AIRBORNE_TICKS := 9
 
@@ -21,8 +21,8 @@ const AIRBORNE_TICKS := 9
 @export var run_speed := 15.0
 ## How fast walking speeds up and slows down, in m/s². Also the floor's grip.
 @export var ground_accel := 40.0
-## Upward speed a jump adds, in m/s.
-@export var jump_speed := 3.0
+## Upward speed a jump adds, in m/s: 3√2, twice the height of the 3 m/s first set (height goes with its square).
+@export var jump_speed := 4.24
 ## Shortest time between jumps, in s.
 @export var jump_delay := 1.0
 ## Radians of turn per pixel of mouse movement.
