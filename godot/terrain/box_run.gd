@@ -1418,6 +1418,49 @@ func _deep(c: Vector2i) -> bool:
 			elif not on and run_from >= 0:
 				runs.append("%d..%d" % [_terrain.box.bottom() + run_from, _terrain.box.bottom() + i])
 				run_from = -1
+		if h == 1.5 or h == -7.8:
+			await _frames(30)
+			var cr := {"open": 0, "where": []}
+			for ch in [VoxelBox.chunk_of_cell(mid), VoxelBox.chunk_of_cell(c)]:
+				var one := _cracks(ch)
+				cr.open += one.open
+				cr.where.append_array(one.where)
+			print("deep: after the balls at %+.1f m, %d open edges inside the room's chunks: %s" % [h, cr.open, "; ".join(cr.where)])
+			# The room's far wall lies across the next chunk's border: the two meshes must agree there.
+			var ca := VoxelBox.chunk_of_cell(c)
+			var cb := VoxelBox.chunk_of_cell(c + Vector2i(0, 12))
+			var gap := 0.0
+			for pass_i in 2:
+				var now := Time.get_ticks_msec() / 1000.0
+				var sa: Dictionary = _terrain.box.touched.get(ca, {})
+				var sb: Dictionary = _terrain.box.touched.get(cb, {})
+				var g_ab := _overlap_gap(ca, cb)
+				var worst_ab := _overlap_worst.duplicate()
+				var g_ba := _overlap_gap(cb, ca)
+				print("deep: the worst strays, a's skirt: %s; b's skirt: %s" % ["; ".join(worst_ab), "; ".join(_overlap_worst)])
+				gap = maxf(g_ab, g_ba)
+				print("deep: pass %d: the chunks %s (faces %d, dirty %d, remeshed %.2f s ago) and %s (faces %d, dirty %d, remeshed %.2f s ago) overlap at the room's far wall; a's skirt strays %.3f m from b's mesh, b's %.3f m from a's" % [
+						pass_i, ca, _chunk_faces(ca), sa.get("dirty", -1), now - sa.get("at", -INF), cb, _chunk_faces(cb), sb.get("dirty", -1), now - sb.get("at", -INF), g_ab, g_ba])
+				if pass_i == 0:
+					await get_tree().create_timer(3.0).timeout
+			_report("the chunk meshes agree where they overlap, dug", cr.open == 0 and gap >= 0.0 and gap <= 0.02)
+			if h == 1.5:
+				# A ball a metre and a half under the room's floor at its far end, in this chunk's last rows only
+				# (rows 12 to 15: no column of the next chunk changes), lies in the next chunk's skirt: its mesh
+				# must follow (only its own columns' packs flagged it, so it kept drawing the floor over the hole).
+				await _scoop_at(aim.call(0.5, 8.0, -1.5))
+				await get_tree().create_timer(1.5).timeout
+				var g2 := maxf(_overlap_gap(ca, cb), _overlap_gap(cb, ca))
+				var sb2: Dictionary = _terrain.box.touched.get(cb, {})
+				print("deep: a ball dug under the floor in the far rows of %s alone: %s remeshed %.2f s ago, the meshes stray %.3f m where they overlap" % [
+						ca, cb, Time.get_ticks_msec() / 1000.0 - sb2.get("at", -INF), g2])
+				_report("a dig within a neighbour's skirt remeshes the neighbour", g2 >= 0.0 and g2 <= 0.02)
+			await _shot_at("deep_room_%d" % int(h * 10), aim.call(0.5, 6.0, h + 1.5))
+			await _shot_at("deep_wall_%d" % int(h * 10), aim.call(5.0, 6.0, h + 0.5))
+			await _shot_at("deep_rim_%d" % int(h * 10), aim.call(0.5, -1.5, depth - 0.5))
+			await _shot_at("deep_rim_bare_%d" % int(h * 10), aim.call(0.5, -1.5, depth - 0.5), true)
+			await _shot_at("deep_mouth_%d" % int(h * 10), aim.call(0.5, 2.5, 3.2))
+			await _shot_at("deep_mouth_bare_%d" % int(h * 10), aim.call(0.5, 2.5, 3.2), true)
 		out.append("balls at %+.1f m%s%s: the pit %.2f m deep, the surface over the tunnel's roof moved %.3f m, the ground over the middle sank %.3f m, %.4f m³ of loose in the room's box; the feet at %.1f, the box %d..%d, the ground at %.1f; %d gap overflows; the middle's solid runs %s, its window surface %.2f, gap %.2f..%.2f" % [
 				h, " a ring wider" if ring > 0 else "", " and the pit" if pit > 0 else "", floor_h - _f(sf, c), moved, sunk, loose,
 				feet, _terrain.box.bottom(), _terrain.box.top(), floor_h + depth, _terrain.box.read_stats()[VoxelBox.SLOTS], " ".join(runs), _f(sf, mid), _f(_read("gap_bottom0"), mid), _f(_read("gap_top0"), mid)])
@@ -1551,6 +1594,139 @@ func _crust(c0: Vector2i) -> bool:
 	_report("the room is dug with the box's top %s the ground" % ("over" if shallow else "on the plane under"), (box_top > ground if shallow else box_top < ground) and box_top > floor_h and before <= 0.05)
 	_report("a collapse under ground the box does not reach climbs through to the surface, conserved", fell >= 0.0 and absf(got_w - lost) <= 1e-3 * lost)
 	return true
+
+
+## The open edges of chunk ch's landed mesh (an edge used by one triangle) whose both vertices lie in the chunk's
+## own cells, between the box's floor and ceiling by over a voxel: the mesh's rim (the skirt two cells out)
+## and its cut at the box's planes are open by design, anything else is a crack. The count and a few
+## positions (station-local, with the cell and height).
+func _cracks(ch: Vector2i) -> Dictionary:
+	var out := {"open": 0, "where": []}
+	var st: Dictionary = _terrain.box.touched.get(ch, {})
+	if st.is_empty() or st.node == null or st.node._mesh.mesh == null:
+		return out
+	var arrays: Array = st.node._mesh.mesh.surface_get_arrays(0)
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var inds: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+	var uses := {}
+	for i in range(0, inds.size(), 3):
+		for j in 3:
+			var a := inds[i + j]
+			var b := inds[i + (j + 1) % 3]
+			var key := Vector2i(mini(a, b), maxi(a, b))
+			uses[key] = uses.get(key, 0) + 1
+	var p := _terrain.params
+	var lo := _terrain.box.bottom() + 1.5
+	var hi := _terrain.box.top() - 1.5
+	for key: Vector2i in uses:
+		if uses[key] != 1:
+			continue
+		var inside := true
+		for vi in [key.x, key.y]:
+			var v := verts[vi]
+			var cell := _cell_of(v) - ch * VoxelBox.CHUNK
+			var h := Cyl.height_of(v, p.radius)
+			if cell.x < 0 or cell.x > 15 or cell.y < 0 or cell.y > 15 or h < lo or h > hi:
+				inside = false
+		if inside:
+			out.open += 1
+			if out.where.size() < 6:
+				out.where.append("%s at %s h %.2f to %s h %.2f" % [verts[key.x], _cell_of(verts[key.x]), Cyl.height_of(verts[key.x], p.radius), _cell_of(verts[key.y]), Cyl.height_of(verts[key.y], p.radius)])
+	return out
+
+
+## How far chunk a's mesh strays from chunk b's where they overlap: the most any vertex of a's mesh lying in
+## b's own cells (a's skirt, within the box's band by over a voxel) is from the nearest vertex of b's mesh
+## in that cell or the eight around it (-1 with no such vertex). Both chunks draw that ground; a copy a step
+## off the other doubles the surface, a crease or a crack of light.
+var _overlap_worst: Array[String] = []
+
+
+func _overlap_gap(a: Vector2i, b: Vector2i) -> float:
+	_overlap_worst = []
+	var sa: Dictionary = _terrain.box.touched.get(a, {})
+	var sb: Dictionary = _terrain.box.touched.get(b, {})
+	if sa.is_empty() or sb.is_empty() or sa.node == null or sb.node == null or sa.node._mesh.mesh == null or sb.node._mesh.mesh == null:
+		return -1.0
+	var va: PackedVector3Array = sa.node._mesh.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+	var vb: PackedVector3Array = sb.node._mesh.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+	var p := _terrain.params
+	var lo := _terrain.box.bottom() + 1.5
+	var hi := _terrain.box.top() - 1.5
+	var buckets := {}
+	for v in vb:
+		var cell := _cell_of(v)
+		if not buckets.has(cell):
+			buckets[cell] = PackedVector3Array()
+		buckets[cell].append(v)
+	# Only vertices under cover (anything over half a voxel filled above them in their column, up to the box's
+	# top: a cave's floor, wall or roof): a's skirt sinks at the open ground to meet the tile's ramp, under b's
+	# own unsunk copy there, which is what shows.
+	var stacks := {}
+	var columns := {}
+	var worst := -1.0
+	for v in va:
+		var cell := _cell_of(v) - b * VoxelBox.CHUNK
+		var h := Cyl.height_of(v, p.radius)
+		if cell.x < 0 or cell.x > 15 or cell.y < 0 or cell.y > 15 or h < lo or h > hi:
+			continue
+		var wc := _cell_of(v)
+		if not columns.has(wc):
+			var key := Vector2i(floori(wc.x / 16.0), floori(wc.y / 16.0))
+			if not stacks.has(key):
+				stacks[key] = _stack(wc)
+			columns[wc] = _column_vox(stacks[key], wc)
+		var vox: Dictionary = columns[wc]
+		var covered := false
+		for k in range(floori(h) - _terrain.box.bottom() + 1, vox.solid.size()):
+			if vox.solid[k] + vox.loose[k] >= VoxelColumn.FRACTION_ONE / 2:
+				covered = true
+				break
+		if not covered:
+			continue
+		var best := INF
+		for dx in range(-1, 2):
+			for dy in range(-1, 2):
+				for w in buckets.get(_cell_of(v) + Vector2i(dx, dy), PackedVector3Array()):
+					best = minf(best, v.distance_to(w))
+		if is_finite(best):
+			if best > worst:
+				var fills: Array[String] = []
+				for k in range(floori(h) - _terrain.box.bottom() - 1, mini(floori(h) - _terrain.box.bottom() + 6, vox.solid.size())):
+					fills.append("%d:%.2f+%.2f" % [_terrain.box.bottom() + k, vox.solid[k] / float(VoxelColumn.FRACTION_ONE), vox.loose[k] / float(VoxelColumn.FRACTION_ONE)])
+				_overlap_worst.push_front("%.3f m at cell %s of b, h %.2f, the column %s" % [best, cell, h, " ".join(fills)])
+				if _overlap_worst.size() > 3:
+					_overlap_worst.resize(3)
+			worst = maxf(worst, best)
+	return worst
+
+
+## A screenshot of the view aimed at station-local `target`, to user://debug/<file>.png, the light bar over
+## the player; the view aimed back after.
+func _shot_at(file: String, target: Vector3, bare := false) -> void:
+	(_station.get_node("LightBar") as LightBar).theta = Cyl.theta_of(_station.to_local(_player.global_position))
+	var cam: Camera3D = get_viewport().get_camera_3d()
+	var fwd0 := -cam.global_basis.z
+	var panel: CanvasLayer = get_tree().root.find_child("Panel", true, false)
+	if panel != null:
+		panel.visible = false
+	# bare: the ground tiles and the far terrain hidden, so what shows is the chunk meshes alone.
+	var hidden: Array[Node3D] = []
+	if bare:
+		for n in _terrain.get_children():
+			if (n is MeshInstance3D or n is FarTerrain) and n.visible:
+				n.visible = false
+				hidden.append(n)
+	_aim_at(target)
+	await _frames(6)
+	DirAccess.make_dir_recursive_absolute("user://debug")
+	get_viewport().get_texture().get_image().save_png("user://debug/%s.png" % file)
+	for n in hidden:
+		n.visible = true
+	if panel != null:
+		panel.visible = true
+	_aim_at(_station.to_local(cam.global_position + fwd0 * 10.0))
+	await _frames(1)
 
 
 func _cell_of(v: Vector3) -> Vector2i:

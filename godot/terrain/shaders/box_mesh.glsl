@@ -4,7 +4,7 @@
 // Surface nets over a touched chunk of the voxel box (VoxelBox.remesh_dirty; the tunnels design's drawing
 // and colliding), two dispatches over the chunk's 16 x 16 columns with a skirt of cells each way (the mesh
 // overlaps the tile mesh, which steps back from the chunk and sinks under it; the skirt's edge sinks to meet
-// the tile's ramp) and the box's 96 m:
+// the tile's ramp where no touched neighbour draws the same ground) and the box's 96 m:
 // 0 vertices: one invocation per dual cell (the cube between eight voxel centres): where the density (the
 //   signed distance along the column from the voxel's centre to its run's end, sample_at) crosses zero along
 //   any of the cube's twelve edges, a vertex at the mean of the crossings (a vertical edge's by the
@@ -38,7 +38,8 @@ layout(push_constant, std430) uniform Params {
 	float z0;          // station-local z of row 0
 	int max_verts;
 	int max_inds;
-	float pad0, pad1, pad2;
+	int touched_mask;  // the touched chunks around this one, a bit per neighbour ((dy + 1) * 3 + dx + 1)
+	float pad1, pad2;
 } pc;  // 64 bytes
 
 const float ONE = 65535.0;
@@ -290,16 +291,27 @@ void vertex_pass(ivec3 l) {
 	// sinks a quarter cell within two cells of the chunk (tile.gdshader), so it ramps from a quarter down at
 	// 1.5 cells out to level at 2.5, and the skirt's last vertex row at 2 would stand an eighth of a metre
 	// over it, a ledge around every chunk (and a gap to the sky from under it).
-	vec2 in_chunk = p.xy - vec2(pc.c0);
-	vec2 past = max(-in_chunk, in_chunk - 16.0);
-	float out_cells = max(past.x, past.y);
-	p.z -= 0.25 * clamp(min(out_cells - 1.5, 2.5 - out_cells), 0.0, 0.5);
 	vec3 g = vec3(0.0);
 	int best = 0;
 	for (int c = 0; c < 8; c++) {
 		g += s[c].d * (2.0 * corner(c) - 1.0);
 		best = s[c].d > s[best].d ? c : best;
 	}
+	vec2 in_chunk = p.xy - vec2(pc.c0);
+	vec2 past = max(-in_chunk, in_chunk - 16.0);
+	float out_cells = max(past.x, past.y);
+	float sink = 0.25 * clamp(min(out_cells - 1.5, 2.5 - out_cells), 0.0, 0.5);
+	// Only toward a neighbour chunk no mesh draws, where the tile is what the skirt meets: a touched neighbour
+	// draws this ground from its own cells unsunk, and the two copies a step apart made a crease or a crack of
+	// light along every chunk border through dug ground (the user, 2026-11-06).
+	if (sink > 0.0) {
+		int dx = in_chunk.x < 0.0 ? -1 : (in_chunk.x >= 16.0 ? 1 : 0);
+		int dy = in_chunk.y < 0.0 ? -1 : (in_chunk.y >= 16.0 ? 1 : 0);
+		if ((pc.touched_mask & (1 << ((dy + 1) * 3 + dx + 1))) != 0) {
+			sink = 0.0;
+		}
+	}
+	p.z -= sink;
 	float th = p.x * pc.dtheta;
 	float r = pc.R - p.z;
 	// The gradient per metre (a cell spans r dtheta across); the normal points from the solid into the air.

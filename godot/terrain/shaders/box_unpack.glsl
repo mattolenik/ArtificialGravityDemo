@@ -160,6 +160,15 @@ void main() {
 			for (int j = 0; j < r.n - 1; j++) {
 				if (r.b[j] < float(k0 + K) && r.t[j + 1] > float(k0)) {
 					atomicOr(box_stats[chunk_word(c)], 3u);
+					// The chunks whose skirts reach this column (three cells over their borders, box_mesh.glsl) remesh with it.
+					for (int dy = -3; dy <= 3; dy += 3) {
+						for (int dx = -3; dx <= 3; dx += 3) {
+							int w = chunk_word(ivec2(wrap(c.x + dx, pc.n_theta), c.y + dy));
+							if (w != chunk_word(c)) {
+								atomicOr(box_stats[w], 1u);
+							}
+						}
+					}
 					break;
 				}
 			}

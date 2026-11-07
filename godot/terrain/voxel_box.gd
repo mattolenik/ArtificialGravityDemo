@@ -152,6 +152,8 @@ var _mesh_vmap: RID
 var _mesh_counts: RID
 ## The chunk words landed since the last take, ORed.
 var _chunk_flags := PackedInt32Array()
+## BOX_REMESH_LOG=1 in the environment: a line per remesh pick and per frame that packed several chunks.
+var _remesh_log := OS.get_environment("BOX_REMESH_LOG") == "1"
 ## The remesh in flight: its chunk, then its counts and arrays as they land; empty between.
 var _remesh := {}
 
@@ -1025,7 +1027,10 @@ func _take_chunk_flags() -> void:
 		if not touched.has(ch):
 			touched[ch] = {"dirty": 0, "at": -INF, "node": null}
 			_stale(ch)
-	for ch in touched_from(_chunk_flags, 1):
+	var packed := touched_from(_chunk_flags, 1)
+	if _remesh_log and packed.size() > 1:
+		print("remesh: frame %d packed chunks %s" % [Engine.get_process_frames(), packed])
+	for ch in packed:
 		if touched.has(ch):
 			_stale(ch)
 	_chunk_flags.fill(0)
@@ -1058,6 +1063,8 @@ func remesh_dirty(now: float) -> void:
 			pick = ch
 	if oldest == 0:
 		return
+	if _remesh_log:
+		print("remesh: frame %d picks %s (stale since frame %d; stale now: %s)" % [Engine.get_process_frames(), pick, oldest, touched.keys().filter(func(k: Vector2i) -> bool: return touched[k].dirty > 0)])
 	touched[pick].dirty = 0
 	touched[pick].at = now
 	_remesh = {"chunk": pick}
@@ -1180,4 +1187,14 @@ func _mesh_pc(ch: Vector2i, mode: int) -> PackedByteArray:
 	b.encode_float(40, -params.length / 2.0)
 	b.encode_s32(44, MESH_VERTS)
 	b.encode_s32(48, MESH_INDS)
+	# The touched chunks around this one, a bit per neighbour ((dy + 1) * 3 + dx + 1): the skirt sinks only
+	# toward a neighbour no mesh draws.
+	@warning_ignore("integer_division")
+	var n := params.n_theta() / CHUNK
+	var mask := 0
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			if touched.has(Vector2i(posmod(ch.x + dx, n), ch.y + dy)):
+				mask |= 1 << ((dy + 1) * 3 + dx + 1)
+	b.encode_s32(52, mask)
 	return b
